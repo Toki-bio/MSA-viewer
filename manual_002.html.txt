@@ -1,0 +1,260 @@
+[manual.html lines 484-742 of ViewAlign fd8b8e4]
+    <li><strong>Group by k-mer</strong> - <em>Method: peel (diagnostic columns)</em> peels groups off one at a time by the columns that diagnose them; <em>Linkage: chain</em>; <em>ignore strand</em> for k-mer distances (§4.2).</li>
+    <li><strong>Statistics window</strong> rebuilt: esl-alistat / esl-alipid summary with documented tooltips, one switchable distance/identity matrix with heat-map colouring, pair filter and list, CSV / TSV / Excel export, movable, resizable and dockable (§9.4).</li>
+    <li><strong>Smooth scrolling</strong> of large alignments in Full and Block (buffered windows, in-place column patching); translation rows in the windowed renderer.</li>
+    <li><strong>Parsers</strong> - A3M and PIR read as FASTA variants; EMBL refused rather than loaded as garbage; UTF-16 and legacy encodings; truncated BAM/CRAM reported (§1.3).</li>
+    <li><strong>Tree labels</strong> - in the unrooted drawing every leaf label gets its own clear spot (moved along the arc or outward, with a thin leader line) and the drawing grows to hold them; <em>group overlapping labels</em> is off by default and, when on, lists the omitted names under the group label (&sect;9.4).</li>
+    <li><strong>Name column width by dragging</strong> - drag the invisible boundary between the names and the sequences; double-click it to fit the longest name (&sect;10.3).</li>
+    <li><strong>Rows and letters</strong> - rows are two pixels taller and the letters centred in them, so a white letter on a shaded cell is always separated from a white cell above or below it at any browser zoom; Canvas eases each mouse-wheel notch instead of jumping.</li>
+    <li><strong>Windowed Full and Block from 100,000 residues</strong> - above that size the two views build only the rows and columns near the window (switching to Full in about a second instead of four to seven); Show 2D draws there too (&sect;5.1).</li>
+    <li><strong>Edit mode</strong> - <kbd>Ctrl+Shift+Z</kbd> redoes; a plain click on a name selects that row and a second click unselects it; <kbd>Alt+J</kbd> / <kbd>Alt+C</kbd> copy the selected consensus / sequences (&sect;10).</li>
+    <li><strong>Letter case</strong> - an <strong>aa | Aa | AA</strong> switch next to the Block / Canvas buttons shows residues in lower case, as in the file, or in upper case, in every view including Canvas (which used to ignore the Display-menu setting) (&sect;5.3).</li>
+    <li><strong>Edit tools</strong> - the gap tools show a haloed crosshair and outline the cell under the pointer in orange; a double-click with a gap tool no longer switches to Type; no residue tooltip while a sequence is being moved; shorter tooltips on the edit panel; <em>Live conservation</em> renamed <em>Shade while dragging</em> (&sect;8).</li>
+    <li><strong>Windows</strong> - the Repeat/TSD finder resizes from its edges and corners and maximises like the other windows; every movable window turns semi-transparent while it is being moved.</li>
+    <li><strong>TSD results</strong> - the pairs found are shown faintly in the alignment at once and <em>Mark in alignment</em> is highlighted (&sect;9.9).</li>
+    <li><strong>Scrollbars</strong> - the bars under and beside the alignment are 8 pixels, without the light track that looked like an empty band, and the pointer over them is the plain arrow. The Canvas and windowed Full views now end at the window's bottom edge: a hard-coded reserve sized for the old thick scrollbar left a white band under the slim one, and a windowed Full view kept the Canvas height after a mode switch.</li>
+    <li><strong>Dot plot</strong> - hovering over the plot no longer makes it jump (a wide hover context used to add a scrollbar under the plot and re-fit it); one wide slider for the word length (SPIN) or window (Dotter) and the identity slider in Dotter mode only; the controls tidied; each Top Regions entry has a &#8674; button that tints both copies of the stretch in the alignment and goes there, and a &#9734; button that keeps it in a collection (kept across files and reloads, saved in snapshots) whose entries can be centred, shown in the alignment, handed to the Search box, copied as FASTA or TSV, renamed and removed (&sect;9.7).</li>
+    <li><strong>Statistics</strong> - one matrix with identity % above the diagonal and distance below it, with two decimals (there were two matrices, switched); the pair filter chooses its own value; Save matrix can still write the full identity or distance matrix. The window now says plainly that the definitions are Sean R. Eddy's (Easel / HMMER). Audited against the Easel source: <code>*</code> is no longer counted as a residue and U equals T in nucleotide alignments, as in esl-alistat / esl-alipid. The pairwise pass is many times faster, reports its progress and has a Stop button (2,000 sequences &times; 5,000 columns: 33 s instead of nine minutes with the tab frozen). A new file closes the window; an edit while it is open marks it stale with a Recompute button. The matrix of a big alignment scrolls without delay (only the cells near the view exist; a shift at 2,000 sequences took 2.8 s). Small fixes: the <em>Longest name shown</em> field shows the value the table uses, a value typed in the heat range right after one in the pair filter is no longer dropped, the hovered row/column highlight clears when the pointer leaves, a corrupt stored panel width is ignored, and a docked panel narrows when the browser window shrinks.</li>
+    <li><strong>Colour Names</strong> - a pattern colour shows in Canvas at once (it used to appear at the next re-render).</li>
+    <li><strong>Residue selection</strong> - a selected run is one tint with one frame (it was a box per cell), the same yellow tint and brown frame in Canvas as in Full/Block (Canvas drew it blue); a drag across rows, or a second click in another row, selects a rectangle of rows &times; columns, and <strong>Realign Block</strong> realigns such a block alone (&sect;3.2.1, &sect;10.3).</li>
+    <li><strong>Hidden columns</strong> (Actions &rsaquo; Columns) - <em>Hide Cols</em>, <em>Only Sel</em> and <em>Hide Gappy</em> fold columns away so the regions you want sit next to each other (Canvas, Full and Block; keys <kbd>Alt+H</kbd>, <kbd>Alt+Shift+H</kbd>, <kbd>Alt+U</kbd>); an option, <em>visible columns only</em>, leaves the folds out of Copy, Save and the tree; each folded run is one amber marker cell, in the rows and in the ruler, whose tooltip says what is hidden and which shows the run again when clicked. Analyses, Copy and Save use every column unless that option is ticked.</li>
+    <li><strong>Linked views</strong> (Actions) - <em>Link</em> makes ViewAlign tabs and windows of the same browser scroll together: the same sequence at the top (by name) and the same place along the alignment at the left edge, by column number or by an anchor sequence, which keeps two alignments of the same sequences lined up where their gaps differ. Put two windows side by side to compare two areas of one alignment (Clone Tab starts the second tab linked) or two alignments (&sect;9.1).</li>
+    <li><strong>Panes</strong> (Actions &gt; Linked views: <em>Split right</em>, <em>Split below</em>) - this whole view opens again in a pane docked inside the page, linked by rows (columns free), so two areas of one alignment can be read at once. A pane is a read-only copy that reloads from this view a moment after you edit (<em>Refresh panes</em> forces it); drag the bar between the page and the panes to resize; the &times; in a pane header closes it. <em>Open file in pane</em> loads another alignment file into a pane instead: linked by rows and by anchor sequence (columns), and not a mirror, so edits here leave it alone. Up to three extra panes (four views in all). Each pane header has a mode button: <em>mirror</em> (the default: reloaded after every edit in the main view) or <em>own copy</em> (keeps its own edits; an edit made in a mirror pane turns it into its own copy, so nothing you type there is overwritten; clicking <em>own copy</em> twice makes it a mirror again and discards its edits), and <em>&#8644;</em> (Swap), which exchanges the pane's alignment and place with the main view's. A saved snapshot keeps the panes: their side and size, each pane's mode and place, and the content of own copies and file panes.</li>
+    <li><strong>Clone Tab</strong> (Actions) - the whole alignment in a new tab exactly as it is in this one: view, zoom, case, shading, diff / variable-sites / codon settings, Canvas position, searches, selections and marks, name colours, trim, annotation (&sect;9.1). Snapshots now keep the trim and those settings too.</li>
+    <li><strong>Search presets</strong> - the active searches saved under a name (e.g. promoter boxes) and run again on any alignment with one click (&sect;7.4).</li>
+    <li><strong>Toolbar</strong> - the Selections tab keeps its place while empty, so selecting a row no longer wraps the toolbar and moves the alignment down a line at widths where the menu line is nearly full.</li>
+    <li><strong>AB1 chromatograms</strong> - an AB1 file loads as one sequence and right-click → View Chromatogram... shows the trace (§1.3).</li>
+    <li><strong>Accessibility</strong> - a colour-blind-safe nucleotide scheme (§5.3); menus and windows can be operated from the keyboard (Tab to a menu, Enter to open, Esc to close).</li>
+    <li><strong>Protein consensus</strong> - the consensus returns the true majority residue in protein and N-rich columns, with X/B/Z/J fallbacks (§6.2); protein residues are shaded correctly in Monochrome.</li>
+  </ul>
+  <p>Earlier updates added or improved the following features:</p>
+  <ul>
+    <li><strong>k-mer groups fixed</strong> - the number of groups no longer jumps with k: Auto picks the most stable count instead of the root jump, a number of groups means groups of at least <em>Min size</em> (lone sequences are set aside), and a new <em>Distance: aligned columns</em> option does not depend on k at all. Grouping is also about 200 times faster (330 sequences: 20 s to 0.1 s). See §4.2.</li>
+    <li><strong>Highlight diffs / Variable sites only</strong> - now do something when ticked (a column is variable when at least one sequence differs; set the threshold to 0 to turn the filter off), and pause each other with a message instead of silently (§5.2).</li>
+    <li><strong>TSD flanks</strong> - each TSD pair shows the 3 bases outside each copy in small grey letters, to check that the duplication is complete (§9.9).</li>
+    <li><strong>Touchpad scrolling</strong> - horizontal two-finger scrolling no longer jumps back or stalls: the scrollbar under the alignment now only follows the view, and drives it only when you use the bar itself.</li>
+    <li><strong>Overlapping marks</strong> - search hits, TSD marks, repeats, group letters, trim and selections no longer hide each other: each keeps a visible property (fill, bold second font, italic, line, tint), in both view types. TSD marks and repeats follow their residues through edits. See §7.6.</li>
+    <li><strong>Selections panel</strong> - one list of every selection and highlight (rows, columns, residues, searches, TSD marks, repeats, name colours), each with on/off, go-to and remove; Clear all with Undo; <kbd>Esc</kbd> clears the selection; saved in snapshots. See §7.6.</li>
+    <li><strong>Search highlights follow edits</strong> - highlights stay on the matching residues after gap insertion, drags, typing and undo; both-strand and restriction-site highlights no longer disappear after a redraw. Gap insertion and deletion in Edit Mode update the view in place (about four times faster on a 200 &times; 1000 alignment).</li>
+    <li><strong>Clustering panel</strong> - three separate instruments: <em>Group by k-mer</em> (everyone assigned by overall resemblance), <em>Find SNP groups</em> (exclusive diagnostic columns; leftovers unassigned), and <em>Show 2D</em> (row × column rectangles). Results open in the Group explorer; a Groups menu appears to dock it. See §4.</li>
+    <li><strong>Tree drawing</strong> - the Tree window now draws the tree with zoom, rooted and unrooted (equal-angle) layouts, branch swapping, re-rooting on a clicked branch, a resizable box, full screen, and SVG or PNG export of the picture.</li>
+    <li><strong>Faster editing</strong> - Move and Slide dragging, entering and leaving Edit Mode, and undo/redo are no longer slowed by alignment size; conservation shading now drops only on residues a drag actually moved, instead of the whole row.</li>
+    <li><strong>Variable-sites threshold &amp; breakpoint markers</strong> - percentage-based slider (0–100%) controls minimum variation for a column to be shown; breakpoint separators (⋮) indicate where conserved columns were hidden.</li>
+    <li><strong>BLAST search with database management</strong> - right-click BLAST search with dynamic local database creation (makeblastdb), add/remove databases from the viewer, batch BLAST against all databases.</li>
+    <li><strong>Restriction Sites</strong> search in the Search menu, with 50 common enzymes, manual site input, IUPAC ambiguity support; both strands are always searched.</li>
+    <li><strong>Reads view mode</strong> for SAM/BAM data with IGV-style read packing and CIGAR-expanded match/mismatch colouring.</li>
+    <li><strong>Tree Builder</strong> supports both UPGMA and Neighbor-Joining with three distance correction models (p-distance, Jukes-Cantor, Kimura 2-parameter).</li>
+    <li><strong>Statistics</strong> follows esl-alistat and esl-alipid (with documented tooltips), and opens in a window you can move, resize from any edge, maximise or dock. Its matrices can be copied (whole or selected columns) or saved as CSV, TSV or Excel, and pairs past a threshold listed and saved as a table, names or sequences.</li>
+    <li><strong>Display colour schemes</strong> now include Monochrome, Nucleotide, Purine/Pyrimidine, Nucleotide Ambiguity, Clustal-like amino acid, and Jalview-like amino acid modes.</li>
+    <li><strong>Colour Names panel</strong> with pattern matching, auto-similarity grouping, colour presets, sort-by-colour, group-at-top, and colour history inspector.</li>
+    <li><strong>Repeat Finder</strong> for tandem, direct, and inverted repeats with configurable parameters.</li>
+    <li><strong>GenBank import</strong> now parses sequence metadata and common FEATURES more reliably, including multi-line qualifiers.</li>
+    <li><strong>Protein FASTA handling</strong> preserves amino-acid residues instead of treating them as nucleotides.</li>
+    <li><strong>Reliability fixes</strong> improved parser robustness (FASTA BOM/CR handling, PHYLIP interleaved continuation lines, Clustal/MUSCLE header detection), state reset on new file load, conservation cache invalidation, undo tracking, and version display.</li>
+  </ul>
+</section>
+
+<!-- ════════════════════════════════════════ -->
+<section id="input-menu">
+  <h2>2. Input Menu</h2>
+  <p>
+    The Input menu is the starting point for loading data into the viewer.
+    It appears as the leftmost dropdown in the menu bar.
+  </p>
+
+  <h3 id="in-fasta">2.1 FASTA / MSF Input</h3>
+  <p>
+    Paste your alignment directly into the textarea. Both FASTA and MSF formats are
+    auto-detected. Click <strong>Load</strong> (or press <kbd>Ctrl+L</kbd>) to process
+    the data. The <strong>Clear</strong> button empties the textarea.
+  </p>
+  <p>
+    The viewer auto-detects sequence type (DNA, RNA, protein) from the residue composition
+    of the first few sequences. Protein FASTA input is preserved as amino-acid data; unknown
+    protein characters are normalised to <code>X</code> rather than converted to nucleotide
+    ambiguity characters.
+  </p>
+  <p>
+    <strong>Protein alignments.</strong> Display, shading, consensus, motif search
+    (forward strand), statistics, trees (p-distance over amino acids), editing, MAFFT
+    realignment (Seq Type <em>Protein</em>) and export all work on protein. The dot plot,
+    SNP and k-mer grouping, the Repeat/TSD finder and codon analysis were designed for
+    nucleotides: they run on amino-acid letters, but strand options, inverted repeats
+    and TSDs have no meaning there. MAFFT itself drops <code>*</code> and does not know <code>U</code> (selenocysteine),
+    <code>O</code> (pyrrolysine) or, in nucleotides, letters that are no base code: the viewer sends
+    such residues as <code>X</code> (or <code>N</code>) and writes the original letters back into
+    the result, so they are kept.
+  </p>
+  <p>
+    GenBank flatfiles can also be pasted directly. Records beginning with <code>LOCUS</code>
+    are parsed for header metadata, <code>FEATURES</code>, and the <code>ORIGIN</code> sequence.
+    The imported sequence is displayed as a normal alignment row; feature coordinates are stored
+    with the parsed record for future annotation features.
+  </p>
+
+  <h3 id="in-file">2.2 File Loading</h3>
+  <p>
+    The drop zone accepts files via drag-and-drop. Click the zone to open a file picker.
+    The file type is recognised from the content, not the extension (1.2). After loading,
+    the file name appears in the top-right info panel.
+  </p>
+
+  <h3 id="in-url">2.3 URL Loading</h3>
+  <p>
+    Paste a URL to a raw alignment file (e.g., a GitHub raw link or a public server path)
+    into the Input box and click <strong>Load</strong> (or press <kbd>Ctrl+L</kbd>); a pasted
+    <code>http(s)://</code> address is recognised as a location rather than data. The viewer
+    fetches the file via <code>fetch()</code> with CORS restrictions. The same file can be
+    opened directly with <code>?url=</code> in the page address (1.2).
+  </p>
+
+  <h3 id="in-ssh">2.4 SSH Remote Loading</h3>
+  <p>
+    When the server is running with SSH configuration, an SSH row appears in the Input menu.
+    Select a server, enter a file path, and click <strong>Fetch</strong> or press <kbd>Enter</kbd>.
+    The file is read via <code>cat</code> on the remote host and streamed to the browser.
+  </p>
+  <div class="note">
+    <strong>Security:</strong> Path traversal (<code>..</code>) and shell metacharacters are
+    blocked. Files are never written to disk on the server.
+  </div>
+
+  <h3 id="in-sam">2.5 SAM / BAM / CRAM</h3>
+  <p>
+    <strong>SAM on its own</strong> (pasted or opened) becomes an alignment. Primary mapped reads are kept;
+    the top row, <code>REF</code>, is the majority base of the reads at each position, so no reference file
+    is needed. Inserted bases get their own columns, with gaps in every other row, so each read's other
+    bases stay in their reference column; soft-clipped bases are left out. If the reads map to more than
+    one reference, the reference with the most reads is shown and the others are named in the status line.
+    To look for mutations, open the real reference first and the reads onto it (below): <code>REF</code> here is the
+    reads' own majority, so a change all the reads carry is part of it and is not seen as a change.
+  </p>
+  <p>
+    <strong>SAM, BAM or CRAM onto a reference:</strong> open the reference sequence first (FASTA or GenBank),
+    then the reads file (<strong>SAM/BAM</strong> button, Input, drag and drop, or Add sequences; in a link,
+    <code>?reads=&lt;url&gt;</code> next to <code>?url=</code> opens both in Reads mode). The reads go
+    on the loaded sequence named as in the file's <code>@SQ SN:</code> line; a name that differs only by a
+    <code>chr</code> prefix, a version (<code>.2</code>) or case also matches, as does a single loaded sequence of
+    exactly the reference's length (the message says so), and a region cut out with
+    <code>samtools faidx</code> (a sequence named like <code>chr7:1001-2000</code>): the reads, in chromosome
+    coordinates, are shifted onto it. A SAM without <code>@SQ</code> lines takes the references from its
+    reads. Everything happens in the browser, so no server is needed: BAM is decompressed directly, and CRAM,
+    which stores reads as differences from the reference, is decoded against the loaded sequence by the
+    JBrowse CRAM reader (<code>@gmod/cram</code>, loaded only when a CRAM is opened). BAM and CRAM are recognised
+    by their content, whatever the file is called. Opening a BAM or CRAM with nothing loaded shows how to load
+    it instead.
+  </p>
+  <p>
+    <strong>A whole-genome BAM:</strong> select the BAM <em>together with its index</em> (<code>.bai</code>, from
+    <code>samtools index</code>) &mdash; both files at once in the SAM/BAM dialog, or dropped together. Only the
+    compressed blocks holding reads of the loaded sequence are then read (as IGV does), so load the gene first,
+    cut out as <code>samtools faidx genome.fa chr7:117480025-117668665</code> writes it: the reads of that region
+    are read and shifted onto it, and the message says how much of the file was read. Without an index the
+    whole BAM is decompressed, which a browser cannot do above about 500 MB (the message says what to do).
+    Only <code>.bai</code> indexes are read (not <code>.csi</code>, nor CRAM's <code>.crai</code>).
+  </p>
+  <p>
+    <strong>Which reads count:</strong> unmapped reads are dropped. Secondary, supplementary, QC-failed and duplicate reads are
+    hidden (the message says how many; <strong>Options</strong> shows them) and never count. Every other read is kept (up to 2,000,000) and counts for the
+    coverage, the allele counts and the sample row; the view draws at most 50 reads starting in each 100 bp
+    (a fixed random sample, as igv.js does), and marks the windows where reads were not drawn.
+  </p>
+  <p>
+    <strong>The Reads view:</strong> the reference, the ruler, a <strong>coverage</strong> row and the reads,
+    packed into tracks. Coverage counts every read; where the non-reference bases reach 20% of the reads the bar
+    is split into base colours. Hover a coverage column for its counts per base and strand
+    (<code>A: 37 (49%, 20+, 17&minus;)</code>), deletions and insertions; click it to sort the reads by their base
+    there (the most common other base first, the reference base last). Read bars are pink on the forward
+    strand and blue on the reverse strand (a change seen on one strand only is a common artefact), faded when
+    their mapping quality is 0; mismatching bases are letters, deletions grey, insertions orange ticks (the
+    inserted bases are in the read's tooltip). <strong>Show bases</strong> draws every base.
+  </p>
+  <p>
+    <strong>Moving around:</strong> drag the reads to move the view, or use the wheel. Ctrl+wheel, the
+    <strong>&minus;</strong> and <strong>+</strong> buttons or a double click zoom, from single bases to the whole region; the
+    length on screen is beside the buttons. Under 7 pixels per base the letters become ticks, past about 1.2 million aligned bases on screen (some 40 kb at 30&times;, all of a few long reads) only the
+    coverage is drawn, and mixed sites stay marked in it at any zoom. The box next to it goes to a position
+    (<code>12,345</code>), a range, which then fills the view (<code>12,000-13,000</code>), a gene of the loaded annotation
+    (any case, or the start of its name), or, on a region row like <code>chr7:1001-2000</code>, a position in the file's own
+    coordinates (<code>chr7:1,500</code>). The view runs from the first read to the last.
+  </p>
+  <p>
+    <strong>Rows beside the reads:</strong> with an annotation, a gene row shows exons, the coding part taller, and the strand; click a
+    gene to go to it. Open a <code>.vcf</code> or <code>.vcf.gz</code> with the SAM/BAM button after the reads for a row of sites
+    (blue a substitution, orange an indel) and a thin row per sample (up to 8: grey reference, blue heterozygous, light blue
+    homozygous for the change); hover for the details, click to open the reads there.
+    <strong>Compact</strong> gives rows of 4 pixels for a deep place.
+  </p>
+  <p>
+    <strong>Options:</strong> a minimum MAPQ leaves reads out of the picture, the coverage and the calls; <strong>Reads per 100 bp</strong> sets how many are drawn; the hidden kinds of read
+    can be drawn, but never count. <strong>Sort by</strong> orders the rows by the read at the marked column, or else the middle of
+    the view. <strong>Colour by</strong> shows strand, first-of-pair strand, MAPQ, insert size (red over 3 times the median, blue
+    under a third), pair orientation or a tag. <strong>Group by</strong> splits the pile into labelled parts: by strand, kind of read,
+    a tag such as HP, or the base at a column, which separates the two alleles of a site. <strong>View as pairs</strong> puts mates on
+    one row with a line between them. <strong>Show soft clips</strong> turns the dashed boxes off. A change on a poor base is drawn fainter (Phred 5 to 20). Right click a read to copy it or its soft
+    clips, go to its mate, or sort or group by the base there.
+  </p>
+  <p>
+    <strong>Checking a gene for mutations from reads:</strong>
+  </p>
+  <ol>
+    <li>Open the gene: a GenBank file with its CDS (the CDS, tRNA and rRNA features become the annotation
+      track: <code>join()</code> exons, <code>complement()</code>, <code>/codon_start</code>;
+      <code>/transl_table</code> sets the genetic code), or a FASTA plus a BED annotation (BED12 for exons and
+      the coding part).</li>
+    <li>Open its reads. <strong>Variants</strong> (next to Show bases) lists every change the reads carry:
+      position, change, zygosity, depth, allele %, alt and reference reads on each strand, and for each gene
+      the effect (synonymous, missense, stop gained or lost, start lost, frameshift, in-frame deletion or
+      insertion, splice site within 2 bases of an exon, intron, UTR), the coding change (<code>c.419G&gt;A</code>,
+      counted from the A of the start codon, complemented on a minus-strand gene) and the amino-acid change
+      (<code>p.R140Q</code>, <code>p.S51*</code>, <code>p.G170fs</code>). Notes flag alt reads on one strand
+      only, low depth, and heterozygous indels. Click a row for its reads (sorted by their base there),
+      double-click for its column in the alignment. <strong>Copy table</strong> / <strong>Save .tsv</strong>
+      take it to a spreadsheet. A change is called where a second base has at least 20% of the reads (and two
+      reads; heterozygous below 80%), from bases of quality 13 or more, with N where fewer than 3 reads cover a
+      base; indels are called as whole events, left-aligned in repeats.</li>
+    <li><strong>Sample &rarr; row</strong> adds the sample under the reference as an ordinary row and switches to
+      the Canvas view: the base most reads carry, an IUPAC code for two (heterozygous, e.g. R = A/G), a gap where
+      most reads carry a deletion, extra columns where most carry an insertion, N under 3 reads.
+      Heterozygous indels cannot be shown in one row (they are in the Variants list). Another sample's reads
+      file gets its own row, <code>&lt;reference&gt;_&lt;file name&gt;</code>. Undo removes a row again.</li>
+    <li>Switch on <strong>Codon analysis</strong> (Display menu): with genes on the annotation track each CDS is
+      translated in its own frame and strand, exons joined; each change is marked synonymous or
+      non-synonymous against row 1, a codon with a heterozygous base by both its alleles, a possible stop as a
+      stop, and an indel that breaks the frame as a frameshift. A translated codon's tooltip gives its number
+      in the gene (<code>R (CGA), codon 140</code>).</li>
+    <li>Codon realignment (<strong>MACSE&hellip;</strong>) is for coding sequences: rows with stop codons in every
+      frame (a gene with its flanks or introns) get a warning first, since an aligner explains each stop with
+      frameshifts. To realign one gene, click it on the annotation track (its columns are selected) and use
+      <strong>Realign Block</strong> (Alignment menu). Its summary counts frameshifts inside the sequences, not the padding of
+      fragments that start or end inside a codon.</li>
+  </ol>
+  <p>
+    The optional server also exposes <code>POST /api/bam2sam</code> (see 11.4), which converts a BAM or
+    CRAM file on the server's disk to SAM text with <code>samtools view -h</code>, for scripted use.
+  </p>
+
+  <h4 id="in-genome">Genome view: a whole genome with its reads</h4>
+  <p>
+    <strong>Open genome...</strong> in the Input menu opens a genome without loading it whole. Select the
+    reference FASTA and its <code>.fai</code> together, and optionally a BAM with its <code>.bai</code>
+    (make the indexes with <code>samtools faidx</code> and <code>samtools index</code>). Only the part you
+    look at is read from the files, so a human chromosome opens at once.
+  </p>
+  <ul>
+    <li>The <strong>chromosome list</strong> beside the zoom buttons changes chromosome; the jump box takes
+      <code>chr:position</code>, a position, or a chromosome name. <strong>Close genome</strong> closes the
+      genome and its reads.</li>
+    <li>Reads are shown as in the Reads view (above), read for the window on screen. A view whose reads would
+      cost more than 16 MB of compressed BAM shows coverage of nothing: zoom in and the reads appear. The
+      sample row is called for the window on screen.</li>
+    <li>Opening a genome closes the open alignment (the viewer asks first) and clears Undo.</li>
+    <li>Not read in the genome view yet: CRAM and <code>.crai</code>, <code>.csi</code> indexes, a compressed
+      FASTA (<code>.fa.gz</code>), VCF rows, and Sample &rarr; row. The viewer says which file is missing or
+      not readable when the selection does not fit.</li>
+  </ul>
+
+  <h3 id="in-snapshot">2.6 Snapshots (Save &amp; Load)</h3>
+  <p>
+    Snapshots capture alignment data, zoom, conservation settings, colour scheme, selected
+    rows/columns, search highlights, and custom colour assignments. They are stored as JSON

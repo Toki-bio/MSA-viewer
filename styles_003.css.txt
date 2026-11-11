@@ -1,0 +1,637 @@
+[styles.css lines 1770-2405 of ViewAlign fd8b8e4]
+#blockMaskOpacity {
+    width: 88px;
+    min-width: 88px;
+    max-width: 88px;
+    flex: none;
+    height: 18px;
+    margin: 0;
+    padding: 0;
+    vertical-align: middle;
+    overflow: visible;
+}
+#biclusterPaintMode {
+    flex: 1 1 160px;
+    min-width: 150px;
+    max-width: 100%;
+    height: 24px;
+    font-size: 11px;
+    box-sizing: border-box;
+}
+
+/* Trim preview: tint plus strike-through (the residues will be removed); the strike stays
+   visible when a search, TSD or SNP mark owns the fill */
+.seq-line:not(.consensus-line) .seq-data span.trim-left {
+    background-color: rgba(255, 107, 107, 0.28) !important;
+    text-decoration-line: line-through;
+}
+.seq-line:not(.consensus-line) .seq-data span.trim-right {
+    background-color: rgba(78, 205, 196, 0.28) !important;
+    text-decoration-line: line-through;
+}
+.consensus-line .seq-data span.trim-left,
+.consensus-line .seq-data span.trim-right {
+    cursor: ew-resize;
+    user-select: none;
+}
+.consensus-line .seq-data span.trim-edge-left,
+.consensus-line .seq-data span.trim-edge-right {
+    cursor: ew-resize;
+    box-shadow: inset 0 0 0 2px #222;
+}
+.block-block {
+    margin-bottom: 24px;
+}
+.block-sep {
+    font-weight: bold;
+    color: #666;
+    text-align: center;
+    margin: 4px 0;
+    padding: 2px 0;
+    background: var(--block-sep-bg);
+    border-radius: 3px;
+}
+#alignmentContainer {
+    position: static; /* flow in document under controls/status */
+    margin: 0;
+    padding: 2px 0.5rem 0 0.5rem;
+    overflow-x: auto;
+    overflow-y: auto;
+    background: white;
+    font-family: 'Courier New', monospace;
+    /* Performance: GPU compositing hint for large alignments */
+    will-change: scroll-position, top;
+    transition: top 0.12s ease-out;
+    /* --row-h: the height of a row = font size + 2 px, snapped to whole device pixels (set by
+       _syncResidueWidthVar; the fallback is the 13 px default). 1.0 (13 px for 13 px letters) left a white
+       letter's top flush with a white cell above it at browser zoom 90 % (owner, 2026-10-23). */
+    --row-h: 15px;
+    /* --text-dy: how far the letters move down from where the browser puts them, so that the capitals
+       are centred in the row as in Canvas (set with --row-h; 0 when the browser's place is right) */
+    --text-dy: 0px;
+    /* --row-overlap: two device pixels (one was not always enough, 2026-11-09: see _syncResidueWidthVar) at a fractional browser zoom (90 %, 110 %, 125 %...), 0 at a whole one:
+       each cell paints that much under the cell below it, because --row-h asks for whole device pixels but
+       layout keeps 1/64 px units, so row edges fall between device pixels and a blended, lighter row showed
+       between two shaded rows (at 90 % a grey line between two black rows, v274). */
+    --row-overlap: 0px;
+    line-height: var(--row-h);
+    white-space: pre;
+    border: 1px solid #ddd;
+    border-top: 0;
+    font-size: 13px;
+    transition: font-size 0.1s;
+    user-select: none;
+    -moz-user-select: none;
+    -webkit-user-select: none;
+    -ms-user-select: none;
+    /* Instant scroll updates during drag to avoid jank */
+    scroll-behavior: auto;
+    /* Virtualized rows/spacers preserve geometry explicitly. Browser scroll
+       anchoring fights those updates and visibly shifts scrollTop afterward. */
+    overflow-anchor: none;
+    z-index: 1; /* Ensure it's below the fixed menu (z-index: 1000) when menu appears */
+}
+/* Hide native horizontal scrollbar so only the custom bar is visible */
+#alignmentContainer::-webkit-scrollbar:horizontal { height: 0; }
+#alignmentContainer::-webkit-scrollbar { display: none; }
+#alignmentContainer { -ms-overflow-style: none; scrollbar-width: none; }
+/* Full-mode row virtualization: invisible spacers that stand in for the
+   rows currently scrolled out of view, so native scrolling still reflects
+   the alignment's true full height even though only a window of rows is
+   actually rendered as DOM. */
+.full-mode-row-spacer { display: block; margin: 0; padding: 0; pointer-events: none; }
+    /* revert layout: seq-line stretches to container width */
+.seq-line {
+    display: flex;
+    font-family: 'Courier New', monospace;
+    line-height: var(--row-h, 15px);
+    margin: 0;
+    padding: 0;
+    white-space: nowrap;
+    user-select: none;
+    -moz-user-select: none;
+    -webkit-user-select: none;
+    -ms-user-select: none;
+    align-items: flex-start;
+    position: relative;
+    min-width: max-content;
+    height: var(--row-h, 15px);
+}
+
+/* Persistent tiny scrollbar area below the alignment */
+.horizontal-scrollbar {
+    width: 100%;
+    height: 8px; /* slim persistent scrollbar (owner, 2026-10-23: slimmer, no empty band above it) */
+    background: transparent; /* Remove yellow coloring to avoid visual glitch */
+    border-top: 0;
+    overflow-x: auto;
+    overflow-y: hidden;
+    position: sticky;
+    bottom: 0;
+    z-index: 50;
+    box-sizing: content-box;
+    cursor: default;   /* the plain arrow: the grab hand was a white hand with a barely visible border (owner) */
+    user-select: none;
+    touch-action: pan-x;
+}
+
+.horizontal-scrollbar-thumb { height: 1px; }
+.horizontal-scrollbar.grabbing { cursor: default; }
+
+/* Invisible larger hit area around the tiny bar */
+.horizontal-scrollbar::before {
+    content: '';
+    position: absolute;
+    left: 0; right: 0;
+    top: -10px; bottom: -10px; /* 10px larger on both sides */
+    /* Keep it transparent but receive pointer events */
+    background: transparent;
+    pointer-events: auto;
+}
+
+/* Vertical counterpart of .horizontal-scrollbar. Native alignment scrollbars
+   are hidden, so JS shows this control for Canvas and scrollable Full/Block
+   modes, sizes it to the alignment viewport, and synchronizes the active
+   mode's Canvas offset or DOM scrollTop. */
+.vertical-scrollbar {
+    position: absolute;
+    top: 0;
+    right: 0;
+    width: 8px;
+    background: transparent;
+    overflow-y: auto;
+    overflow-x: hidden;
+    z-index: 50;
+    box-sizing: content-box;
+    cursor: default;
+    user-select: none;
+    touch-action: pan-y;
+    display: none; /* JS shows this only while the active mode can scroll */
+}
+.vertical-scrollbar-thumb { width: 1px; flex: none; }
+.vertical-scrollbar.grabbing { cursor: default; }
+.vertical-scrollbar::before {
+    content: '';
+    position: absolute;
+    top: 0; bottom: 0;
+    left: -10px; right: -10px;
+    background: transparent;
+    pointer-events: auto;
+}
+
+/* The persistent bars draw their own track and grip (_attachScrollbarGrip in script.js): the
+   browser's scrollbar is hidden. Dragging Chrome's native thumb ran alongside the app's own drag,
+   and on Windows Chrome snaps a native thumb back once the pointer strays off the bar. The track
+   is sticky, so it stays put while the bar's content (the -thumb spacer) scrolls under it. */
+.horizontal-scrollbar, .vertical-scrollbar { scrollbar-width: none; }
+.horizontal-scrollbar::-webkit-scrollbar, .vertical-scrollbar::-webkit-scrollbar { display: none; }
+.vertical-scrollbar { flex-direction: row; align-items: flex-start; }
+.scrollbar-track {
+    position: sticky;
+    left: 0;
+    top: 0;
+    flex: none;
+    background: transparent;   /* the grip alone: a light track read as an empty band above the alignment's end */
+}
+.horizontal-scrollbar > .scrollbar-track { width: 100%; height: 8px; }
+.vertical-scrollbar > .scrollbar-track { width: 8px; height: 100%; }
+.scrollbar-grip {
+    position: absolute;
+    left: 0;
+    top: 0;
+    background: #c4c4c4;
+    border-radius: 4px;
+    border: 1px solid transparent;
+    background-clip: padding-box;
+    box-sizing: border-box;
+    will-change: transform;
+}
+.horizontal-scrollbar > .scrollbar-track > .scrollbar-grip { height: 8px; }
+.vertical-scrollbar > .scrollbar-track > .scrollbar-grip { width: 8px; }
+.horizontal-scrollbar:hover .scrollbar-grip, .vertical-scrollbar:hover .scrollbar-grip { background-color: #a8a8a8; }
+.horizontal-scrollbar.grabbing .scrollbar-grip, .vertical-scrollbar.grabbing .scrollbar-grip { background-color: #787878; }
+
+/* Utility to temporarily disable text selection during drag */
+.no-select { user-select: none !important; }
+
+/* Optional: ensure container stacks alignment and bar vertically */
+#viewer-container {
+    position: relative;
+    display: flex;
+    flex-direction: column;
+    gap: 0;
+    margin-top: var(--controls-offset);
+}
+.seq-line.context-menu-highlight {
+    background-color: rgba(255, 215, 0, 0.2);
+    outline: 2px solid rgba(255, 215, 0, 0.5);
+    outline-offset: -1px;
+}
+
+/* Drag reorder: indicator line in seq-name area only */
+.seq-name.drag-insert-above {
+    box-shadow: 0 -2px 0 0 #1976D2;
+}
+.seq-name.drag-insert-below {
+    box-shadow: 0 2px 0 0 #1976D2;
+}
+/* Highlight the sequence(s) being dragged */
+.seq-name.drag-source {
+    background: #e3f2fd !important;
+    color: #1565C0 !important;
+}
+.seq-name {
+    flex: 0 0 auto;
+    min-width: calc(var(--nameLen) * 1ch + 16px + var(--name-gap));
+    width: calc(var(--nameLen) * 1ch + 16px + var(--name-gap));
+    max-width: calc(var(--nameLen) * 1ch + 16px + var(--name-gap));
+    text-align: left;
+    padding: 0 calc(4px + var(--name-gap)) 0 12px;
+    margin-right: 0;
+    margin-left: -12px;
+    /* Clip horizontally only (ellipsis). overflow:hidden also clipped the tops of the glyphs, because
+       .seq-name-text is raised by 0.16em inside a row that is exactly 1em high; at fractional browser
+       zoom (90%, 110%, 125%) the capital tops were cut off. */
+    overflow-x: clip;
+    overflow-y: visible;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    font-weight: bold;
+    color: #333;
+    background: white;
+    cursor: default;
+    position: sticky;
+    left: -15px;
+    z-index: 50;
+    user-select: none;
+    -moz-user-select: none;
+    -webkit-user-select: none;
+    -ms-user-select: none;
+    contain: style;
+    line-height: var(--row-h, 15px);
+    height: var(--row-h, 15px);
+    box-sizing: border-box;
+    padding-bottom: 0;
+}
+/* Raise glyphs inside the 1em row so Courier '_' (font descent) is visible
+   without adding a spacer between sequences. Do not put transform on
+   .seq-name itself: that breaks position:sticky. */
+/* 0.9em in a 1em row: a visible gap between a name's underscores and the
+   capitals of the row below (at 1em the rows touched). top: .09em keeps the
+   smaller glyphs on the same baseline as the sequence letters. The row's extra height over 1em
+   (--row-h - 1em) is split above and below the sequence letters, so half of it goes here too. */
+.seq-name-text {
+    position: relative;
+    top: calc((var(--row-h, 15px) - 1em) / 2 + 0.09em + var(--text-dy, 0px));
+    display: inline-block;
+    max-width: 100%;
+    white-space: nowrap;
+    font-size: 0.9em;
+    line-height: 1em;
+    vertical-align: top;
+}
+.seq-name.static {
+    position: static;
+}
+.seq-name:hover {
+    background-color: #f0f0f0;
+    color: #000;
+}
+
+body.row-reorder-active .seq-name:hover {
+    background-color: white;
+    color: #333;
+}
+
+body.row-reorder-active .seq-name.drag-source:hover {
+    background: #e3f2fd !important;
+    color: #1565C0 !important;
+}
+.seq-name.selected::before {
+    content: '';
+    position: absolute;
+    left: -3px;
+    top: 0;
+    bottom: 0;
+    width: 3px;
+    background: #0066ff;
+    border-radius: 2px;
+}
+.seq-data {
+    flex: 1 1 auto;
+    display: inline-block;
+    white-space: nowrap;
+    margin: 0;
+    padding: 0;
+    line-height: var(--row-h, 15px);
+    /* Performance: isolate layout within each row */
+    contain: layout style;
+    cursor: default;
+    user-select: none;
+    -moz-user-select: none;
+    -webkit-user-select: none;
+    -ms-user-select: none;
+    overflow: visible;
+}
+
+/* Residue case toggle (GeneDoc-style) */
+.residue-case-upper .seq-data,
+.residue-case-upper .gap { text-transform: uppercase; }
+.residue-case-lower .seq-data,
+.residue-case-lower .gap { text-transform: lowercase; }
+.residue-case-upper .consensus-line .seq-data,
+.residue-case-lower .consensus-line .seq-data { text-transform: none; }
+.residue-case-upper .annot-track-data,
+.residue-case-lower .annot-track-data { text-transform: none; }   /* feature names are not residues (Canvas draws them as written) */   /* the consensus row's case says whether the column is above the threshold */
+.case-switch { margin-left: 4px; }
+#quickModeSwitch label { padding: 0 3px; min-width: 7px; }   /* the compact view switch (the rule below, later, set 6px) */
+.case-switch label { font-family: 'Courier New', monospace; font-size: 10px; padding: 0 3px; letter-spacing: -0.5px; }
+
+.seq-length {
+    display: inline-block;
+    margin-left: 6px;
+    padding: 0 4px;
+    background-color: #f0f0f0;
+    border: 1px solid #ccc;
+    border-radius: 3px;
+    font-size: 0.85em;
+    color: #666;
+    font-weight: bold;
+    vertical-align: baseline;
+    line-height: var(--row-h, 15px);
+    position: relative;
+    top: var(--text-dy, 0px);     /* with the letters, which sit --text-dy under the line's baseline */
+}
+
+.active-searches {
+    display: none;
+    margin-top: 4px;
+    padding: 4px;
+    background: #f8f8f8;
+    border-radius: 3px;
+    font-size: 11px;
+    border: 1px solid #ddd;
+}
+
+.search-item {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    margin: 2px 4px 2px 0;
+    padding: 2px 6px;
+    background: white;
+    border-radius: 3px;
+    border: 1px solid #ccc;
+}
+
+.search-swatch {
+    width: 12px;
+    height: 12px;
+    border: 1px solid #666;
+    border-radius: 2px;
+    flex-shrink: 0;
+}
+
+.search-remove {
+    background: none;
+    border: none;
+    color: #999;
+    cursor: pointer;
+    font-size: 14px;
+    line-height: 1;
+    padding: 0;
+    margin-left: 2px;
+}
+
+.section-header {
+    font-weight: bold;
+    font-size: 10px;
+    margin: 0;
+    padding: 1px 4px;
+    background: #f0f0f0;
+    border-radius: 4px 4px 0 0;
+    border: 1px solid #ccc;
+    cursor: pointer;
+    user-select: none;
+    display: inline-flex;
+    align-items: center;
+    gap: 2px;
+    height: 14px;
+    line-height: 14px;
+    color: #2c3e50;
+    transition: background-color 0.2s;
+    white-space: nowrap;
+}
+
+.section-header span {
+    white-space: nowrap;
+}
+
+#controls .control-row > div[style*="margin-left: auto"] {
+    flex: 0 0 auto;
+    min-width: 220px;
+    max-width: 55vw;
+    white-space: nowrap !important;
+}
+
+#headerInfoPanel {
+    /* min-width set by _fitHeaderInfoPanel (script.js): the file line's own width up to
+       300px; beyond that the file name shrinks with an ellipsis. Basis 0: the line
+       wraps by that min-width, not by the full title's width */
+    flex: 1 1 0;
+    min-width: 0;
+    max-width: min(44vw, 780px);
+    /* room the capped panel cannot take goes to its left: it stayed on the right, so with a short menu line
+       (Canvas on a wide screen) the file line sat 74px from the edge */
+    margin-left: auto;
+    overflow: hidden;
+    display: flex;
+    flex-direction: column;
+    align-items: flex-end;
+    justify-content: center;
+    /* 10 + 2 + 12 = 24px: an even height like the menu buttons' (14/18/20px), so centring
+       them in the row it sets leaves no half pixel (see #sourceInfo's line-height) */
+    gap: 2px;
+    padding-right: 8px;
+    padding-left: 14px;
+    pointer-events: none;
+}
+
+#actions-section {
+    flex: 0 0 auto;
+}
+
+#sourceInfo .source-file-label {
+    flex: 0 1 auto;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+#sourceInfo .source-counts {
+    flex: 0 0 auto;
+    white-space: pre;
+}
+#sourceInfo.measure-natural .source-file-label {
+    flex-shrink: 0;
+}
+/* measured unconstrained: on a full menu line (the view switch on it until placeModeRow moves it) the panel
+   was narrow and the measure came out short, so the file name stayed cut once the line had room */
+#sourceInfo.measure-natural {
+    max-width: none;
+}
+
+#sourceInfo {
+    display: flex;
+    justify-content: flex-end;
+    flex: 0 0 auto;
+    min-width: 0;
+    max-width: 100%;
+    /* whole px: this panel sets the menu row's height, and a fractional height (1.1 gave
+       23.09px) put every centred menu button on a .55px offset, which a 1x screen rounds
+       up: the labels sat high on a Full HD monitor but not on a 2x one */
+    line-height: 12px;
+    pointer-events: auto;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    text-align: right;
+    font-size: 11px;
+    color: #555;
+}
+
+.header-info-row {
+    justify-content: flex-end;
+    padding-top: 0;
+    padding-bottom: 2px;
+    min-height: 16px;
+}
+
+#sourcePathLine {
+    max-width: min(72vw, 1200px);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    text-align: right;
+    font-size: 10px;
+    line-height: 11px;   /* whole px, see #sourceInfo */
+    color: #999;
+    font-family: 'Courier New', monospace;
+    pointer-events: auto;
+}
+
+#sourceInfo .source-file-name,
+#sourceInfo .source-inline-path {
+    font-size: 10px;
+    color: #999;
+    font-family: 'Courier New', monospace;
+    pointer-events: auto;
+    cursor: copy;
+}
+
+#sourceInfo .source-file-name {
+    font-size: 11px;
+    color: #555;
+    font-family: inherit;
+}
+
+#versionIndicator {
+    font-size: 10px;
+    color: #666; /* #888 failed WCAG AA contrast on white */
+    line-height: 10px;
+    text-align: right;
+    white-space: nowrap;
+    flex: 0 0 auto;
+    pointer-events: auto;
+}
+#versionIndicator a { color: #666; }
+#versionIndicator a:hover { color: #333; text-decoration: underline; }
+
+body.suppress-menu-hover #controls .menu-section.menu-open .control-group {
+    display: none !important;
+}
+
+.section-header:hover {
+    background: #e0f0ff;
+}
+
+.section-header .toggle-icon {
+    font-size: 10px;
+    color: #666;
+    transition: transform 0.2s;
+    margin-left: 4px;
+}
+
+.section-header.collapsed .toggle-icon {
+    transform: rotate(-90deg);
+}
+
+.control-group {
+    background: #ffffff;
+}
+
+/* Reset any problematic styling in menu items */
+.control-group .slider-container {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    margin: 2px 0;
+    height: auto;
+}
+
+.control-group .shade-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin: 0;
+    height: auto;
+}
+
+.control-group.collapsed {
+    display: none !important;
+}
+
+.search-remove:hover {
+    color: #666;
+}
+
+.seq-data span {
+    user-select: none;
+    -moz-user-select: none;
+    -webkit-user-select: none;
+    -ms-user-select: none;
+    display: inline-block;
+    vertical-align: top;
+    margin: 0;
+    padding: calc(2 * var(--text-dy, 0px)) 0 var(--row-overlap, 0px) 0;   /* top, twice --text-dy: moves the baseline down by
+                               --text-dy (the shorter line box takes half of it back as leading); bottom: the overlap */
+    line-height: calc(var(--row-h, 15px) - 2 * var(--text-dy, 0px));
+    /* No position/z-index here: it made each of the (up to ~500k) residue spans its own
+       paint layer, and every click hit-tested all of them (~0.3 s per click at 316k spans,
+       ~1.1 s per column click). Screenshots are pixel-identical without it. */
+}
+.seq-data span.seq-length {
+    margin-left: 8px !important;
+}
+.seq-data:active {
+    cursor: default;
+}
+
+.seq-data:hover {
+    cursor: default;
+}
+
+body.edit-mode-active[data-edit-tool="moveNoGaps"] .seq-data,
+body.edit-mode-active[data-edit-tool="slideKeepGaps"] .seq-data {
+    cursor: default;
+}
+
+body.edit-mode-active[data-edit-tool="insertGapSeq"] .seq-data,
+body.edit-mode-active[data-edit-tool="deleteGapSeq"] .seq-data,
+body.edit-mode-active[data-edit-tool="insertGapOther"] .seq-data,
+body.edit-mode-active[data-edit-tool="deleteGapOther"] .seq-data,
+body.edit-mode-active[data-edit-tool="insertGapAll"] .seq-data,
+body.edit-mode-active[data-edit-tool="deleteGapAll"] .seq-data,
+body.edit-mode-active[data-edit-tool="selectColumn"] .seq-data {
+    /* a crosshair with a white halo: the plain one was invisible on black and grey cells (owner, 2026-10-23) */
+    cursor: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='25' height='25' viewBox='0 0 25 25'><g stroke='%23fff' stroke-width='4.5' stroke-linecap='round'><path d='M12.5 2v21M2 12.5h21'/></g><g stroke='%23000' stroke-width='1.5' stroke-linecap='round'><path d='M12.5 2v21M2 12.5h21'/></g></svg>") 12 12, crosshair;
+}

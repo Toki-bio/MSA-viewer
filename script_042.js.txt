@@ -1,0 +1,476 @@
+[script.js lines 17742-18216 of ViewAlign fd8b8e4]
+function redoAction(quiet) {
+    _rowSelAtPush = null;
+    _scheduleSearchRecount();
+    quiet = quiet === true;   // also called as a click handler, with the event as argument
+    if (state.redoHistory.length === 0) {
+        if (!quiet) showMessage("Nothing to redo.", 3000);
+        return;
+    }
+    const next = state.redoHistory.pop();
+    if (next.patchType === 'row-seq') {
+        state.deletedHistory.push(next);
+        if (applyRowSeqPatch(next, true, quiet)) {
+            state.lastAction = null;
+            if (!quiet) showMessage(`Redo: ${undoEntryLabel(next)}`, 2000);
+        }
+        return;
+    }
+    // Save current state to undo stack before redo, under the redone action's name
+    const undoEntry = {
+        type: next.type,
+        label: next.label,
+        seqs: _undoSnapshotSeqs(),
+        selectedRows: new Set(state.selectedRows),
+        selectedColumns: new Set(state.selectedColumns)
+    };
+    if (next.colStateAfter) undoEntry.colStateBefore = _snapshotColumnState();
+    undoEntry.colours = colourState?.mappings ? new Map(colourState.mappings) : null;
+    undoEntry.groupOrder = state.clusterResults?.clusters ? state.clusterResults.clusters.slice() : null;
+    state.deletedHistory.push(undoEntry);
+    const namesBeforeRedo = new Set(state.seqs.map(q => q.header));
+    const nameCountsBeforeRedo = new Map(); for (const q of state.seqs) nameCountsBeforeRedo.set(q.header, (nameCountsBeforeRedo.get(q.header) || 0) + 1);
+    state.seqs = _undoRestoreSeqs(next.seqs);
+    if (typeof _statsInvalidate === 'function') _statsInvalidate(false);
+    _restoreNameColours(next.colours, namesBeforeRedo, nameCountsBeforeRedo);
+    _restoreGroupOrder(next.groupOrder);
+    if (next.colStateAfter) _restoreColumnState(next.colStateAfter);
+    state.selectedRows = next.selectedRows || new Set();
+    state.selectedColumns = next.selectedColumns || new Set();
+    state.selectedNucs.clear();
+    state.lastAction = null;
+    _paneEditNote?.();   // and Redo
+    if (quiet) return;
+    renderAlignment();
+    showMessage(`Redo: ${undoEntryLabel(next)}`, 2000);
+}
+function copySelected() {
+    if (state.selectedNucs.size > 0) {
+        const text = buildNucCopyText();
+        if (text) {
+            const preview = text.length > 50 ? text.slice(0, 50) + '...' : text;
+            navigator.clipboard.writeText(text).then(() => {
+                showMessage(`Copied ${text.length} bp: ${preview}`, 4000);
+            }).catch(err => {
+                console.error('Copy failed:', err);
+                showMessage("Failed to copy. Check console.", 5000);
+            });
+        }
+        return;
+    }
+    // Removed "No sequence selected" message - silent if nothing to copy
+    if (state.selectedRows.size === 0) {
+        return;
+    }
+    const fasta = _selectedRowsFastaText();
+    navigator.clipboard.writeText(fasta).then(() => {
+        showMessage(_foldVisibleOnly() ? 'Selected sequences copied as FASTA (visible columns only)' : "Selected sequences copied as FASTA!", 2000);
+    }).catch(err => {
+        console.error('Copy failed:', err);
+        showMessage("Failed to copy. Check console.", 5000);
+    });
+}
+function copyAlignment() {
+    if (!state.seqs || state.seqs.length === 0) {
+        showMessage("No alignment loaded to copy.", 3000);
+        return;
+    }
+    const fasta = _alignmentFastaText();
+    navigator.clipboard.writeText(fasta).then(() => {
+        const seqCount = state.seqs.length;
+        const seqLen = state.seqs[0]?.seq.length || 0;
+        showMessage(_foldVisibleOnly() ? `Copied ${seqCount} sequences, visible columns only (${seqLen - _foldCount()} of ${seqLen})` : `Copied ${seqCount} sequences (${seqLen} bp) to clipboard!`, 2500);
+    }).catch(err => {
+        console.error('Copy failed:', err);
+        showMessage("Failed to copy. Check console.", 5000);
+    });
+}
+function downloadAlignment() {
+    if (!state.seqs || state.seqs.length === 0) {
+        showMessage("No alignment loaded to save.", 3000);
+        return;
+    }
+    const fasta = _alignmentFastaText();
+    const filename = (state.currentFilename || 'alignment').replace(/\.[^.]+$/, '') + (_foldVisibleOnly() ? '_visible' : '') + '.fasta';
+    const blob = new Blob([fasta], { type: 'text/plain;charset=utf-8' });
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = filename;
+    a.click();
+    URL.revokeObjectURL(a.href);
+    showMessage(`Saved ${state.seqs.length} sequences as ${filename}`, 2000);
+}
+
+function _aaStringFromCodonFrameData(frameData, seqIdx) {
+    const entries = frameData?.aaSeq?.[seqIdx];
+    if (!entries || !entries.length) return '';
+    return entries.map(e => e.aa).join('');
+}
+
+function buildAATranslationFasta() {
+    if (!state._codonFrames?.frames || !state.seqs?.length) return null;
+    const frameSel = document.getElementById('codonFrame')?.value || 'auto';
+    const parts = [];
+    if (state._codonFrames.byGene) {
+        // One record per row and gene, each gene read in its own direction
+        const frData = state._codonFrames.frames[0];
+        for (let i = 0; i < state.seqs.length; i++) {
+            const s = state.seqs[i];
+            const hdr = s.fullHeader || s.header;
+            for (const g of _aaByGene(frData, i)) {
+                if (!g.aa) continue;
+                parts.push(`>${hdr} gene=${g.gene}${g.strand === '-' ? ' strand=-' : ''}`);
+                parts.push(g.aa);
+            }
+        }
+        return parts.length ? parts.join('\n') : null;
+    }
+    const pushFrame = (fr, headerSuffix) => {
+        const frData = state._codonFrames.frames[fr];
+        if (!frData) return;
+        for (let i = 0; i < state.seqs.length; i++) {
+            const s = state.seqs[i];
+            const aa = _aaStringFromCodonFrameData(frData, i);
+            const hdr = s.fullHeader || s.header;
+            parts.push(`>${headerSuffix ? hdr + headerSuffix : hdr}`);
+            parts.push(aa);
+        }
+    };
+    if (frameSel === 'all') {
+        for (let fr = 0; fr < 3; fr++) pushFrame(fr, `_pos${fr + 1}`);
+    } else {
+        let fr;
+        if (frameSel === 'auto') fr = state._codonFrames.bestFrame ?? 0;
+        else fr = parseInt(frameSel, 10) || 0;
+        pushFrame(fr, '');
+    }
+    return parts.length ? parts.join('\n') : null;
+}
+
+function frameSelCount() {
+    const frameSel = document.getElementById('codonFrame')?.value || 'auto';
+    const n = state.seqs?.length || 0;
+    if (state._codonFrames?.byGene) return n * (state._codonData?.genes || 1);
+    return frameSel === 'all' ? n * 3 : n;
+}
+
+function copyAATranslation() {
+    const fasta = buildAATranslationFasta();
+    if (!fasta) {
+        showMessage('No amino acid translation available. Enable Codon analysis first.', 3000);
+        return;
+    }
+    const seqCount = (fasta.match(/^>/gm) || []).length;   // the records copied (rows x frames over-counted rows without a gene)
+    navigator.clipboard.writeText(fasta).then(() => {
+        showMessage(`Copied ${seqCount} amino acid sequence(s) to clipboard!`, 2000);
+    }).catch(err => {
+        console.error('Copy failed:', err);
+        showMessage('Failed to copy. Check console.', 5000);
+    });
+}
+
+function downloadAATranslation() {
+    const fasta = buildAATranslationFasta();
+    if (!fasta) {
+        showMessage('No amino acid translation available. Enable Codon analysis first.', 3000);
+        return;
+    }
+    const base = (state.currentFilename || 'alignment').replace(/\.[^.]+$/, '');
+    const frameSel = document.getElementById('codonFrame')?.value || 'auto';
+    const suffix = frameSel === 'all' ? '_aa_all_frames' : '_aa';
+    const filename = base + suffix + '.fasta';
+    const blob = new Blob([fasta], { type: 'text/plain;charset=utf-8' });
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = filename;
+    a.click();
+    URL.revokeObjectURL(a.href);
+    showMessage(`Saved ${frameSelCount()} amino acid sequence(s) as ${filename}`, 2000);
+}
+function copyPlainSingle(index) {
+    const s = state.seqs[index];
+    navigator.clipboard.writeText(s.seq).then(() => {
+        showMessage("Sequence copied as plain text!", 2000);
+    }).catch(err => {
+        console.error('Copy failed:', err);
+        showMessage("Failed to copy. Check console.", 5000);
+    });
+}
+// The consensus of the rows as they are now (gaps removed): the cached one while it still matches
+// the rows, else computed. state.consensusSeq is refreshed only while the Consensus row is shown.
+function _currentConsensusUngapped() {
+    if (!state.seqs.length) return '';
+    const len = _maxOf(state.seqs, q => q.seq.length);
+    const c = state.consensusCache;
+    const values = (c && c.len === len && c.fp === _seqsFingerprint()) ? c.values.join('') : computeConsensusForSequences(state.seqs.map(q => q.seq));
+    return values.replace(/-/g, '');
+}
+
+function copyConsensus() {
+    state.consensusSeq = _currentConsensusUngapped();
+    if (!state.consensusSeq) {
+        showMessage("No consensus available to copy.", 3000);
+        return;
+    }
+    const seqCount = state.seqs.length;
+    const fasta = `>consensus_${seqCount}seqs\n${state.consensusSeq}`;
+    navigator.clipboard.writeText(fasta).then(() => {
+        showMessage("Consensus copied as FASTA!", 2000);
+    }).catch(err => {
+        console.error('Copy failed:', err);
+        showMessage("Failed to copy. Check console.", 5000);
+    });
+}
+function copySelectedConsensus() {
+    if (state.selectedRows.size < 2) {
+        showMessage("Select at least 2 sequences to compute consensus.", 3000);
+        return;
+    }
+    const selectedSeqs = Array.from(state.selectedRows).map(i => state.seqs[i].seq);
+    const len = _maxOf(selectedSeqs, s => s.length);
+    const opts = _getConsensusOptions();
+    const consArr = [];
+    for (let pos = 0; pos < len; pos++) consArr.push(_computeConsensusCharForColumn(selectedSeqs, pos, opts));
+    // By default we copy consensus without gaps, mirroring Copy Consensus behavior
+    const consStr = consArr.join('');
+    const gapless = consStr.replace(/-/g, '');
+    const fasta = `>Selected_Consensus\n${gapless}`;
+    navigator.clipboard.writeText(fasta).then(() => {
+        showMessage("Selected sequences consensus copied as FASTA!", 2000);
+    }).catch(err => {
+        console.error('Copy failed:', err);
+        showMessage("Failed to copy. Check console.", 5000);
+    });
+}
+function copySelectedColumns() {
+    if (state.selectedColumns.size === 0) {
+        showMessage("No columns selected to copy.", 3000);
+        return;
+    }
+    const cols = Array.from(state.selectedColumns).sort((a,b) => a - b);
+    const fasta = state.seqs.map(s => {
+        const seq = degapResidues(cols.map(pos => s.seq[pos] || '').join(''));
+        return `>${_fastaDefline(s)}\n${seq}`;
+    }).join('\n');
+    navigator.clipboard.writeText(fasta).then(() => {
+        showMessage("Selected columns copied as FASTA (ungapped)!", 2000);
+    }).catch(err => {
+        console.error('Copy failed:', err);
+        showMessage("Failed to copy.", 5000);
+    });
+}
+// Ctrl+D with residues selected (a plain drag) instead of columns: the columns from the
+// leftmost to the rightmost selected residue. Asked first when the selection does not
+// cover every sequence, since the columns go from all of them.
+function deleteColumnsOfResidueSelection(skipConfirm) {
+    let lo = Infinity, hi = -1;
+    for (const set of state.selectedNucs.values()) for (const p of set) { if (p < lo) lo = p; if (p > hi) hi = p; }
+    if (hi < 0) return;
+    const rows = state.selectedNucs.size, n = state.seqs.length, cols = hi - lo + 1;
+    const partial = rows < n;
+    if ((partial || !skipConfirm) && !confirm(`Delete ${cols === 1 ? 'column ' + (lo + 1).toLocaleString() : `columns ${(lo + 1).toLocaleString()}-${(hi + 1).toLocaleString()} (${cols.toLocaleString()})`} from all ${n} sequences?` + (partial ? ` The selection covers ${rows} of them.` : ''))) return;
+    state.selectedColumns.clear();
+    for (let p = lo; p <= hi; p++) state.selectedColumns.add(p);
+    state.selectedNucs.clear();
+    state.pendingNucStart = null;
+    deleteSelectedColumns(true);
+}
+
+function deleteSelectedColumns(skipConfirm) {
+    if (state.selectedColumns.size === 0) {
+        showMessage("No columns selected for deletion.", 3000);
+        return;
+    }
+    // Deleting every column left zero-length sequences
+    const width = state.seqs.reduce((m, q) => Math.max(m, q.seq.length), 0);
+    let kept = 0;
+    for (let c = 0; c < width && !kept; c++) if (!state.selectedColumns.has(c)) kept++;
+    if (!kept) {
+        showMessage("Cannot delete every column.", 3000);
+        return;
+    }
+    if (skipConfirm || confirm(`Delete ${state.selectedColumns.size} column(s)?`)) {
+        pushUndo('deleteColumns');
+        const colsToDelete = Array.from(state.selectedColumns).sort((a,b) => b - a);
+        applyColumnEdit({ type: 'delete', cols: colsToDelete });
+        state.seqs = state.seqs.map(s => {
+            let seq = s.seq.split('');
+            for (const pos of colsToDelete) {
+                if (pos < seq.length) seq.splice(pos, 1);
+            }
+            s.gaplessPositions = calculateGaplessPositions(seq.join(''));
+            return { ...s, seq: seq.join('') };
+        });
+        state.selectedColumns.clear();
+        state.lastAction = 'deleteColumns';
+        renderAlignment();
+        showMessage("Columns deleted!", 2000);
+    }
+}
+function selectAllSequences() {
+    if (state.selectedRows.size === state.seqs.length) {
+        state.selectedRows.clear();
+        showMessage("All sequences deselected.", 2000);
+    } else {
+        state.selectedRows.clear();
+        for (let i = 0; i < state.seqs.length; i++) {
+            state.selectedRows.add(i);
+        }
+        showMessage("All sequences selected.", 2000);
+    }
+    updateRowSelections();
+}
+function moveSelectedUp() {
+    if (state.selectedRows.size === 0) { showMessage('No sequences selected.', 2000); return; }
+    const indices = Array.from(state.selectedRows).sort((a, b) => a - b);
+    // already at the top: no undo step (it used to push one and clear Redo)
+    if (indices[0] === 0) { showMessage('Already at the top.', 2000); return; }
+    pushUndo('order');
+    const newSeqs = [...state.seqs];
+    const group = indices.map(i => newSeqs[i]);
+    for (let j = indices.length - 1; j >= 0; j--) {
+        newSeqs.splice(indices[j], 1);
+    }
+    const insertPos = indices[0] - 1;
+    newSeqs.splice(insertPos, 0, ...group);
+    state.seqs = newSeqs;
+    state.selectedRows.clear();
+    for (let k = 0; k < indices.length; k++) {
+        state.selectedRows.add(insertPos + k);
+    }
+    renderAlignment();
+    showMessage("Sequences moved up!", 2000);
+}
+function moveSelectedDown() {
+    if (state.selectedRows.size === 0) { showMessage('No sequences selected.', 2000); return; }
+    const indices = Array.from(state.selectedRows).sort((a, b) => a - b);
+    if (indices[indices.length - 1] === state.seqs.length - 1) { showMessage('Already at the bottom.', 2000); return; }
+    pushUndo('order');
+    const newSeqs = [...state.seqs];
+    const group = indices.map(i => newSeqs[i]);
+    for (let j = indices.length - 1; j >= 0; j--) {
+        newSeqs.splice(indices[j], 1);
+    }
+    const insertPos = indices[indices.length - 1] - indices.length + 2;
+    newSeqs.splice(insertPos, 0, ...group);
+    state.seqs = newSeqs;
+    state.selectedRows.clear();
+    for (let k = 0; k < indices.length; k++) {
+        state.selectedRows.add(insertPos + k);
+    }
+    renderAlignment();
+    showMessage("Sequences moved down!", 2000);
+}
+function moveSelectedToTop() {
+    if (state.selectedRows.size === 0) { showMessage('No sequences selected.', 2000); return; }
+    const indices = Array.from(state.selectedRows).sort((a, b) => a - b);
+    if (indices.every((r, k) => r === k)) return;   // already at the top: no undo step (it pushed one and cleared Redo)
+    pushUndo('order');
+    const newSeqs = [...state.seqs];
+    const group = indices.map(i => newSeqs[i]);
+    for (let j = indices.length - 1; j >= 0; j--) {
+        newSeqs.splice(indices[j], 1);
+    }
+    newSeqs.unshift(...group);
+    state.seqs = newSeqs;
+    state.selectedRows.clear();
+    for (let k = 0; k < group.length; k++) {
+        state.selectedRows.add(k);
+    }
+    renderAlignment();
+    showMessage("Sequences moved to top!", 2000);
+}
+function moveSelectedToBottom() {
+    if (state.selectedRows.size === 0) { showMessage('No sequences selected.', 2000); return; }
+    const indices = Array.from(state.selectedRows).sort((a, b) => a - b);
+    if (indices.every((r, k) => r === state.seqs.length - indices.length + k)) return;   // already at the bottom
+    pushUndo('order');
+    const newSeqs = [...state.seqs];
+    const group = indices.map(i => newSeqs[i]);
+    for (let j = indices.length - 1; j >= 0; j--) {
+        newSeqs.splice(indices[j], 1);
+    }
+    newSeqs.push(...group);
+    state.seqs = newSeqs;
+    state.selectedRows.clear();
+    const newLen = state.seqs.length;
+    for (let k = 0; k < group.length; k++) {
+        state.selectedRows.add(newLen - group.length + k);
+    }
+    renderAlignment();
+    showMessage("Sequences moved to bottom!", 2000);
+}
+function insertGroupConsensus() {
+    if (state.selectedRows.size < 2) {
+        showMessage("Select at least 2 sequences to compute group consensus.", 3000);
+        return;
+    }
+    pushUndo('insertConsensus');
+    state.groupConsensusCount++;
+    const indices = Array.from(state.selectedRows).sort((a, b) => a - b);
+    const selectedSeqs = indices.map(i => state.seqs[i].seq);
+    const cons = computeConsensusForSequences(selectedSeqs);
+    const groupName = `Grp${state.groupConsensusCount}Cons${indices.length}seq`;
+    const consObj = { header: groupName, fullHeader: `${groupName} consensus of ${indices.length} sequences`, seq: cons, gaplessPositions: calculateGaplessPositions(cons) };
+    const insertPos = indices[indices.length - 1] + 1;
+    state.seqs.splice(insertPos, 0, consObj);
+    renderAlignment();
+    showMessage(`${groupName} inserted!`, 2000);
+}
+
+function replaceSelectedWithConsensus() {
+    if (state.selectedRows.size < 2) {
+        showMessage("Select at least 2 sequences to create consensus.", 3000);
+        return;
+    }
+
+    const indices = Array.from(state.selectedRows).sort((a, b) => a - b);
+    const selectedSeqs = indices.map(i => state.seqs[i].seq);
+    const len = _maxOf(selectedSeqs, s => s.length);
+
+    // Generate consensus sequence
+    const cons = computeConsensusForSequences(selectedSeqs);
+
+    // Create consensus name based on selected sequence indices
+    const firstIdx = indices[0] + 1; // 1-based for display
+    const lastIdx = indices[indices.length - 1] + 1;
+    const consName = `cons_seq${firstIdx}-${lastIdx}`;
+
+    // Save to history
+    pushUndo('replaceWithConsensus');
+
+    // Remove selected sequences (from end to start to preserve indices)
+    for (let i = indices.length - 1; i >= 0; i--) {
+        state.seqs.splice(indices[i], 1);
+    }
+
+    // Insert consensus at the position of the first selected sequence
+    const consObj = {
+        header: consName,
+        fullHeader: `Consensus of sequences ${firstIdx}-${lastIdx}`,
+        seq: cons,
+        gaplessPositions: calculateGaplessPositions(cons)
+    };
+    state.seqs.splice(indices[0], 0, consObj);
+
+    // Clear selection
+    state.selectedRows.clear();
+
+    renderAlignment();
+    showMessage(`Replaced ${indices.length} sequences with consensus: ${consName}`, 3000);
+}
+function duplicateSelected() {
+    if (state.selectedRows.size === 0) { showMessage('No sequences selected.', 2000); return; }
+    pushUndo('duplicate');
+    const indices = Array.from(state.selectedRows).sort((a, b) => a - b);
+    // the copy's full name gets '_copy' after its first word too: exports write the full name,
+    // which used to be the original's ('s1 desc' twice)
+    const copies = indices.map(i => {
+        const q = state.seqs[i], h = q.header + '_copy';
+        const full = q.fullHeader ? q.fullHeader.replace(/^\S*/, h) : h;
+        return { ...q, header: h, fullHeader: full };
+    });
+    state.seqs.push(...copies);
+    renderAlignment();
+    showMessage("Selected sequences duplicated!", 2000);
+}

@@ -1,0 +1,513 @@
+[script.js lines 15406-15917 of ViewAlign fd8b8e4]
+/** Run pre-parse scan; for crazy alignments prompt before parse. Returns false if cancelled. */
+// What is loaded now (name, path, input text, size class): a load that is cancelled or cannot be read
+// puts these back, so the header, copies and Recent do not name a file that never loaded.
+let _loadedIdentity = null;
+function _rememberLoadedIdentity(text) {
+    _loadedIdentity = { name: state.currentFilename, path: state.currentFilePath, text, index: state.alignmentIndex };
+}
+function _restoreLoadedIdentity() {
+    const L = _loadedIdentity;
+    state.currentFilename = L ? L.name : '';
+    state.currentFilePath = L ? L.path : '';
+    state.alignmentIndex = L ? L.index : null;
+    if (L && typeof fastaInput !== 'undefined' && fastaInput) _setInputText(L.text);
+}
+function _fileReadFailed(file, err) {
+    console.error('Error reading file:', file && file.name, err);
+    state._pendingFileHandle = null;
+    _restoreLoadedIdentity();
+    const why = err && err.message ? ': ' + err.message : '';
+    if (!state.seqs.length) alignmentContainer.innerHTML = '<div class="error-message">Error reading file.</div>';
+    showMessage(`Could not read ${file ? file.name : 'the file'}${why}`, 6000);
+}
+
+async function runAlignmentPreflight(inputText) {
+    const stats = scanAlignmentText(inputText);
+    if (!stats || stats.nSeqs < 1) {
+        state.alignmentIndex = null;
+        return true;
+    }
+    const classification = classifyAlignmentSize(stats);
+    state.alignmentIndex = { ...stats, ...classification };
+
+    if (classification.mode === 'crazy') {
+        const choice = await showLargeAlignmentDialog(stats, classification);
+        if (choice === 'cancel') return false;
+    } else if (classification.mode === 'tall') {
+        showMessage(
+            `Large alignment (${stats.nSeqs.toLocaleString()} sequences) - vertical paging when enabled.`,
+            3500
+        );
+    } else if (classification.mode === 'long') {
+        showMessage(
+            `Long alignment (${stats.maxLen.toLocaleString()} columns) - horizontal chunking when enabled.`,
+            3500
+        );
+    }
+    return true;
+}
+
+// CORE FUNCTIONS
+// A pasted URL isn't sequence content itself - recognized here so
+// parseAndRender can fetch it and continue, instead of falling through
+// every format parser and reporting a generic "no valid sequences found"
+// for what was actually a location, not data.
+function _looksLikeUrl(text) {
+    return /^https?:\/\/\S+$/i.test(text);
+}
+// Same idea for a pasted local filesystem path, resolved via the local
+// dev server's /api/local-cat (read-only, same trust boundary as the
+// existing BLAST database file management, which already reads/writes
+// arbitrary local paths with no additional auth).
+// One or more GenBank/RefSeq accessions (e.g. "NC_012920.1 MN908947"),
+// separated by spaces, commas or new lines: fetched from NCBI and loaded.
+function _parseAccessionList(text) {
+    if (text.length > 5000 || text.startsWith('>')) return null;
+    const ids = text.split(/[\s,;]+/).filter(Boolean);
+    if (!ids.length || ids.length > 200) return null;
+    return ids.every(id => /^[A-Za-z]{1,6}_?\d{4,12}(\.\d+)?$/.test(id)) ? ids : null;
+}
+
+// NCBI E-utilities allows cross-origin requests, so this works on the static
+// deployment too. Nucleotide records first, then protein (GenPept).
+async function _fetchGenBankFromNcbi(ids) {
+    const base = 'https://eutils.ncbi.nlm.nih.gov/entrez/eutils/efetch.fcgi?rettype=gbwithparts&retmode=text&id='
+        + encodeURIComponent(ids.join(','));
+    for (const db of ['nuccore', 'protein']) {
+        const resp = await fetch(base + '&db=' + db);
+        if (!resp.ok) continue;
+        const text = await resp.text();
+        if (/^LOCUS\s/m.test(text)) return text;
+    }
+    throw new Error('NCBI returned no GenBank record for ' + ids.join(', '));
+}
+
+function _looksLikeLocalPath(text) {
+    if (text.includes('\n') || text.length > 500 || text.startsWith('>')) return false;
+    return /^[A-Za-z]:[\\/]/.test(text) || /^\//.test(text) || /^~[\\/]/.test(text) || /^\.\.?[\\/]/.test(text);
+}
+
+// A load that failed leaves no alignment behind: the view shows the error, so
+// Save, Copy and the analyses must not keep working on the previous file's rows.
+// After parseAndRender for ?url= / ?data=: did it load an alignment? A load replaces state.seqs with
+// the new rows; a failure empties them (_clearFailedLoad) or leaves the old ones (a cancelled load).
+function _autoLoadSucceeded(seqsBefore) {
+    return state.seqs !== seqsBefore && Array.isArray(state.seqs) && state.seqs.length > 0;
+}
+
+function _clearFailedLoad() {
+    if (_genome) _genomeClose();   // its message goes where the genome's canvas was: no genome left half open (GLM audit #35)
+    state.seqs = [];
+    state.selectedRows?.clear();
+    state.selectedColumns?.clear();
+    state.selectedNucs?.clear();
+    state.currentFilename = '';
+    state.currentFilePath = '';
+    const src = el('sourceInfo');
+    if (src) src.innerHTML = 'No file loaded';
+}
+
+async function parseAndRender(isFromDrop = false) {
+    showMessage("Scanning alignment...", 0);
+    _proteinSchemeRemapWarned = false;
+    _parseNotice = '';
+    let inputText = (_bigInputText ?? fastaInput.value).trim();
+    if (inputText.includes('\r')) inputText = inputText.replace(/\r\n?/g, '\n'); // CR-only (classic Mac) files too
+    if (!inputText) {
+        // Load with an emptied paste box replaced the view with this prompt but kept the alignment in state (Save, Copy
+        // and the open Repeat Finder still used it; GLM d305 #22): the alignment shown stays, and the message says why
+        if (!isFromDrop && state.seqs?.length) {
+            statusMessage.style.display = 'none';
+            showMessage('The paste box is empty: paste FASTA or MSF first (the alignment shown is kept).', 4000);
+            return;
+        }
+        if (_genome) {   // nothing was loaded: the text below went over the genome's canvas (GLM audit #35)
+            statusMessage.style.display = 'none';
+            showMessage(isFromDrop ? 'The file is empty (the genome stays open).' : 'The paste box is empty: paste FASTA or MSF first (the genome stays open).', 4000);
+            return;
+        }
+        alignmentContainer.innerHTML = '<div>Paste MSF or FASTA into the box and click Load, or drop a file.</div>';
+        statusMessage.style.display = 'none';
+        if (isFromDrop) {
+            _clearFailedLoad();
+            showMessage('The file is empty.', 4000);
+        }
+        return;
+    }
+    // NUL bytes or mostly control characters: an image, archive or other binary file
+    const _ctrl = (inputText.slice(0, 4096).match(/[\x00-\x08\x0E-\x1F]/g) || []).length;
+    if (inputText.includes('\x00') || _ctrl > 0.1 * Math.min(4096, inputText.length)) {
+        _clearFailedLoad();
+        alignmentContainer.innerHTML = '<div class="error-message">This is a binary file, not an alignment. Open FASTA, MSF, Clustal, PHYLIP, NEXUS, Stockholm, GenBank, SAM/BAM or AB1.</div>';
+        showMessage('Error: not an alignment (binary file).', 5000);
+        return;
+    }
+    if (/^@[^\n]*\n[^\n]*\n\+/.test(inputText)) {
+        _clearFailedLoad();
+        alignmentContainer.innerHTML = '<div class="error-message">This is a FASTQ file of reads, not an alignment. Convert it to FASTA, or map the reads (SAM/BAM) onto an open reference.</div>';
+        showMessage('Error: FASTQ reads are not an alignment.', 5000);
+        return;
+    }
+    // A snapshot .json downloaded by Snapshot > Create
+    if (inputText[0] === '{') {
+        let payload = null;
+        try { payload = JSON.parse(inputText); } catch (_) {}
+        if (payload && typeof payload === 'object' && typeof payload.fasta === 'string' && 'schema' in payload) {
+            // An empty "fasta" used to throw, leaving the old rows under the snapshot's file name (audit M6)
+            if (!payload.fasta.trim()) {
+                _clearFailedLoad();
+                alignmentContainer.innerHTML = '<div class="error-message">Error: this snapshot file has no alignment data.</div>';
+                showMessage('Error: this snapshot file has no alignment data.', 5000);
+                return;
+            }
+            return _loadSnapshotPayload(payload);
+        }
+    }
+
+    if (_looksLikeUrl(inputText)) {
+        showMessage('Fetching from URL...', 0);
+        try {
+            const resp = await fetch(inputText);
+            if (!resp.ok) throw new Error('HTTP ' + resp.status);
+            _setInputText(await resp.text());
+            state.currentFilename = state.currentFilename || (inputText.split('/').filter(Boolean).pop() || 'url_import');
+            return parseAndRender(isFromDrop);
+        } catch (err) {
+            statusMessage.style.display = 'none';
+            showMessage('Could not fetch URL: ' + err.message, 4000);
+            return;
+        }
+    }
+    const accessions = _parseAccessionList(inputText);
+    if (accessions) {
+        showMessage(`Fetching ${accessions.length === 1 ? accessions[0] : accessions.length + ' records'} from NCBI...`, 0);
+        try {
+            _setInputText(await _fetchGenBankFromNcbi(accessions));
+            state.currentFilename = state.currentFilename || (accessions.length === 1 ? accessions[0] : accessions.length + '_accessions');
+            return parseAndRender(isFromDrop);
+        } catch (err) {
+            statusMessage.style.display = 'none';
+            showMessage('Could not fetch from NCBI: ' + err.message, 6000);
+            return;
+        }
+    }
+    if (_looksLikeLocalPath(inputText)) {
+        showMessage('Reading local file...', 0);
+        try {
+            const resp = await fetch('/api/local-cat?file=' + encodeURIComponent(inputText));
+            // On a static deployment (e.g. GitHub Pages) with no server.js
+            // running, /api/local-cat doesn't exist - the host serves its
+            // normal 404/index HTML instead. Reading that as JSON used to
+            // throw a raw, confusing SyntaxError ("Unexpected token '<'").
+            // Detect the non-JSON-response case explicitly and say what's
+            // actually true: this feature needs the optional local server.
+            let data;
+            try {
+                data = await resp.json();
+            } catch (parseErr) {
+                throw new Error('this feature requires the optional local server (server.js) - it is not available on the static/public deployment');
+            }
+            if (!resp.ok) throw new Error(data.error || ('HTTP ' + resp.status));
+            _setInputText(data.content);
+            state.currentFilename = state.currentFilename || (inputText.split(/[\\/]/).filter(Boolean).pop() || 'local_import');
+            state.currentFilePath = inputText;
+            return parseAndRender(isFromDrop);
+        } catch (err) {
+            statusMessage.style.display = 'none';
+            showMessage('Could not read local file: ' + err.message, 6000);
+            return;
+        }
+    }
+
+    const proceed = await runAlignmentPreflight(inputText);
+    if (!proceed) {
+        statusMessage.style.display = 'none';
+        _restoreLoadedIdentity();   // the alignment on screen is still the previous one
+        showMessage('Load cancelled.', 2500);
+        return;
+    }
+
+    showMessage("Parsing file...", 0);
+    try {
+        let parsed;
+    // PRIORITIZE CONTENT-BASED DETECTION.
+        const isSamContent = _isSamInput(inputText);
+        const isMsfContent = (inputText.includes('MSF:') && inputText.includes('Check:')) ||
+                             inputText.includes('!!AA_MULTIPLE_ALIGNMENT') ||
+                             inputText.includes('!!NA_MULTIPLE_ALIGNMENT');
+
+        if (isSamContent) {
+            parsed = parseSamToAlignment(inputText);
+            if (!parsed) throw new Error('SAM parsing failed - check format');
+            state.currentFilename = state.currentFilename || 'SAM_import';
+        } else if (/^\s*>/.test(inputText.replace(/^\uFEFF/, '')) && !/^\s*>>/.test(inputText)) {
+            // Text that starts with a '>' header is FASTA, whatever words
+            // ("#NEXUS", "begin data", "LOCUS") appear in its headers
+            parsed = parseFasta(inputText);
+            if (!parsed) throw new Error('FASTA parsing failed');
+            if (!isFromDrop) state.currentFilename = state.currentFilename || 'fasta_import';
+        } else if (/^LOCUS\s+\S+/m.test(inputText) && /^(ORIGIN|FEATURES|DEFINITION|ACCESSION|VERSION|CONTIG)\b/m.test(inputText) && !_isClustalInput(inputText) && !/^# STOCKHOLM/m.test(inputText)) {
+            // GenBank: a LOCUS line in capitals and another flatfile keyword. Any line starting with "locus" used
+            // to be enough, so an alignment with a row named locus went to this parser and failed (audit L13).
+            parsed = parseGenBank(inputText);
+            if (!parsed) throw new Error('GenBank parsing failed');
+            state.currentFilename = state.currentFilename || 'genbank_import';
+            const skipped = parsed.skipped || [];
+            if (skipped.length) showMessage(`Detected GenBank format; ${skipped.length} record${skipped.length !== 1 ? 's' : ''} without a sequence skipped: ${skipped.slice(0, 5).join(', ')}${skipped.length > 5 ? ', ...' : ''}`, 6000);
+            else showMessage('Detected GenBank format', 1500);
+        } else if (_isClustalInput(inputText)) {
+            parsed = parseClustal(inputText);
+            if (!parsed) throw new Error('Clustal parsing failed');
+            state.currentFilename = state.currentFilename || 'clustal_import';
+            showMessage('Detected Clustal format', 1500);
+        } else if (/^# STOCKHOLM/m.test(inputText)) {
+            parsed = parseStockholm(inputText);
+            if (!parsed) throw new Error('Stockholm parsing failed');
+            state.currentFilename = state.currentFilename || 'stockholm_import';
+            showMessage('Detected Stockholm format', 1500);
+        } else if (/^\s*#NEXUS\b/i.test(inputText.replace(/^\uFEFF/, '')) || /^\s*begin\s+(data|characters)\s*;/im.test(inputText)) {
+            parsed = parseNexus(inputText);
+            if (!parsed) throw new Error('NEXUS parsing failed');
+            state.currentFilename = state.currentFilename || 'nexus_import';
+            showMessage('Detected NEXUS format', 1500);
+        } else if (/^\d+\s+\d+/.test(inputText.trim().split(/\r?\n/)[0])) {
+            parsed = parsePhylip(inputText);
+            if (parsed) {
+                state.currentFilename = state.currentFilename || 'phylip_import';
+                showMessage('Detected PHYLIP format', 1500);
+            }
+        } else if (/^\s*>/m.test(inputText)) {
+            parsed = parseFasta(inputText);
+            if (!parsed) throw new Error('FASTA parsing failed');
+            if (!isFromDrop) state.currentFilename = state.currentFilename || 'fasta_import';
+        } else if (isFromDrop || isMsfContent) {
+            // If it's a file drop OR the content looks like MSF, try MSF first.
+            parsed = parseMsf(inputText);
+            if (!parsed) {
+                showMessage("MSF parsing failed, trying FASTA...", 2000);
+                parsed = parseFasta(inputText);
+            }
+        } else {
+            // Otherwise, assume FASTA.
+            parsed = parseFasta(inputText);
+        }
+        if (!parsed) throw new Error("No valid sequences found");
+        // Names without a single residue used to load "successfully" as 0 columns and replace the open alignment (audit L17)
+        if (Array.isArray(parsed) && parsed.length && parsed.every(q => !q || !q.seq)) throw new Error("No residues found: the file has sequence names but no sequence");
+        if (!isFromDrop && !state.currentFilename) {
+            state.currentFilename = 'Clipboard';
+            state.currentFilePath = '';
+        }
+        _clearClusterTrimState();
+        _dropColumnAnalyses();
+        state.hiddenCols = [];
+        // Chromatograms belong to the rows they were read for: keep a trace only if a row of the new
+        // alignment has its name and its bases (forward, trimmed or reverse-complemented); a row of
+        // another file that happens to share the name must not open it
+        if (state.ab1Traces) {
+            const COMP = { A: 'T', T: 'A', C: 'G', G: 'C' };
+            const rc = (t) => t.split('').reverse().map(c => COMP[c] || c).join('');
+            for (const name of Object.keys(state.ab1Traces)) {
+                const row = parsed.find(q => q.header === name);
+                const res = row ? row.seq.replace(/[-.]/g, '').toUpperCase() : '';
+                const tr = String(state.ab1Traces[name].sequence || '').toUpperCase();
+                if (!res || !(tr.includes(res) || rc(tr).includes(res))) delete state.ab1Traces[name];
+            }
+        }
+        // Repeat/TSD results name rows and columns of the previous alignment
+        _lastRepeatResults = [];
+        _lastTsdResults = [];
+        state.tsdPreview = null;
+        document.getElementById('tsdMarkBtn')?.classList.remove('rf-btn-attention');
+        // Undo/redo hold the previous file's rows: Ctrl+Z after a load put them back under the new file's name
+        state.deletedHistory = [];
+        state.redoHistory = [];
+        // Clear any loaded reads - they belong to the previous reference
+        if (_genome) _genomeClose();
+        bamState = {
+            reads: [],
+            allReads: [],
+            downsampled: [],
+            refName: null,
+            refSeq: null,
+            refStart: 0,
+            refEnd: 0,
+            columns: [],
+            readOrder: [],
+        };
+        // If we were in Reads mode, switch back to Block mode
+        if (document.getElementById('modeReads')?.checked) {
+            const blockRadio = document.getElementById('modeBlocks');
+            if (blockRadio) blockRadio.checked = true;
+        }
+        // Check for length mismatch before committing to state.seqs - warn but do not block
+        const _lenMismatch = _checkLengthMismatch(parsed);
+        if (_lenMismatch) {
+            _normalizeSequenceLengths(parsed);
+        }
+
+        state.seqs = parsed;
+
+        // Codon analysis left on from a nucleotide file: turn it off quietly for a protein one
+        // (otherwise every render repeats "Codon analysis requires a nucleotide alignment")
+        const codonBox = document.getElementById('codonAnalysis');
+        if (codonBox?.checked && isProteinAlignment(parsed)) {
+            codonBox.checked = false;
+            state._lastAnnouncedCodonFrame = null;
+        }
+
+        // If pre-parse scan failed (e.g., leading garbage before first '>'),
+        // compute alignment index from parsed sequences so windowed DOM kicks in
+        if (!state.alignmentIndex) {
+            const _stats = {
+                nSeqs: state.seqs.length,
+                maxLen: state.seqs.length > 0 ? _maxOf(state.seqs, s => s.seq.length) : 0,
+                totalResidues: state.seqs.reduce((sum, s) => sum + s.seq.length, 0)
+            };
+            state.alignmentIndex = { ..._stats, ...classifyAlignmentSize(_stats) };
+        }
+
+        // fresh file: Canvas unless the user chose Full/Block this session and the file is small
+        _userDismissedAutoCanvas = _userChoseDomView && (state.alignmentIndex?.totalResidues || 0) < ALIGN_CANVAS_DEFAULT_RESIDUES;
+        state.selectedRows.clear();
+        state.selectedColumns.clear();
+        state.selectedNucs.clear();
+        state.pendingNucStart = null;
+        state.lastSelectedIndex = null;
+        state.groupConsensusCount = 0;
+        // --- Audit C3: comprehensive state reset on new file load ---
+        state._diffColumns = null;
+        state.searchResults = null;
+        (state.searchHistory || []).forEach(_removeSearchStyle);
+        state.searchHistory = [];
+        bumpSearchLayer();
+        _resetSelectionStash();
+        // Keyed by row index: meaningless for a different file
+        state.tsdMarks = new Map();
+        state.tsdMarkUndo = null;
+        if (typeof _dotClearRegionMarks === 'function') _dotClearRegionMarks(); else state.dotRegionMarks = null;   // and the dot window's mark UI
+        if (typeof _statsInvalidate === 'function') _statsInvalidate(true);   // the statistics of the previous file
+        if (state.repeatHighlights) state.repeatHighlights.clear();
+        _resetRepeatFinderForNewFile();   // the open panel listed the previous file's rows and results
+        // Name colours belong to the previous file (this used to reset state.colourState,
+        // which nothing reads, so colours carried over). Saved presets are kept.
+        colourState.mappings.clear();
+        colourState.history?.clear();
+        state.manuallyColoured = new Set();
+        state.dragStartCol = null;
+        state.dragStartRow = null;
+        state.isDragging = false;
+        state.dragMode = null;
+        state.selRect = null;
+        state.ctrlPressed = false;
+        state.altPressed = false;
+        state.shiftPressed = false;
+        state._codonData = null;
+        state._columnConservationScores = null;
+        state._columnConservationCache = null;
+        _annotFromGenBank(parsed);
+
+        updateNameLengthSliderRange();
+
+        // Build length-mismatch warning message (if any) before rendering,
+        // so it can be shown even if renderAlignment throws.
+        let _lenMismatchMsg = null;
+        if (_lenMismatch) {
+            const _diffDetails = _lenMismatch.differing.slice(0, 5).map(d =>
+                `Sequence '${d.name}' is ${d.length} columns (${d.diff > 0 ? '+' : ''}${d.diff})`
+            ).join(', ');
+            const _diffMore = _lenMismatch.differing.length > 5 ? ` and ${_lenMismatch.differing.length - 5} more` : '';
+            _lenMismatchMsg = `Length mismatch: ${_diffDetails}${_diffMore}, but most of the alignment is ${_lenMismatch.majorityLen} columns - check for stray text before '>' headers, or use Realign All if this is intentionally unaligned data.`;
+            // Show warning before rendering in case renderAlignment throws
+            showMessage(_lenMismatchMsg, 0);
+            console.warn('[Length mismatch]', _lenMismatch);
+        }
+
+        // Update source info with comprehensive statistics
+        updateSourceInfo();
+        // Large alignments: fit the block size to the screen BEFORE the first
+        // render, not after — see fitBlockSizeBeforeInitialRender() for why
+        // doing this only after render left the on-screen content overflowing
+        // even though the size slider showed a "corrected" value.
+        fitBlockSizeBeforeInitialRender();
+        // A new file opens at its first row and column. The windowed views keep scrollTop and
+        // scrollLeft through a redraw (renderAlignment) and Canvas keeps its pan offset, so a file
+        // opened over a scrolled view used to open at the old file's place.
+        if (alignmentContainer.scrollTop || alignmentContainer.scrollLeft) {
+            _unifiedScrollController.suppressNextEvent();
+            alignmentContainer.scrollTop = 0;
+            alignmentContainer.scrollLeft = 0;
+        }
+        _canvasState.offsetX = 0;
+        _canvasState.offsetY = 0;
+        renderAlignment();
+        updateBamButtonVisibility();
+        // Auto-fit block size to screen width on every load
+        setBlockSizeToScreen();
+        setupHoverMenuReveal();
+        // Re-show the message after rendering (renderAlignment may have
+        // overwritten statusMessage.textContent with consensus info).
+        if (_lenMismatchMsg) {
+            showMessage(_lenMismatchMsg, 0);
+        } else if (_parseNotice) {
+            showMessage(_parseNotice, 10000);
+        } else {
+            showMessage("File loaded successfully!", 2000);
+        }
+
+        // Record in history
+        const reopenedPaste = state._reopenedPaste && state._reopenedPaste === state.currentFilename ? state._reopenedPaste : null;
+        state._reopenedPaste = null;
+        const isClipboard = !isFromDrop && (state.currentFilename === 'Clipboard' || !!reopenedPaste);
+        const previewNames = parsed.slice(0, 3).map(s => s.header).join(', ');
+        const previewSeq = (parsed[0]?.seq?.substring(0, 50) || '').replace(/-/g, '');
+        // If this load came with a reusable File System Access handle
+        // (Chromium drop/pick), stash it in IndexedDB now so Recent Files can
+        // actually re-read the live file later, not just show "unavailable."
+        let handleId = null;
+        if (state._pendingFileHandle) {
+            handleId = 'fh_' + Date.now() + '_' + Math.random().toString(36).slice(2);
+            _fileHandleStore.put(handleId, state._pendingFileHandle); // fire-and-forget
+            state._pendingFileHandle = null;
+        }
+        _historyManager.add(
+            isClipboard ? 'clipboard' : 'file',
+            {
+                name: isClipboard ? (reopenedPaste || ('Paste ' + new Date().toLocaleTimeString())) : (state.currentFilename || 'Unknown'),
+                nSeqs: parsed.length,
+                length: (parsed[0]?.seq?.length || 0),
+                preview: previewNames + (previewSeq ? '  [' + previewSeq + '...]' : ''),
+                source: state.currentFilePath || '',
+                // Files are re-opened from disk (via handleId when available,
+                // otherwise the "re-open the file" message), so only clipboard
+                // pastes - which have no other source once cleared - need their
+                // text cached here. Caching file text too (as this used to do,
+                // capped at 100KB) silently truncated any file above that cap
+                // on reopen, with no warning: a 3,408-sequence / 6.28MB FASTA
+                // reopened as just 55 sequences.
+                // a paste above the limit is not kept at all: a cut-off copy reopened as a smaller alignment
+                text: isClipboard && inputText.length <= 100000 ? inputText : null,
+                tooLarge: isClipboard && inputText.length > 100000,
+                handleId
+            }
+        );
+        _rememberLoadedIdentity(inputText);
+        // Ensure menus don't have inline styles that interfere with hover
+        setTimeout(() => {
+            try {
+                document.querySelectorAll('.control-group').forEach(group => {
+                    group.style.maxHeight = '';
+                    group.style.display = '';
+                });
+            } catch (err) {
+                console.warn('Failed to clear menu inline styles after load', err);
+            }
+        }, 100);
+    } catch (e) {
+        console.error("Error in parseAndRender:", e);
+    alignmentContainer.innerHTML = `<div class="error-message">Error: ${_escapeHtml(e.message)}</div>`;
+        showMessage(`Error: ${e.message}`, 5000);
+        _clearFailedLoad();
+    }
+}

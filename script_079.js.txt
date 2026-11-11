@@ -1,0 +1,304 @@
+[script.js lines 35031-35333 of ViewAlign fd8b8e4]
+function _dotMiniButtons(box, okText, onOk) {
+    const row = document.createElement('div'); row.style.cssText = 'display:flex;gap:8px;justify-content:flex-end;margin-top:10px;';
+    const ok = document.createElement('button'); ok.type = 'button'; ok.textContent = okText; ok.id = box.id + 'Ok';
+    const cancel = document.createElement('button'); cancel.type = 'button'; cancel.textContent = 'Cancel'; cancel.id = box.id + 'Cancel';
+    cancel.addEventListener('click', () => box.remove());
+    ok.addEventListener('click', onOk);
+    row.appendChild(cancel); row.appendChild(ok); box.appendChild(row);
+    return { ok, cancel };
+}
+// A rectangle of more than two rows: which two to plot
+function _dotChooseTwoRows(rows, cb, what = 'rectangle') {
+    const nc = rows.includes(-1), box = _dotMiniBox('dotRectChooser', `The ${what} holds ${rows.length - (nc ? 1 : 0)} rows${nc ? ' and the consensus' : ''}: which two should be plotted?`);
+    const mk = (label, sel) => {
+        const l = document.createElement('label'); l.style.cssText = 'display:flex;gap:8px;align-items:center;margin:4px 0;';
+        l.appendChild(document.createTextNode(label));
+        const s = document.createElement('select'); s.style.maxWidth = '380px';
+        rows.forEach((r, i) => { const o = document.createElement('option'); o.value = String(r); o.textContent = `${i + 1}. ${_dotSideName(r)}`; s.appendChild(o); });
+        s.selectedIndex = sel; l.appendChild(s); box.appendChild(l); return s;
+    };
+    const sa = mk('A (down)', 0), sb = mk('B (across)', 1);
+    sa.id = 'dotRectRowA'; sb.id = 'dotRectRowB';
+    // The box does not block the alignment (it is not modal), so rows may be deleted, undone or moved while it is open: the choice is
+    // re-validated at Plot against the rows it was opened with (by object, else by header and residues), and what changed is said.
+    const snap = new Map(rows.filter(r => r !== -1).map(r => [r, state.seqs[r]]));
+    // what each row was when the box opened: a residue edit changes the row object in place (so `snap` then holds the EDITED row) and an Undo
+    // puts a NEW object with the old residues in its place, so a row edited and undone is found again by its header and these opening residues
+    const opened = new Map([...snap].map(([r, q]) => [r, q ? { header: q.header, seq: q.seq } : null]));
+    const names = new Map(rows.map(r => [r, _dotSideName(r)]));
+    const msg = document.createElement('div'); msg.id = 'dotRectMsg'; msg.style.cssText = 'color:#a33;margin-top:6px;min-height:1.2em;'; box.appendChild(msg);
+    const resolve = r => {   // the row's index now; -1 = the consensus; null = gone
+        if (r === -1) return -1;
+        const q = snap.get(r); if (!q) return null;
+        let i = state.seqs.indexOf(q);
+        if (i < 0) i = state.seqs.findIndex(x => x.header === q.header && x.seq === q.seq);
+        const o0 = opened.get(r);
+        if (i < 0 && o0) i = state.seqs.findIndex(x => x.header === o0.header && x.seq === o0.seq);   // edited, then undone: the row is still there
+        return i < 0 ? null : i;
+    };
+    _dotMiniButtons(box, 'Plot', () => {
+        if (!sa.options.length || !sb.options.length || sa.value === '' || sb.value === '') {   // every row it offered has gone: say so, never "undefined"
+            msg.textContent = 'None of the rows offered here is in the alignment any more. Cancel, then choose the rows again.';
+            return;
+        }
+        const ra = +sa.value, rb = +sb.value, a = resolve(ra), b = resolve(rb);
+        const goneRows = [ra, rb].filter((r, k) => (k ? b : a) === null);
+        if (goneRows.length) {
+            const gone = [...new Set(goneRows)];
+            msg.textContent = gone.map(r => '"' + (names.get(r) ?? 'a row') + '"').join(' and ') + (gone.length > 1 ? ' are' : ' is') + ' no longer in the alignment (deleted or replaced since this box was opened). ' +
+                (sa.options.length > gone.length || sb.options.length > gone.length ? 'Choose another row.' : 'No other row is offered: cancel and choose again.');
+            for (const s of [sa, sb]) [...s.options].forEach(o => { if (resolve(+o.value) === null) o.remove(); });
+            // a select whose chosen row was removed shows the first row left (the second select the next one, so the two differ when they can)
+            if (sa.options.length && sa.selectedIndex < 0) sa.selectedIndex = 0;
+            if (sb.options.length && sb.selectedIndex < 0) sb.selectedIndex = sb.options.length > 1 && sb.options[0].value === sa.value ? 1 : 0;
+            if (!sa.options.length || !sb.options.length) msg.textContent = 'None of the rows offered here is in the alignment any more. Cancel, then choose the rows again.';
+            return;
+        }
+        if (a === -1 && b === -1) { msg.textContent = 'The consensus against itself is not a comparison: choose a row for one side.'; return; }
+        const moved = a !== ra || b !== rb;
+        box.remove();
+        if (moved) showMessage(`Rows moved since the choice was opened: plotting "${_dotSideName(a)}" and "${_dotSideName(b)}" where they are now.`, 3500);
+        cb(a, b);
+    });
+}
+// Raw or FASTA text -> { seq, name, bad: {letter: count}, badCount }; the first record only; whitespace, digits and gap
+// marks are dropped, U becomes T; any letter other than A, C, G, T, N stays (and is reported)
+function _dotParsePasted(text) {
+    const lines = String(text || '').replace(/\r/g, '').split('\n');
+    let name = 'pasted sequence', seen = false;
+    const body = [];
+    for (const ln of lines) {
+        const t = ln.trim();
+        if (t.startsWith('>')) { if (seen || body.join('').trim()) break; seen = true; const h = t.slice(1).trim(); if (h) name = h.slice(0, 60); continue; }
+        body.push(ln);
+    }
+    const seq = body.join('').replace(/\s+/g, '').replace(/[0-9]/g, '').replace(/[-.]/g, '').toUpperCase().replace(/U/g, 'T');
+    const bad = {}; let badCount = 0;
+    for (const ch of seq) if (!/[ACGTN]/.test(ch)) { bad[ch] = (bad[ch] || 0) + 1; badCount++; }
+    return { seq, name, bad, badCount };
+}
+function _dotBadText(p) {
+    return Object.keys(p.bad).sort().map(k => `${k}×${p.bad[k]}`).join(', ');
+}
+// The "Compare with pasted" box. opts.sides: [{ value, label }] radio choices; opts.onOk(parsed, choice)
+function _dotAskPasted(opts) {
+    const box = _dotMiniBox('dotPasteBox', 'Compare with a pasted sequence');
+    const ta = document.createElement('textarea'); ta.id = 'dotPasteText'; ta.rows = 8; ta.style.cssText = 'width:min(520px,86vw);font:11px ui-monospace,Menlo,monospace;';
+    ta.placeholder = 'Paste raw sequence or FASTA (first record only). Whitespace and digits are ignored, U is read as T.';
+    box.appendChild(ta);
+    let radios = [];
+    (opts.sides || []).forEach((s, i) => {
+        const l = document.createElement('label'); l.style.cssText = 'display:flex;gap:6px;align-items:center;margin-top:4px;';
+        const r = document.createElement('input'); r.type = 'radio'; r.name = 'dotPasteSide'; r.value = s.value; r.checked = i === 0;
+        l.appendChild(r); l.appendChild(document.createTextNode(s.label)); box.appendChild(l); radios.push(r);
+    });
+    const msg = document.createElement('div'); msg.id = 'dotPasteMsg'; msg.style.cssText = 'color:#a33;margin-top:6px;min-height:1.2em;'; box.appendChild(msg);
+    _dotMiniButtons(box, 'Plot', () => {
+        const parsed = _dotParsePasted(ta.value);
+        if (!parsed.seq) { msg.textContent = 'No sequence found in the text.'; return; }
+        const choice = (radios.find(r => r.checked) || {}).value || 'self';
+        box.remove();
+        opts.onOk(parsed, choice);
+    });
+    ta.focus();
+    return box;
+}
+// Plots a pasted sequence. choice 'A': the kept row down, pasted across; 'B': pasted down, the kept row across; 'self': the
+// pasted sequence against itself. keep = { seq, name, row, range } (row -1 = no alignment row behind it)
+async function _dotOpenPasted(parsed, choice, keep) {
+    const pn = `${parsed.name} (pasted)`, S = _dotPlotState;
+    const rowOk = !!keep && Number.isInteger(keep.row) && keep.row >= 0 && !!state.seqs[keep.row];
+    const warn = parsed.badCount ? `The pasted sequence has ${parsed.badCount} letter${parsed.badCount === 1 ? '' : 's'} other than A, C, G, T, N (${_dotBadText(parsed)}); they are plotted as the letters they are.` : '';
+    S._pendingRangeNote = warn;
+    if (warn) showMessage(warn, 6000);
+    if (choice === 'self' || !keep) return openDotPlot(parsed.seq, parsed.seq, pn, pn, { ext: { side: 'AB', name: parsed.name }, note: '' });
+    const rowMeta = (k) => rowOk ? { ['rowIndex' + k]: keep.row, ['alignedSeq' + k]: state.seqs[keep.row].seq } : {};
+    if (choice === 'A') {
+        return openDotPlot(keep.seq, parsed.seq, keep.name, pn, Object.assign({ rangeA: keep.range || null, ext: { side: rowOk ? 'B' : 'AB', name: parsed.name }, note: '' }, rowMeta('A')));
+    }
+    return openDotPlot(parsed.seq, keep.seq, pn, keep.name, Object.assign({ rangeB: keep.range || null, ext: { side: rowOk ? 'A' : 'AB', name: parsed.name }, note: '' }, rowMeta('B')));
+}
+// "Compare with pasted..." in the dot plot window
+function _dotPasteFromWindow() {
+    const S = _dotPlotState;
+    if (!(S.sourceSeqA && S.sourceSeqB)) return;
+    // A side whose row changed since the plot is kept as plain text, without its alignment row; the side that did not change keeps its row.
+    // The box does not block the window behind it (Re-plot may run while it is open), so the state is read again when Plot is pressed.
+    const read = () => {
+        _dotCheckEdits();
+        const bad = new Set(S._editStale ? S._editStale.sides.map(x => x.side) : []), { rowA: ra, rowB: rb } = _dotRows();
+        // a self plot (one row on both sides) is checked as ONE comparison, so a change to it is recorded for A only: B is that same row
+        const m = S.meta || {};
+        if (bad.has('A') && Number.isInteger(m.rowIndexA) && m.rowIndexA >= 0 && m.rowIndexB === m.rowIndexA && S.sourceSeqA === S.sourceSeqB) bad.add('B');
+        return { rowA: bad.has('A') ? -1 : ra, rowB: bad.has('B') ? -1 : rb, nA: S.nameA, nB: _dotPlotNameB(), key: [...bad].join('') };
+    };
+    const r0 = read();
+    _dotAskPasted({
+        sides: [{ value: 'A', label: `${r0.nA} (A) down, pasted across` }, { value: 'B', label: `pasted down, ${r0.nB} (B) across` }, { value: 'self', label: 'The pasted sequence against itself' }],
+        onOk: (parsed, choice) => {
+            const r = read();
+            if (r.key !== r0.key || r.nA !== r0.nA || r.nB !== r0.nB) showMessage('The dot plot changed while this box was open (re-plotted, renamed or its rows edited): the current plot is used.', 4000);
+            const keep = choice === 'A' ? { seq: S.sourceSeqA, name: r.nA, row: r.rowA, range: S.meta?.rangeA || null }
+                : choice === 'B' ? { seq: S.sourceSeqB, name: r.nB, row: r.rowB, range: S.meta?.rangeB || null } : null;
+            _dotOpenPasted(parsed, choice, keep);
+        }
+    });
+}
+function _dotInitRangeEvents() {
+    const g = id => document.getElementById(id);
+    g('dotPlotRangeReplot')?.addEventListener('click', _dotRangeReplot);
+    g('dotPlotRangeWhole')?.addEventListener('click', _dotRangeWhole);
+    g('dotPlotRangeBtn')?.addEventListener('click', () => { const S = _dotPlotState, r = g('dotPlotRangeRow'); S._rangeOpen = !!r?.hidden; S.rangeNote = S._rangeOpen ? S.rangeNote : ''; _dotSyncRangeInputs(); if (S._rangeOpen) g('dotPlotRangeAFrom')?.focus(); else if (r) r.hidden = true; });
+    g('dotPlotPasteBtn')?.addEventListener('click', _dotPasteFromWindow);
+    ['dotPlotRangeAFrom', 'dotPlotRangeATo', 'dotPlotRangeBFrom', 'dotPlotRangeBTo'].forEach(id => g(id)?.addEventListener('keydown', (e) => {
+        e.stopPropagation();
+        if (e.key === 'Enter') { e.preventDefault(); _dotRangeReplot(); }
+    }));
+}
+// Numbers every 10 and ticks every 5 (every 50 and 10 on a line longer than 300 characters)
+function _dotRulerRows(which, start, n) {
+    const nums = new Array(n).fill(' '), ticks = new Array(n).fill(' ');
+    const step = n > 300 ? 50 : 10, tick = step === 10 ? 5 : 10;
+    let lastEnd = -1;
+    for (let k = 0; k < n; k++) {
+        const num = _dotNumAt(which, start + k);
+        if (!num) continue;
+        if (num % step === 0) ticks[k] = '|'; else if (num % tick === 0) ticks[k] = ':';
+        if (num % step === 0) {
+            const t = String(num);
+            if (k > lastEnd && k + t.length <= n) { for (let i = 0; i < t.length; i++) nums[k + i] = t[i]; lastEnd = k + t.length; }
+        }
+    }
+    return { nums: nums.join(''), ticks: ticks.join('') };
+}
+function _dotStripLines() { return Math.min(12, Math.max(1, parseInt(document.getElementById('dotPlotStripLines')?.value, 10) || 1)); }
+function _dotCharW(elm) {
+    const c = _dotCharW._c || (_dotCharW._c = document.createElement('canvas').getContext('2d'));
+    const cs = getComputedStyle(elm);   // the font shorthand reads empty in Firefox: build it from its parts
+    c.font = `${cs.fontStyle || ''} ${cs.fontWeight || ''} ${cs.fontSize || '12px'} ${cs.fontFamily || 'monospace'}`;
+    return c.measureText('M'.repeat(20)).width / 20 || 7.2;
+}
+// The ruler lines (one-line strip) or the whole wrapped text (several lines); called after the strip text is set
+function _dotStripExtras(panelEl, row, col, ctx) {
+    const S = _dotPlotState, L = _dotStripLines();
+    S._stripRow = row; S._stripCol = col;
+    const rA = document.getElementById('dotPlotRulerA'), rB = document.getElementById('dotPlotRulerB');
+    const pad = ' '.repeat(9);
+    if (L <= 1) {
+        const n = 2 * ctx + 1;
+        const a = _dotRulerRows('A', row - ctx, n), b = _dotRulerRows('B', col - ctx, n);
+        if (rA) { rA.hidden = false; rA.textContent = pad + a.nums + '\n' + pad + a.ticks; rA.scrollLeft = panelEl.scrollLeft; }
+        if (rB) { rB.hidden = false; rB.textContent = pad + b.ticks + '\n' + pad + b.nums; rB.scrollLeft = panelEl.scrollLeft; }
+        return;
+    }
+    if (rA) rA.hidden = true;
+    if (rB) rB.hidden = true;
+    const W = Math.max(20, Math.floor((panelEl.clientWidth - 18) / _dotCharW(panelEl)) - 9);
+    const k0 = -Math.floor(L * W / 2), out = [];
+    // a block that starts before the first / after the last residue shows the nearest real number (it was blank)
+    const lbl = (which, idx) => { const n = which === 'A' ? S.rows : S.cols; return String(n ? _dotNumAt(which, Math.min(n - 1, Math.max(0, idx))) : '').padStart(5); };
+    for (let b = 0; b < L; b++) {
+        const ks = k0 + b * W;
+        let aLine = '', bLine = '', guide = '';
+        for (let k = ks; k < ks + W; k++) {
+            const ar = row + k, br = col + k;
+            const aCh = (ar >= 0 && ar < S.seqA.length) ? S.seqA[ar] : ' ';
+            const bCh = (br >= 0 && br < S.seqB.length) ? S.seqB[br] : ' ';
+            aLine += aCh; bLine += bCh;
+            guide += k === 0 ? '^' : (_dotSame(aCh, bCh) ? '|' : ' ');
+        }
+        const a = _dotRulerRows('A', row + ks, W), bb = _dotRulerRows('B', col + ks, W);
+        out.push(pad + a.nums, pad + a.ticks, 'A ' + lbl('A', row + ks) + '  ' + aLine, pad + guide, 'B ' + lbl('B', col + ks) + '  ' + bLine, pad + bb.ticks, pad + bb.nums, '');
+    }
+    panelEl.textContent = out.join('\n').replace(/\n+$/, '');
+}
+function _dotRenderStrip() {
+    const S = _dotPlotState;
+    if (S._stripRow >= 0 && S._stripCol >= 0 && (S.scores || S.matchMap)) _dotUpdateHoverInfo(S._stripRow, S._stripCol, { force: true });
+}
+function _dotClearStripExtras() {
+    const S = _dotPlotState;
+    S._stripRow = S._stripCol = -1;
+    ['dotPlotRulerA', 'dotPlotRulerB'].forEach(id => { const r = document.getElementById(id); if (r) { r.textContent = ''; r.hidden = _dotStripLines() > 1; } });
+}
+function _dotDrawSlideMarker(oCtx, vw, vh) {
+    const S = _dotPlotState;
+    if (!(S.slideRow >= 0 && S.slideCol >= 0 && S.slideRow < S.rows && S.slideCol < S.cols)) return;
+    const P = DOT_AXIS_PAD, z = S.zoom, { x, y } = _dotCellToScreen(S.slideRow, S.slideCol);
+    const colour = S.colours?.marker || DOT_MARKER_DEFAULT;
+    oCtx.save();
+    oCtx.beginPath(); oCtx.rect(P, P, vw - P, vh - P); oCtx.clip();
+    oCtx.strokeStyle = colour; oCtx.fillStyle = colour; oCtx.lineWidth = 1.5;
+    oCtx.setLineDash([5, 3]);
+    oCtx.beginPath(); oCtx.moveTo(P, y); oCtx.lineTo(vw, y); oCtx.moveTo(x, P); oCtx.lineTo(x, vh); oCtx.stroke();
+    oCtx.setLineDash([]);
+    oCtx.beginPath(); oCtx.arc(x, y, Math.max(4, z / 2 + 2), 0, Math.PI * 2); oCtx.globalAlpha = 0.35; oCtx.fill(); oCtx.globalAlpha = 1; oCtx.stroke();
+    oCtx.restore();
+}
+function _dotRedrawOverlay() {
+    const S = _dotPlotState;
+    if (S.lastRow >= 0) _dotDrawOverlay(S.lastRow, S.lastCol);
+    else if (S.pinnedRow >= 0) _dotDrawOverlay(S.pinnedRow, S.pinnedCol);
+    else _dotClearOverlay();
+}
+function _dotSyncSlideRanges() {
+    const S = _dotPlotState;
+    // The numbers are the ones the ruler shows (the sequence's own residue numbers, a range keeps the real ones). With RevComp B
+    // the number runs DOWN along the plot, so the B slider is drawn right to left: moving it forward lowers the number.
+    [['A', S.rows, S.slideRow, S.offA], ['B', S.cols, S.slideCol, S.offB]].forEach(([w, n, pos, off]) => {
+        const r = document.getElementById('dotPlotPos' + w), t = document.getElementById('dotPlotPos' + w + 'Num');
+        [r, t].forEach(i => { if (i) { i.min = off + 1; i.max = off + Math.max(1, n); i.disabled = !n; } });
+        if (r) r.style.direction = (w === 'B' && _dotPlotRevB()) ? 'rtl' : '';
+        const v = n ? _dotNumAt(w, pos >= 0 ? pos : 0) : off + 1;
+        if (r) r.value = v;
+        if (t && document.activeElement !== t) t.value = v;
+    });
+}
+// Moves the position to 0-based (row, col) (A down, B across): sliders, marker, strip; the plot scrolls to show it
+function _dotSetSlide(row, col, opts = {}) {
+    const S = _dotPlotState;
+    if (!(S.rows > 0 && S.cols > 0)) return;
+    S.slideRow = Math.min(S.rows - 1, Math.max(0, Math.round(row)));
+    S.slideCol = Math.min(S.cols - 1, Math.max(0, Math.round(col)));
+    _dotSyncSlideRanges();
+    if (!opts.noScroll) _dotRevealCell(S.slideRow, S.slideCol);
+    _dotRedrawOverlay();
+    _dotUpdateHoverInfo(S.slideRow, S.slideCol, { force: true });
+}
+function _dotRevealCell(row, col) {
+    const { vp, vw, vh } = _dotViewport();
+    if (!vp) return;
+    const P = DOT_AXIS_PAD, { x, y } = _dotCellToScreen(row, col);
+    if (x < P + 4 || x > vw - 4) vp.scrollLeft += x - (vw + P) / 2;
+    if (y < P + 4 || y > vh - 4) vp.scrollTop += y - (vh + P) / 2;
+}
+function _dotInitStripEvents() {
+    const g = id => document.getElementById(id);
+    const fromInputs = () => {
+        const S = _dotPlotState;
+        const A = parseInt(g('dotPlotPosA')?.value, 10), B = parseInt(g('dotPlotPosB')?.value, 10);
+        _dotSetSlide(Number.isFinite(A) ? A - 1 - S.offA : 0, Number.isFinite(B) ? _dotBIndexOfNum(B) : 0);   // B is the row's residue number: with RevComp it counts down the plot
+    };
+    ['A', 'B'].forEach(w => {
+        const r = g('dotPlotPos' + w), t = g('dotPlotPos' + w + 'Num');
+        r?.addEventListener('input', () => { if (t) t.value = r.value; fromInputs(); });
+        t?.addEventListener('input', () => { const v = parseInt(t.value, 10); if (!Number.isFinite(v)) return; if (r) r.value = v; fromInputs(); });
+    });
+    g('dotPlotStripLines')?.addEventListener('input', () => { const e = g('dotPlotStripExpand'); if (e) e.textContent = _dotStripLines() > 1 ? 'Collapse' : 'Expand'; _dotRenderStrip(); });
+    g('dotPlotStripExpand')?.addEventListener('click', () => {
+        const i = g('dotPlotStripLines'); if (!i) return;
+        i.value = _dotStripLines() > 1 ? 1 : 4;
+        g('dotPlotStripExpand').textContent = _dotStripLines() > 1 ? 'Collapse' : 'Expand';
+        _dotRenderStrip();
+    });
+    const panel = g('dotPlotAlignPanel');
+    if (panel) {
+        panel.addEventListener('scroll', () => { ['dotPlotRulerA', 'dotPlotRulerB'].forEach(id => { const r = g(id); if (r) r.scrollLeft = panel.scrollLeft; }); }, { passive: true });
+        if (typeof ResizeObserver === 'function') {
+            let w0 = 0;
+            new ResizeObserver(() => { const w = panel.clientWidth; if (w !== w0) { w0 = w; if (_dotStripLines() > 1) _dotRenderStrip(); } }).observe(panel);
+        }
+    }
+}
+

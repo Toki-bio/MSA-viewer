@@ -1,0 +1,480 @@
+[bam-parser.js lines 1-479 of ViewAlign fd8b8e4]
+/**
+ * bam-parser.js — Zero-dependency BAM file parser for the browser.
+ *
+ * Uses the browser's built-in DecompressionStream to handle BGZF (concatenated
+ * gzip), then parses the BAM binary format per the SAM/BAM specification
+ * (https://samtools.github.io/hts-specs/SAMv1.pdf, §4.2).
+ *
+ * No npm dependencies. No build step. No server required.
+ *
+ * Reference:
+ *   Li H, Handsaker B, Wysoker A, et al. (2009) The Sequence Alignment/Map
+ *   format and SAMtools. Bioinformatics 25(16):2078-2079.
+ */
+
+// ── Constants ────────────────────────────────────────────────────────────────
+
+const BAM_MAGIC = 0x014D4142; // "BAM\1" as read by getUint32(0, /*littleEndian=*/true)
+// Records kept in memory at most (about 0.5 KB each); a file with more is cut there and the message says so.
+// There used to be a 1000-read limit that refused the whole file, taken before the gene's reference was chosen.
+const MAX_READS = 2000000;
+// Reads that are not evidence of the sample (as the sample row's caller): unmapped, secondary, QC-failed, duplicate,
+// supplementary. igv.js hides QC-failed and duplicates by default and shows secondary and supplementary; here all four
+// start hidden. With keepFlagged only unmapped reads are dropped: the Reads view keeps the others to show on request.
+const SKIP_FLAGS = [[0x4, 'unmapped'], [0x100, 'secondary'], [0x200, 'QC-failed'], [0x400, 'duplicate'], [0x800, 'supplementary']];
+function skipReason(flag, keepFlagged) {
+    if (keepFlagged) return flag & 0x4 ? 'unmapped' : null;
+    for (const [bit, why] of SKIP_FLAGS) if (flag & bit) return why;
+    return null;
+}
+// a record that is no evidence for its bases: no CIGAR, or no sequence (SEQ '*', l_seq 0)
+function noBases(r) { return !r.cigar.length ? 'no CIGAR' : !r._n ? 'no sequence' : null; }
+const SEQ_DECODE = '=ACMGRSVTWYHKDBN'; // 4-bit → IUPAC base (0==, 1=A, 2=C, 4=G, 8=T...)
+const SEQ_CODES = Uint8Array.from({ length: 16 }, (_, i) => (SEQ_DECODE[i] || 'N').charCodeAt(0));
+const CIGAR_OPS = 'MIDNSHP=X';
+
+// ── Public API ───────────────────────────────────────────────────────────────
+
+/**
+ * Decompress a BAM file (BGZF = concatenated gzip) into a Uint8Array.
+ * Uses the browser's built-in DecompressionStream — no external libraries.
+ *
+ * Chrome's DecompressionStream stops after the first gzip member and errors
+ * on the rest ("Failed to fetch"), so a whole BGZF file cannot be piped
+ * through one stream. Each BGZF block is decompressed on its own instead,
+ * using the block size stored in its "BC" extra field.
+ */
+async function decompressBAM(file) {
+    const bytes = new Uint8Array(await file.arrayBuffer());
+    const split = splitBgzfBlocks(bytes);
+    if (!split) {
+        // Not BGZF (plain single-member gzip): one stream is fine
+        return gunzipBytes(bytes);
+    }
+    const { blocks, truncated } = split;
+    const parts = await Promise.all(blocks.map(gunzipBytes));
+    let total = 0;
+    for (const p of parts) total += p.length;
+    const out = new Uint8Array(total);
+    let off = 0;
+    for (const p of parts) {
+        out.set(p, off);
+        off += p.length;
+    }
+    // A cut-off file keeps its complete blocks; the caller warns about the rest
+    if (truncated) out.truncated = true;
+    return out;
+}
+
+async function gunzipBytes(bytes) {
+    if (typeof DecompressionStream === 'undefined') {
+        throw new Error('Reading compressed files (.gz, BAM) needs a newer browser: Chrome/Edge 80+, Firefox 113+ or Safari 16.4+.');
+    }
+    const stream = new Blob([bytes]).stream().pipeThrough(new DecompressionStream('gzip'));
+    return new Uint8Array(await new Response(stream).arrayBuffer());
+}
+
+/**
+ * Size of the BGZF block starting at `off`, from its "BC" extra subfield, or
+ * -1 when the bytes there are not a BGZF block header.
+ */
+function bgzfBlockSize(bytes, off) {
+    // gzip magic + FEXTRA flag; BGZF always sets FEXTRA
+    if (bytes[off] !== 0x1f || bytes[off + 1] !== 0x8b || !(bytes[off + 3] & 4)) return -1;
+    const xlen = bytes[off + 10] | (bytes[off + 11] << 8);
+    for (let p = off + 12; p < off + 12 + xlen; ) {
+        const slen = bytes[p + 2] | (bytes[p + 3] << 8);
+        if (bytes[p] === 66 && bytes[p + 1] === 67 && slen === 2) {
+            return (bytes[p + 4] | (bytes[p + 5] << 8)) + 1;
+        }
+        p += 4 + slen;
+    }
+    return -1;
+}
+
+/**
+ * True when `bytes` (the start of a file) is a BAM: a BGZF block whose
+ * content begins with the "BAM\1" magic. Lets a BAM be recognised by content
+ * whatever its file name.
+ */
+async function sniffBam(bytes) {
+    const bsize = bgzfBlockSize(bytes, 0);
+    if (bsize <= 0 || bsize > bytes.length) return false;
+    try {
+        const head = await gunzipBytes(bytes.subarray(0, bsize));
+        return head.length >= 4 && head[0] === 0x42 && head[1] === 0x41 && head[2] === 0x4d && head[3] === 0x01;
+    } catch (e) {
+        return false;
+    }
+}
+
+/**
+ * Split a BGZF file into its gzip members: { blocks, truncated }. Returns null
+ * if the data is not BGZF (the first block has no "BC" extra subfield).
+ * `truncated` is true when the file stops inside a block or does not end with
+ * the empty BGZF end-of-file block; the complete blocks before that are kept.
+ */
+function splitBgzfBlocks(bytes) {
+    const blocks = [];
+    let off = 0;
+    let sawEof = false;
+    while (off < bytes.length) {
+        const bsize = bgzfBlockSize(bytes, off);
+        if (bsize <= 0 || off + bsize > bytes.length) {
+            if (off === 0) return null;
+            return { blocks, truncated: true };
+        }
+        // ISIZE (last 4 bytes) of 0 marks an empty block, e.g. the BGZF EOF marker
+        const isize = new DataView(bytes.buffer, bytes.byteOffset + off + bsize - 4, 4).getUint32(0, true);
+        if (isize > 0) blocks.push(bytes.subarray(off, off + bsize));
+        sawEof = isize === 0;
+        off += bsize;
+    }
+    return { blocks, truncated: !sawEof };
+}
+
+/**
+ * Parse a BAM header from a decompressed buffer.
+ * Returns { headerText, refNames[], refLengths[], headerEndOffset }.
+ */
+function parseBAMHeader(buf) {
+    const dv = new DataView(buf.buffer, buf.byteOffset, buf.byteLength);
+
+    if (dv.getUint32(0, true) !== BAM_MAGIC) {
+        throw new Error('Not a valid BAM file (bad magic number)');
+    }
+
+    const l_text = dv.getUint32(4, true);
+    const headerText = new TextDecoder().decode(buf.subarray(8, 8 + l_text));
+
+    let off = 8 + l_text;
+    const n_ref = dv.getUint32(off, true);
+    off += 4;
+
+    const refNames = [];
+    const refLengths = [];
+
+    for (let i = 0; i < n_ref; i++) {
+        const nameLen = dv.getUint32(off, true);
+        off += 4;
+        const name = new TextDecoder().decode(buf.subarray(off, off + nameLen - 1)); // -1 for null terminator
+        off += nameLen;
+        const refLen = dv.getUint32(off, true);
+        off += 4;
+        refNames.push(name);
+        refLengths.push(refLen);
+    }
+
+    return { headerText, refNames, refLengths, headerEndOffset: off };
+}
+
+/**
+ * Parse a single BAM alignment record from a decompressed buffer at a given offset.
+ * Returns { record, nextOffset } or null if at end.
+ *
+ * Each record (BAM spec §4.2):
+ *   block_size (int32) — total size of this record's data (excluding this field)
+ *   refID, pos, l_read_name, mapq, bin, n_cigar_op, flag, l_seq (core fields)
+ *   next_refID, next_pos, tlen
+ *   read_name, cigar, seq, qual, tags
+ */
+// A read that stays in the decompressed BAM: seq, qual and tags are decoded when asked for, once. Decoding every read on
+// opening took 2.3 s for 200,000 short reads and 5.8 s for 30 Mb of long reads; a view shows a few dozen. The caller
+// (sample-call.js) counts straight from the packed bases: _b, _so (offset of the bases), _n (length), _hq (has qualities).
+const NAME_DECODER = new TextDecoder(), LATIN1 = new TextDecoder('latin1');
+const SINGLE_CIGAR = new Map();   // most reads have one CIGAR operation: one shared array per length. Never changed.
+class BamRecord {
+    constructor(name, refID, pos, mapq, flag, cigar, tlen, nextRef, nextPos, buf, seqOff, lSeq, hasQual, tagOff, tagEnd) {
+        this.name = name; this.refID = refID; this.pos = pos; this.mapq = mapq; this.flag = flag; this.cigar = cigar;
+        this.tlen = tlen; this.next_refID = nextRef; this.next_pos = nextPos;
+        this._b = buf; this._so = seqOff; this._n = lSeq; this._hq = hasQual; this._to = tagOff; this._te = tagEnd;
+        this._seq = null; this._qual = null; this._tags = null;
+    }
+    get seq() {
+        if (this._seq === null) {
+            const n = this._n, b = this._b, so = this._so, out = new Uint8Array(n);
+            for (let i = 0; i < n; i++) out[i] = SEQ_CODES[(b[so + (i >> 1)] >> ((~i & 1) << 2)) & 15];
+            this._seq = LATIN1.decode(out);
+        }
+        return this._seq;
+    }
+    get qual() {
+        if (this._qual === null) {
+            if (!this._hq) this._qual = '';
+            else {
+                const n = this._n, b = this._b, qo = this._so + ((n + 1) >> 1);
+                let s = '';
+                for (let i = 0; i < n; i++) s += String.fromCharCode(b[qo + i] + 33);
+                this._qual = s;
+            }
+        }
+        return this._qual;
+    }
+    get tags() {
+        if (this._tags === null) this._tags = parseBAMTags(this._b, this._to, this._te);
+        return this._tags;
+    }
+}
+function parseBAMTags(buf, start, tagEnd, arrayTypes) {
+    const dv = new DataView(buf.buffer, buf.byteOffset, buf.byteLength);
+    let pos = start;
+    const tags = {};
+    while (pos + 2 < tagEnd) {
+        const tag = String.fromCharCode(buf[pos], buf[pos + 1]);
+        pos += 2;
+        const type = String.fromCharCode(buf[pos]); pos += 1;
+
+        switch (type) {
+            case 'A': tags[tag] = String.fromCharCode(buf[pos]); pos += 1; break;
+            // the 1- and 2-byte integer types (samtools writes NM, AS, ... in the smallest that fits):
+            // unhandled, they ended the tag loop and every later tag of the record was lost
+            case 'c': tags[tag] = dv.getInt8(pos); pos += 1; break;
+            case 'C': tags[tag] = dv.getUint8(pos); pos += 1; break;
+            case 's': tags[tag] = dv.getInt16(pos, true); pos += 2; break;
+            case 'S': tags[tag] = dv.getUint16(pos, true); pos += 2; break;
+            case 'i': case 'I': {
+                let val = 0;
+                if (type === 'i') {
+                    val = dv.getInt32(pos, true); pos += 4;
+                } else {
+                    val = dv.getUint32(pos, true); pos += 4;
+                }
+                tags[tag] = val;
+                break;
+            }
+            case 'f': tags[tag] = dv.getFloat32(pos, true); pos += 4; break;
+            case 'Z': case 'H': {
+                let end = pos;
+                while (end < tagEnd && buf[end] !== 0) end++;
+                tags[tag] = new TextDecoder().decode(buf.subarray(pos, end));
+                pos = end + 1;
+                break;
+            }
+            case 'B': {
+                const btype = String.fromCharCode(buf[pos]); pos += 1;
+                if (arrayTypes) arrayTypes[tag] = btype;
+                const count = dv.getUint32(pos, true); pos += 4;
+                const arr = [];
+                for (let j = 0; j < count; j++) {
+                    switch (btype) {
+                        case 'c': arr.push(dv.getInt8(pos)); pos += 1; break;
+                        case 'C': arr.push(dv.getUint8(pos)); pos += 1; break;
+                        case 's': arr.push(dv.getInt16(pos, true)); pos += 2; break;
+                        case 'S': arr.push(dv.getUint16(pos, true)); pos += 2; break;
+                        case 'i': arr.push(dv.getInt32(pos, true)); pos += 4; break;
+                        case 'I': arr.push(dv.getUint32(pos, true)); pos += 4; break;
+                        case 'f': arr.push(dv.getFloat32(pos, true)); pos += 4; break;
+                        default: pos = tagEnd; j = count; break;   // unknown element type: stop at the record end
+                    }
+                }
+                tags[tag] = arr;
+                break;
+            }
+            default:
+                // Unknown tag type — skip the rest of the block to be safe
+                pos = tagEnd;
+                break;
+        }
+    }
+
+    return tags;
+}
+/**
+ * A CIGAR too long for the record (over 65,535 operations) is stored as the placeholder <l_seq>S<n>N, n the reference length, with the real
+ * one in the tag CG:B,I (SAMv1 4.2.2). Puts the real one on the read and takes the tag out of the read's tags, as htslib does: it is
+ * the read's CIGAR, not a tag. It was taken as real: the read was all clip and a skip, with no depth over its span. B,i is taken too, as htslib.
+ */
+function useCigarTag(rec, cigarOps, lSeq) {
+    if (cigarOps[0].op !== 'S' || cigarOps[0].len !== lSeq || cigarOps[1].op !== 'N' || rec.refID < 0 || rec.pos < 0) return;
+    const types = {}, tags = parseBAMTags(rec._b, rec._to, rec._te, types), cg = tags.CG;
+    if (!cg || !cg.length || (types.CG !== 'I' && types.CG !== 'i')) return;
+    const real = new Array(cg.length);
+    let span = 0;
+    for (let i = 0; i < cg.length; i++) {
+        const op = CIGAR_OPS[cg[i] & 0xF], len = cg[i] >>> 4;
+        if (!op) return;
+        if ('MDN=X'.includes(op)) span += len;
+        real[i] = { len, op };
+    }
+    if (span !== cigarOps[1].len) return;
+    delete tags.CG;
+    rec.cigar = real; rec._tags = tags;
+}
+
+function parseBAMRecord(buf, offset, dvIn) {
+    if (offset + 4 > buf.length) return null;
+
+    const dv = dvIn || new DataView(buf.buffer, buf.byteOffset, buf.byteLength);
+    const blockSize = dv.getUint32(offset, true);
+    if (blockSize === 0 || offset + 4 + blockSize > buf.length) return null;
+
+    let pos = offset + 4;
+    const refID   = dv.getInt32(pos, true);  pos += 4;
+    const rpos    = dv.getInt32(pos, true);  pos += 4;
+    const lName   = dv.getUint8(pos);        pos += 1;
+    const mapq    = dv.getUint8(pos);        pos += 1;
+    pos += 2;                                            // bin
+    const nCigar  = dv.getUint16(pos, true); pos += 2;
+    const flag    = dv.getUint16(pos, true); pos += 2;
+    const lSeq    = dv.getUint32(pos, true); pos += 4;
+    const nextRef = dv.getInt32(pos, true);  pos += 4;
+    const nextPos = dv.getInt32(pos, true);  pos += 4;
+    const tlen    = dv.getInt32(pos, true);  pos += 4;
+
+    // Read name
+    const name = NAME_DECODER.decode(buf.subarray(pos, pos + lName - 1)); // -1 for null
+    pos += lName;
+
+    // CIGAR
+    let cigarOps;
+    if (nCigar === 1) {
+        const raw = dv.getUint32(pos, true);
+        cigarOps = SINGLE_CIGAR.get(raw);
+        if (!cigarOps) { cigarOps = [{ len: raw >>> 4, op: CIGAR_OPS[raw & 0xF] }]; if (SINGLE_CIGAR.size < 100000) SINGLE_CIGAR.set(raw, cigarOps); }
+        pos += 4;
+    } else {
+        cigarOps = [];
+        for (let i = 0; i < nCigar; i++) {
+            const cigRaw = dv.getUint32(pos, true); pos += 4;
+            cigarOps.push({ len: cigRaw >>> 4, op: CIGAR_OPS[cigRaw & 0xF] });
+        }
+    }
+
+    // Bases (4-bit, 2 per byte, high nibble first), then qualities: 0xFF first means none ('*' in SAM)
+    const seqOff = pos, seqBytes = (lSeq + 1) >> 1;
+    pos += seqBytes;
+    const hasQual = lSeq > 0 && buf[pos] !== 0xFF;
+    pos += lSeq;
+    const tagEnd = offset + 4 + blockSize;
+
+    const record = new BamRecord(name, refID, rpos, mapq, flag, cigarOps, tlen, nextRef, nextPos, buf, seqOff, lSeq, hasQual, pos, tagEnd);
+    if (nCigar === 2) useCigarTag(record, cigarOps, lSeq);
+    return { record, nextOffset: tagEnd };
+}
+
+/**
+ * Parse all alignment records from a decompressed BAM buffer. Reads that are not evidence (skipReason) are
+ * dropped and counted; at most MAX_READS are kept.
+ *
+ * Returns { records[], exceededLimit: bool, totalReads: number (all records), skipped: { reason: count } }
+ */
+function parseBAMRecords(buf, headerEndOffset, keepFlagged) {
+    const dv = new DataView(buf.buffer, buf.byteOffset, buf.byteLength);
+    const records = [];
+    let offset = headerEndOffset;
+    let totalReads = 0;
+    let exceededLimit = false;
+    const skipped = {};
+
+    while (offset < buf.length) {
+        const result = parseBAMRecord(buf, offset, dv);
+        if (!result) break;
+        offset = result.nextOffset;
+        totalReads++;
+        // SEQ '*' (l_seq 0) is no read bases: kept, it was drawn as a bar of N (a SAM read with SEQ '*' was already dropped)
+        const why = skipReason(result.record.flag, keepFlagged) || noBases(result.record);
+        if (why) { skipped[why] = (skipped[why] || 0) + 1; continue; }
+        if (records.length >= MAX_READS) { exceededLimit = true; continue; }
+        records.push(result.record);
+    }
+
+    return { records, exceededLimit, totalReads, skipped };
+}
+
+/**
+ * Expand a CIGAR array into a display string showing how the read aligns
+ * to the reference. Returns an array of { type, base, refBase } triples.
+ *
+ * readPos is the index into the read sequence.
+ * The returned array represents aligned columns ready for rendering.
+ */
+function expandCigar(read, refBaseFn) {
+    const columns = [];
+    let readPos = 0;
+    let refPos = read.pos;
+
+    for (const op of read.cigar) {
+        switch (op.op) {
+            case 'M':
+            case '=':
+            case 'X':
+                // Match/mismatch: read base vs reference base
+                for (let i = 0; i < op.len; i++) {
+                    const base = read.seq[readPos + i] || 'N';
+                    const refBase = refBaseFn(refPos + i);
+                    columns.push({
+                        type: (op.op === '=') ? 'match' : (op.op === 'X') ? 'mismatch' : (base === refBase ? 'match' : 'mismatch'),
+                        base,
+                        refBase,
+                        readPos: readPos + i,
+                    });
+                }
+                readPos += op.len;
+                refPos += op.len;
+                break;
+
+            case 'I':
+                // Insertion: bases in read, no reference counterpart
+                for (let i = 0; i < op.len; i++) {
+                    columns.push({
+                        type: 'insertion',
+                        base: read.seq[readPos + i] || 'N',
+                        refBase: null,
+                        readPos: readPos + i,
+                    });
+                }
+                readPos += op.len;
+                break;
+
+            case 'D':
+                // Deletion: bases in reference, gap in read
+                for (let i = 0; i < op.len; i++) {
+                    columns.push({
+                        type: 'deletion',
+                        base: '-',
+                        refBase: refBaseFn(refPos + i),
+                        readPos: -1,
+                    });
+                }
+                refPos += op.len;
+                break;
+
+            case 'N':
+                // Splice junction / intron: skip in both
+                for (let i = 0; i < op.len; i++) {
+                    columns.push({
+                        type: 'intron',
+                        base: '\u2026', // …
+                        refBase: refBaseFn(refPos + i),
+                        readPos: -1,
+                    });
+                }
+                refPos += op.len;
+                break;
+
+            case 'S':
+                // Soft clip: bases in read, before/after alignment
+                for (let i = 0; i < op.len; i++) {
+                    columns.push({
+                        type: 'softclip',
+                        base: read.seq[readPos + i] || 'N',
+                        refBase: null,
+                        readPos: readPos + i,
+                    });
+                }
+                readPos += op.len;
+                break;
+
+            case 'H':
+                // Hard clip: not present in SEQ
+                break;
+
+            case 'P':
+                // Padding: silent deletion from padded SAM
+                break;
+        }
+    }
+    return columns;
+}
+

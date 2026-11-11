@@ -1,0 +1,429 @@
+[script.js lines 24575-25002 of ViewAlign fd8b8e4]
+/**
+ * Neighbor-Joining tree from pairwise alignment distances.
+ * Saitou & Nei (1987). Same distance matrix as UPGMA, different clustering.
+ */
+function buildNJTreeFromAlignment(seqObjects, model) {
+    model = model || 'raw';
+    const n = seqObjects.length;
+    const { D: baseDist, stats: distanceStats } = _treeDistanceMatrix(seqObjects, model);
+
+    // Initialize clusters
+    const clusters = seqObjects.map((s, i) => ({
+        name: s.header || `seq_${i + 1}`,
+        size: 1,
+        height: 0,
+        branchLength: 0,
+        left: null,
+        right: null
+    }));
+    const dist = baseDist.map(r => r.slice());
+    let activeIndices = clusters.map((_, i) => i); // maps to original cluster positions
+
+    // NJ main loop
+    while (activeIndices.length > 2) {
+        const m = activeIndices.length;
+        // Net divergence r[i]
+        const r = new Array(m).fill(0);
+        for (let a = 0; a < m; a++) {
+            for (let b = 0; b < m; b++) {
+                if (a !== b) r[a] += dist[a][b];
+            }
+        }
+
+        // Find minimum Q
+        let minQ = Infinity, minI = 0, minJ = 1;
+        for (let a = 0; a < m; a++) {
+            for (let b = a + 1; b < m; b++) {
+                const q = (m - 2) * dist[a][b] - r[a] - r[b];
+                // Ties are common (with 4 nodes complementary pairs always tie; with 3 all
+                // do). Scan order used to decide, which put one of three identical
+                // sequences next to the different one. Prefer the closer pair.
+                // The first pair sets minQ: with minQ = Infinity the tolerance was Infinity too,
+                // Infinity - Infinity is NaN, and the scan compared raw distances instead of Q
+                // (found by the GLM audit; a long-branch 4-taxon case joined the wrong pair)
+                const tol = 1e-9 * Math.max(1, Math.abs(minQ));
+                if (minQ === Infinity || q < minQ - tol || (Math.abs(q - minQ) <= tol && dist[a][b] < dist[minI][minJ])) {
+                    minQ = q;
+                    minI = a;
+                    minJ = b;
+                }
+            }
+        }
+
+        // Branch lengths
+        const dij = dist[minI][minJ];
+        // The two lengths always add up to the pair's distance. A negative one is set to 0 and the
+        // other takes the whole distance: the second used to be set to 0 while the first kept a
+        // length above the distance, so sisters were drawn further apart than measured (audit M18).
+        let bi = (dij + (r[minI] - r[minJ]) / (m - 2)) / 2;
+        let bj = dij - bi;
+        if (bi < 0) { bi = 0; bj = Math.max(0, dij); }
+        else if (bj < 0) { bj = 0; bi = Math.max(0, dij); }
+
+        const clusterI = clusters[activeIndices[minI]];
+        const clusterJ = clusters[activeIndices[minJ]];
+        clusterI.branchLength = bi;
+        clusterJ.branchLength = bj;
+        const mergedHeight = dij / 2; // approximate
+
+        // New distances to merged node
+        const newDistances = [];
+        for (let k = 0; k < m; k++) {
+            if (k === minI || k === minJ) continue;
+            newDistances.push((dist[minI][k] + dist[minJ][k] - dij) / 2);
+        }
+
+        // Build merged node
+        const merged = {
+            name: '',
+            size: clusterI.size + clusterJ.size,
+            height: mergedHeight,
+            branchLength: 0,
+            left: clusterI,
+            right: clusterJ
+        };
+
+        // Rebuild distance matrix without minI, minJ, adding merged
+        const oldIndices = [];
+        for (let k = 0; k < m; k++) {
+            if (k === minI || k === minJ) continue;
+            oldIndices.push(activeIndices[k]);
+        }
+        const newIndex = clusters.length;
+        // Remove minI, minJ from dist matrix (minJ first since it's larger)
+        dist.splice(Math.max(minI, minJ), 1);
+        dist.splice(Math.min(minI, minJ), 1);
+        dist.forEach(row => {
+            row.splice(Math.max(minI, minJ), 1);
+            row.splice(Math.min(minI, minJ), 1);
+        });
+        // Add merged row/col
+        dist.forEach((row, ki) => row.push(newDistances[ki] ?? 0));
+        dist.push([...newDistances, 0]);
+
+        activeIndices.splice(Math.max(minI, minJ), 1);
+        activeIndices.splice(Math.min(minI, minJ), 1);
+        activeIndices.push(newIndex);
+        clusters.push(merged);
+    }
+
+    // Connect last two clusters
+    if (activeIndices.length === 2) {
+        const a = activeIndices[0];
+        const b = activeIndices[1];
+        clusters[a].branchLength = Math.max(0, dist[0][1] / 2);
+        clusters[b].branchLength = Math.max(0, dist[0][1] / 2);
+        const root = {
+            name: '',
+            size: clusters[a].size + clusters[b].size,
+            height: dist[0][1] / 2,
+            branchLength: 0,
+            left: clusters[a],
+            right: clusters[b]
+        };
+        clusters.push(root);
+        activeIndices = [clusters.length - 1];
+    }
+
+    const root = clusters[activeIndices[0]];
+    return {
+        newick: _treeNodeToNewick(root, true),
+        text: _treeNodeToText(root).trimEnd(),
+        stats: distanceStats
+    };
+}
+
+function getTreeInputSequences() {
+    if (!state.seqs || state.seqs.length < 2) return [];
+    const selected = Array.from(state.selectedRows).filter(index => state.seqs[index]);
+    const indices = selected.length >= 2 ? selected.sort((firstIndex, secondIndex) => firstIndex - secondIndex) : state.seqs.map((seqObj, index) => index);
+    return indices.map(index => state.seqs[index]);
+}
+
+function openTreeBuilder() {
+    const visOnly = _foldVisibleOnly();
+    const seqObjects = visOnly
+        ? getTreeInputSequences().map(q => ({ header: q.header, fullHeader: q.fullHeader, seq: _foldVisibleSeq(q.seq) }))
+        : getTreeInputSequences();
+    if (seqObjects.length < 2) {
+        showMessage('Need at least two sequences to build a tree.', 2200);
+        return;
+    }
+    const method = document.querySelector('input[name="treeMethod"]:checked')?.value || 'upgma';
+    const modelEl = document.getElementById('treeDistanceModel');
+    let model = modelEl ? modelEl.value : 'raw';
+    // JC69 and K80 are nucleotide models (four states; transitions vs transversions):
+    // on a protein alignment they gave numbers with no meaning. Use p-distance and say so.
+    const proteinFallback = model !== 'raw' && isProteinAlignment();
+    if (proteinFallback) model = 'raw';
+    const modelName = model === 'raw' ? 'p-distance' : model.toUpperCase();
+    showMessage(`Building ${method.toUpperCase()} tree (${modelName})...`, 0);
+    setTimeout(() => {
+        try {
+            const result = method === 'nj'
+                ? buildNJTreeFromAlignment(seqObjects, model)
+                : buildUPGMATreeFromAlignment(seqObjects, model);
+            const modal = document.getElementById('treeBuilderModal');
+            const summary = document.getElementById('treeBuilderSummary');
+            const newickOutput = document.getElementById('treeNewickOutput');
+            const textOutput = document.getElementById('treeTextOutput');
+            const scope = state.selectedRows.size >= 2 ? 'selected sequences' : 'all sequences';
+            if (summary) {
+                const st = result.stats;
+                summary.textContent = `${st.count} ${scope} | ${modelName}${proteinFallback ? ' (protein: JC69/K80 are nucleotide models)' : ''} | ${method.toUpperCase()}${visOnly ? ' | visible columns only' : ''} | avg ${st.averageDistance.toFixed(4)} | range ${st.minDistance.toFixed(4)}-${st.maxDistance.toFixed(4)}`;
+                // Pairs without a usable distance were set to the largest one: say which
+                if (st.filledWith !== null) {
+                    const parts = [];
+                    if (st.noOverlap.length) parts.push(`${st.noOverlap.length} pair${st.noOverlap.length > 1 ? 's share' : ' shares'} no aligned base: distance unknown, set to ${st.filledWith.toFixed(4)} (the largest defined distance, or 1 if all are 0)`);
+                    if (st.saturated.length) parts.push(`${st.saturated.length} pair${st.saturated.length > 1 ? 's are' : ' is'} saturated under ${modelName}: set to twice the largest (${st.saturatedFill.toFixed(4)})`);
+                    const warn = document.createElement('span');
+                    warn.className = 'tree-distance-warning';
+                    warn.textContent = ` | ${parts.join('; ')}`;
+                    const list = pairs => pairs.slice(0, 30).map(([i, j]) => `${st.names[i]} × ${st.names[j]}`).join('\n');
+                    warn.title = [st.noOverlap.length ? 'No shared aligned base:\n' + list(st.noOverlap) : '',
+                        st.saturated.length ? 'Saturated:\n' + list(st.saturated) : ''].filter(Boolean).join('\n\n');
+                    summary.appendChild(warn);
+                }
+            }
+            if (newickOutput) newickOutput.value = result.newick;
+            if (textOutput) textOutput.textContent = result.text;
+            if (modal) showExclusiveModal('treeBuilderModal');
+            showMessage(`${method.toUpperCase()} tree built.`, 1200);
+        } catch (err) {
+            console.error('Tree build failed:', err);
+            showMessage(`Tree build failed: ${err.message}`, 4000);
+        }
+    }, 10);
+}
+
+function closeTreeBuilder() {
+    const modal = document.getElementById('treeBuilderModal');
+    if (modal) modal.style.display = 'none';
+}
+
+function copyTreeNewick() {
+    const newick = document.getElementById('treeNewickOutput')?.value || '';
+    if (!newick) return;
+    navigator.clipboard.writeText(newick)
+        .then(() => showMessage('Newick copied.', 1400))
+        .catch(() => showMessage('Failed to copy Newick.', 2200));
+}
+
+function downloadTreeNewick() {
+    const newick = document.getElementById('treeNewickOutput')?.value || '';
+    if (!newick) return;
+    const blob = new Blob([newick + '\n'], { type: 'text/plain' });
+    const downloadUrl = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    const base = (state.currentFilename || 'alignment').replace(/[^A-Za-z0-9_.-]+/g, '_').replace(/_+$/, '') || 'alignment';
+    link.href = downloadUrl;
+    const method = document.querySelector('input[name="treeMethod"]:checked')?.value || 'upgma';
+    const suffix = method === 'nj' ? '.nj.nwk' : '.upgma.nwk';
+    link.download = `${base}${suffix}`;
+    link.click();
+    setTimeout(() => URL.revokeObjectURL(downloadUrl), 500);
+}
+
+/**
+ * Open Alignment Statistics modal.
+ * Summary counts follow esl-alistat. Pairwise percent identity is identical
+ * residues over columns where both sequences are non-gap. esl-alipid (Easel,
+ * Sean Eddy) divides by the shorter unaligned length instead. No Easel source.
+ * http://eddylab.org/software/easel/
+ */
+// Pairwise matrices are O(sequences^2 x columns), so this reaches seconds on a large
+// alignment. Show the indicator and yield before starting.
+async function openStats() {
+    let stopped = false;
+    const r = await runWithProgress('Computing statistics...', (update) => _openStatsNow(update, () => stopped),
+        'pairwise identity, esl-alipid definition', () => { stopped = true; });
+    if (r === 'stopped') showMessage('Statistics cancelled.', 2000);
+    return r;
+}
+
+// The statistics belong to one alignment. A new file closes the window and drops them; an edit marks the open
+// window stale and offers Recompute (the pass takes seconds on a big alignment, so it is not automatic).
+function _statsInvalidate(newFile) {
+    const w = document.getElementById('statsModal');
+    const open = w && w.style.display !== 'none';
+    if (newFile) {
+        state._statsData = null; state._statsHits = []; state._statsFilter = null; state._statsSelCols = new Set();
+        if (open) closeStats();
+        return;
+    }
+    const bar = document.getElementById('statsStale');
+    if (bar && open && state._statsData) bar.hidden = false;
+}
+
+// ── Alignment Statistics ────────────────────────────────────────────────────────
+// Reimplements Easel esl-alistat (summary) and esl-alipid (pairwise identity). Both
+// identity definitions are computed in one pass; the matrix, the identity card and the
+// pair filter use the one chosen in the window (default: esl-alipid's).
+async function _openStatsNow(update, isStopped) {
+    try {
+        const seqs = getTreeInputSequences();
+        if (seqs.length < 2) {
+            showMessage('Need at least two sequences for statistics.', 2200);
+            return;
+        }
+        let alen = 0;   // a loop, not Math.max(...): spreading a very long list overflows the call stack
+        for (const s of seqs) if (s.seq.length > alen) alen = s.seq.length;
+        const nseq = seqs.length;
+        // A residue is what Easel counts as one (esl_abc_dsqrlen, esl_dst_XPairId): a letter, canonical or
+        // degenerate. Gap symbols and "*" (Easel: nonresidue) are not residues and never identities. In a
+        // nucleotide alignment U is the same code as T (Easel's DNA alphabet), so the pass compares T for U.
+        const isGap = ch => ch === undefined || ch === '-' || ch === '.' || ch === '*' || ch === '~' || ch === '_' || ch === ' ';
+        // Rows shorter than the alignment count as gap-padded to alen.
+        // One byte per cell (0 = not a residue, else the upper-case letter): the pair pass over strings took
+        // 20 s for 600 x 2,000 and nine minutes for 2,000 x 5,000, with the tab frozen.
+        const rawLen = new Int32Array(nseq);
+        let totalGaps = 0;
+        const nucleotide = !isProteinAlignment(seqs);
+        const enc = new Array(nseq);
+        for (let i = 0; i < nseq; i++) {
+            const u = seqs[i].seq.toUpperCase(), a = new Uint8Array(alen);
+            let r = 0;
+            for (let p = 0; p < u.length; p++) {
+                const ch = u[p];
+                if (isGap(ch)) continue;
+                a[p] = nucleotide && ch === 'U' ? 84 : u.charCodeAt(p);
+                r++;
+            }
+            enc[i] = a;
+            rawLen[i] = r;
+            totalGaps += alen - r;
+        }
+        const totalResidues = rawLen.reduce((a, b) => a + b, 0);
+        const totalCells = nseq * alen;
+
+        // One pass per pair: identical residues, columns where both have a residue.
+        //   esl  = nid / MIN(len1, len2)   (esl_dst_XPairId; 0 when the minimum is 0)
+        //   cols = nid / shared columns    (0 when they share none)
+        const pidEsl = new Float64Array(nseq * nseq).fill(100);
+        const pidCols = new Float64Array(nseq * nseq).fill(100);
+        let noSharedCols = 0, emptyPairs = 0;
+        const totalPairs = nseq * (nseq - 1) / 2;
+        let done = 0, lastYield = performance.now();
+        for (let i = 0; i < nseq; i++) {
+            const a = enc[i];
+            for (let j = i + 1; j < nseq; j++) {
+                const b = enc[j];
+                let nid = 0, shared = 0;
+                for (let p = 0; p < alen; p++) {
+                    const x = a[p], y = b[p];
+                    if (x && y) { shared++; if (x === y) nid++; }
+                }
+                const minLen = Math.min(rawLen[i], rawLen[j]);
+                if (!minLen) emptyPairs++;
+                if (!shared) noSharedCols++;
+                pidEsl[i * nseq + j] = pidEsl[j * nseq + i] = minLen ? nid / minLen * 100 : 0;
+                pidCols[i * nseq + j] = pidCols[j * nseq + i] = shared ? nid / shared * 100 : 0;
+            }
+            done += nseq - 1 - i;
+            // let the busy overlay repaint, report, and honour Stop
+            if (performance.now() - lastYield > 60) {
+                if (isStopped && isStopped()) return 'stopped';
+                if (update) update(`${done.toLocaleString()} of ${totalPairs.toLocaleString()} pairs`);
+                await yieldToPaint();
+                lastYield = performance.now();
+            }
+        }
+
+        const seqNames = seqs.map((s, i) => s.header || `seq_${i + 1}`);
+        const prev = _statsLabelOpts();
+        state._statsData = {
+            names: seqNames, seqs, n: nseq, pid: { esl: pidEsl, cols: pidCols },
+            counts: { noSharedCols, emptyPairs }, mode: prev.idMode
+        };
+        state._statsFocus = { i: -1, j: -1 };
+        state._statsSelCols = new Set();
+        state._statsFilter = null;
+        _statsBuildStrings();
+        const staleBar = document.getElementById('statsStale');
+        if (staleBar) staleBar.hidden = true;
+
+        let small = Infinity, large = 0;
+        for (const r of rawLen) { small = Math.min(small, r); large = Math.max(large, r); }
+        const eslMean = _statsIdentitySummary('esl').mean;
+
+        const summaryTab = document.getElementById('statsSummaryTab');
+        if (!summaryTab) { showMessage('Statistics panel not found.', 3000); return; }
+        const allN = state.seqs.length;
+        const usedTxt = nseq === allN ? `${nseq} (all)` : `${nseq} selected of ${allN}`;
+        const tipRow = (key, label, value, extra = '') => `<tr><td><span class="tip" data-tip="${key}">${label}</span></td><td${extra}>${value}</td></tr>`;
+        const opts = _statsLabelOpts();
+        summaryTab.innerHTML =
+            `<div class="stats-cards">` +
+            `<div class="stats-card"><b>Alignment <span class="src">esl-alistat</span></b><table>` +
+                tipRow('nseq', 'Number of sequences', usedTxt) +
+                tipRow('alen', 'Alignment length', `${alen.toLocaleString()}`) +
+                tipRow('nres', 'Total # residues', totalResidues.toLocaleString()) +
+                tipRow('small', 'Smallest', small.toLocaleString()) +
+                tipRow('large', 'Largest', large.toLocaleString()) +
+                tipRow('avglen', 'Average length', (totalResidues / nseq).toFixed(1)) +
+                tipRow('avgid', 'Average identity', `${eslMean.toFixed(1)}%`) +
+                tipRow('gaps', 'Gaps', `${totalGaps.toLocaleString()} (${(totalCells ? totalGaps / totalCells * 100 : 0).toFixed(1)}%)`, ' class="extra"') +
+            `</table></div>` +
+            `<div class="stats-card" id="statsIdCard"></div></div>` +
+            `<div class="stats-mx-toolbar">` +
+                `<span class="stats-legend" title="One matrix: pairwise identity (%) above the diagonal, distance = 1 − identity/100 below it">` +
+                    `<b>&#9698;</b> identity % &nbsp; <b>&#9699;</b> distance` +
+                `</span>` +
+                `<label class="lbl" title="Denominator of pairwise identity">over <select id="statsIdMode">` +
+                    `<option value="esl"${opts.idMode === 'esl' ? ' selected' : ''}>shorter sequence (esl-alipid)</option>` +
+                    `<option value="cols"${opts.idMode === 'cols' ? ' selected' : ''}>shared columns</option>` +
+                `</select></label>` +
+                `<input type="search" class="stats-find" id="statsFindRow" list="statsNameList" placeholder="Find row…" autocomplete="off" spellcheck="false" title="Type part of a sequence name to jump to its row; Enter goes to the next match">` +
+                `<input type="search" class="stats-find" id="statsFindCol" list="statsNameList" placeholder="Find column…" autocomplete="off" spellcheck="false" title="Type part of a sequence name to jump to its column; Enter goes to the next match">` +
+                `<span class="stats-menu-wrap"><button type="button" id="statsLabelsBtn" title="How sequence names are shown on the matrix">Labels ▾</button>` +
+                `<div id="statsLabelsPanel" class="stats-heat-panel stats-labels-panel" hidden>` +
+                `<label class="row">Column names <select id="statsLabelStyle" title="How sequence names are shown above the matrix columns">` +
+                ['angled', 'vertical', 'numbers'].map(v => `<option value="${v}"${opts.style === v ? ' selected' : ''}>${{ angled: 'Angled 45°', vertical: 'Vertical', numbers: 'Numbers + key' }[v]}</option>`).join('') +
+                `</select></label>` +
+                `<label class="row" title="Longest name shown in labels (the full name is in the tooltip and in copies and files)">Longest name shown <input type="number" id="statsLabelChars" min="3" max="80" value="${opts.chars}" style="width:52px;"> characters</label>` +
+                `</div></span>` +
+                _statsHeatPanelHtml() +
+            `</div>` +
+            `<div class="stats-filter">` +
+                `<span class="lbl">Pairs with</span>` +
+                `<select id="statsFilterKind" title="Which value the threshold applies to"><option value="identity">identity %</option><option value="distance">distance</option></select>` +
+                `<select id="statsFilterOp" title="Keep pairs at or above, or at or below, the value"><option value="ge">≥</option><option value="le">≤</option></select>` +
+                `<input type="number" id="statsFilterValue" step="any" placeholder="value" title="Threshold; matching cells are highlighted in the matrix">` +
+                `<span id="statsFilterCount" class="count"></span>` +
+                `<span class="stats-seg stats-view" title="Show the matrix, or the list of matching pairs">` +
+                    `<button type="button" data-view="matrix" class="on">Matrix</button><button type="button" data-view="list">Pair list</button>` +
+                `</span>` +
+                `<span class="stats-menu-wrap"><button type="button" id="statsFilterSaveBtn" disabled title="Save the matching pairs, their names or their sequences">Save pairs ▾</button>` +
+                `<span id="statsFilterMenu" class="stats-menu" hidden>` +
+                    `<button type="button" data-out="pairs">Pair table (TSV): names and values</button>` +
+                    `<button type="button" data-out="names">Sequence names (TXT), one per line</button>` +
+                    `<button type="button" data-out="fasta-aln">Sequences as aligned (FASTA)</button>` +
+                    `<button type="button" data-out="fasta-raw">Sequences without gaps (FASTA)</button>` +
+                `</span></span>` +
+                `<button type="button" id="statsFilterClear" class="stats-x" title="Clear the filter" hidden>×</button>` +
+                `<span class="sp"></span>` +
+                `<span id="statsSelChip" class="stats-chip" hidden></span>` +
+                `<button type="button" id="statsCopyBtn" title="Copy the shown matrix as a tab-separated table with full names (pastes into a spreadsheet). Click column names to copy only those columns.">Copy</button>` +
+                `<span class="stats-menu-wrap"><button type="button" id="statsMatrixSaveBtn" title="Save the shown matrix to a file">Save matrix ▾</button>` +
+                `<span id="statsMatrixMenu" class="stats-menu stats-menu-right" hidden>` +
+                    `<button type="button" class="stats-save" data-fmt="csv">CSV, comma-separated</button>` +
+                    `<button type="button" class="stats-save" data-fmt="tsv">TSV, tab-separated</button>` +
+                    `<button type="button" class="stats-save" data-fmt="xlsx">Excel workbook (.xlsx)</button>` +
+                    `<button type="button" class="stats-save" data-fmt="tsv" data-kind="identity" title="The full, symmetric identity matrix">Identity matrix only (TSV)</button>` +
+                    `<button type="button" class="stats-save" data-fmt="tsv" data-kind="distance" title="The full, symmetric distance matrix">Distance matrix only (TSV)</button>` +
+                `</span></span>` +
+            `</div>` +
+            `<datalist id="statsNameList">${seqNames.map(n => `<option value="${_escStats(n)}">`).join('')}</datalist>` +
+            `<div class="stats-mx-body" data-kind="combined"></div>`;
+        _statsRenderIdCard();
+        _statsUpdateFilterUI();
+        _statsUpdateHeatUI();
+        _statsShow();
+        _fillStatsMatrices([summaryTab.querySelector('.stats-mx-body')]);
+    } catch (e) {
+        console.error('Stats error:', e);
+        showMessage(`Statistics error: ${e.message}`, 4000);
+    }
+}
+

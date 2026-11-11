@@ -1,0 +1,403 @@
+[script.js lines 37328-37729 of ViewAlign fd8b8e4]
+function _syncTsdModeSubUI() {
+    const tsdMode = document.querySelector('input[name="tsdMode"]:checked')?.value || 'auto';
+    const manual = document.getElementById('tsdManualRegions');
+    const auto = document.getElementById('tsdAutoRegions');
+    const isManual = tsdMode === 'manual';
+    if (manual) manual.style.display = isManual ? '' : 'none';
+    if (auto) auto.style.display = isManual ? 'none' : '';
+    const colorInput = document.getElementById('tsdMarkColor');
+    const style = document.getElementById('tsdMarkStyle')?.value || 'color';
+    if (colorInput) colorInput.style.display = style === 'color' ? '' : 'none';
+}
+
+function _initTsdColumnDefaults() {
+    if (!state.seqs?.length) return;
+    const aliLen = _maxOf(state.seqs, s => s.seq.length);
+    const flank = _readTsdParams().flankSize;
+    const upEnd = document.getElementById('tsdUpEnd');
+    const downStart = document.getElementById('tsdDownStart');
+    const downEnd = document.getElementById('tsdDownEnd');
+    if (upEnd && upEnd.dataset.userSet !== '1') upEnd.value = Math.min(flank, aliLen);
+    if (downStart && downStart.dataset.userSet !== '1') downStart.value = Math.max(1, aliLen - flank + 1);
+    if (downEnd && downEnd.dataset.userSet !== '1') downEnd.value = aliLen;
+    if (document.querySelector('input[name="tsdMode"][value="manual"]')?.checked) _prefillTsdManualFromAuto();
+}
+
+// Manual opened with the alignment's first and last 30 columns as the flanks, where a TSD is found only by chance
+// ("1 of 20"): the fields start from the SINE body Auto finds, unless the user has typed or filled them.
+// The scan ran again on every panel open and every switch to TSD while Manual was checked (10 s on 1000 rows x
+// 50 kb; GLM d305 #23): its result is kept for the same alignment (rows, length, Search N bp) and written back.
+let _tsdPrefillMemo = null;
+function _prefillTsdManualFromAuto() {
+    if (!state.seqs?.length) return false;
+    const els = ['tsdUpStart', 'tsdUpEnd', 'tsdDownStart', 'tsdDownEnd'].map(id => document.getElementById(id));
+    if (els.some(e => !e || e.dataset.userSet === '1')) return false;
+    const aliLen = _maxOf(state.seqs, s => s.seq.length);
+    const flankSize = _readTsdParams().flankSize;
+    const m = _tsdPrefillMemo, key = [state.seqs.length, aliLen, flankSize].join(',');
+    if (m && m.seqs === state.seqs && m.key === key) {   // _initTsdColumnDefaults has just reset the fields
+        if (m.ok) m.values.forEach((v, i) => { els[i].value = v; });
+        return m.ok;
+    }
+    const b = _findSineBoundaryColumns(state.seqs, 'auto', { flankSize }, aliLen);
+    const ok = !(!b || b.leftBoundary < 1 || b.rightBoundary > aliLen - 2 || /fallback/.test(b.label));
+    if (ok) {
+        els[0].value = 1;
+        els[1].value = b.leftBoundary;            // last 5' flank column, 1-based
+        els[2].value = b.rightBoundary + 2;       // first 3' flank column, 1-based
+        els[3].value = aliLen;
+    }
+    _tsdPrefillMemo = { seqs: state.seqs, key, values: els.map(e => e.value), ok };
+    return ok;
+}
+
+function _readTsdParams() {
+    const num = (id, dflt) => { const v = parseInt(document.getElementById(id)?.value, 10); return Number.isFinite(v) ? v : dflt; };
+    const lim = (id, v) => { const e = document.getElementById(id), lo = parseFloat(e?.min), hi = parseFloat(e?.max); return Math.min(Number.isFinite(hi) ? hi : Infinity, Math.max(Number.isFinite(lo) ? lo : 1, v)); };   // the field's own min/max
+    const minLen = lim('tsdMinLen', num('tsdMinLen', 4)), maxLen = Math.max(minLen, lim('tsdMaxLen', num('tsdMaxLen', 20)));
+    return {
+        minLen, maxLen,
+        maxDiv: Math.max(0, lim('tsdMaxDiv', num('tsdMaxDiv', 20))),   // the field's own 0-50 (it was 0-100)
+        flankSize: lim('tsdFlankSize', num('tsdFlankSize', 30)),   // the field's own 5-200: 0 was used as 1, 1000 as 1000 (GLM db2 #2)
+        upStart: parseInt(document.getElementById('tsdUpStart')?.value, 10) || 1,
+        upEnd: Math.max(0, num('tsdUpEnd', 30)),
+        downStart: parseInt(document.getElementById('tsdDownStart')?.value, 10) || 1,
+        downEnd: parseInt(document.getElementById('tsdDownEnd')?.value, 10) || 1
+    };
+}
+
+function _fillTsdRegionsFromSelection() {
+    if (!state.selectedColumns?.size) {
+        showMessage('Select SINE columns first (Ctrl+Alt+click).', 3000);
+        return;
+    }
+    const cols = [...state.selectedColumns].sort((a, b) => a - b);
+    const aliLen = _maxOf(state.seqs, s => s.seq.length);
+    // a body from column 1 (or to the last column) left the flank field at 0 (or past the end), and Find said only
+    // "Invalid pre-SINE region"
+    const atStart = cols[0] <= 0, atEnd = cols[cols.length - 1] >= aliLen - 1;
+    if (atStart || atEnd) {
+        const where = atStart && atEnd ? 'first and last columns' : atStart ? 'first column' : 'last column';
+        const side = atStart && atEnd ? '5′ or 3′ flank' : atStart ? '5′ flank' : '3′ flank';
+        showMessage(`The selected columns reach the alignment's ${where}: there is no ${side} left to search for a TSD. Select the SINE body only.`, 4500);
+        return;
+    }
+    const manual =document.querySelector('input[name="tsdMode"][value="manual"]');
+    if (manual) manual.checked = true;
+    const upStartEl = document.getElementById('tsdUpStart');
+    const upEndEl = document.getElementById('tsdUpEnd');
+    const downStartEl = document.getElementById('tsdDownStart');
+    const downEndEl = document.getElementById('tsdDownEnd');
+    if (upStartEl) { upStartEl.value = 1; upStartEl.dataset.userSet = '1'; }
+    if (upEndEl) { upEndEl.value = cols[0]; upEndEl.dataset.userSet = '1'; }
+    if (downStartEl) { downStartEl.value = cols[cols.length - 1] + 2; downStartEl.dataset.userSet = '1'; }
+    if (downEndEl) { downEndEl.value = aliLen; downEndEl.dataset.userSet = '1'; }
+    _syncTsdModeSubUI();
+    showMessage(`Pre-SINE: 1-${cols[0]}, Post-SINE: ${cols[cols.length - 1] + 2}-${aliLen}`, 3500);
+}
+
+function _syncRepeatFinderModeUI() {
+    const mode = document.querySelector('input[name="repeatMode"]:checked')?.value || 'tandem';
+    const isTsd = mode === 'tsd';
+    if (!isTsd) _clearTsdPreview();   // the preview belongs to the TSD results shown
+    const general = document.getElementById('repeatParamsGeneral');
+    const tsdPanel = document.getElementById('repeatParamsTsd');
+    const clearBtn = document.getElementById('repeatClearHighlightsBtn');
+    const scopeRow = document.getElementById('repeatScopeRow');
+    if (general) general.style.display = isTsd ? 'none' : '';
+    if (tsdPanel) tsdPanel.style.display = isTsd ? '' : 'none';
+    if (clearBtn) clearBtn.style.display = isTsd ? 'none' : '';
+    if (scopeRow) scopeRow.style.display = isTsd ? 'none' : '';
+    // Min length: the whole array in Tandem (owner 2026-10-30), one copy in Direct/Inverted
+    const minLabel = document.getElementById('repeatMinLenLabel');
+    const minText = document.getElementById('repeatMinLenText');
+    if (minText) minText.textContent = mode === 'tandem' ? 'Min array length' : 'Min length';
+    // Tandem starts at 20 (at 10, random sequence gives about one chance array per kb), Direct/Inverted at 10;
+    // a value the user typed is kept across mode changes
+    const minInp = document.getElementById('repeatMinLen');
+    if (minInp && !minInp.dataset.userSet) minInp.value = mode === 'tandem' ? '20' : '10';
+    if (minLabel) minLabel.title = mode === 'tandem'
+        ? 'Shortest tandem array reported: all copies together, and at least two full copies of the unit; units of 1 to 500 residues (fewer in a very long sequence)'
+        : 'Shortest repeat reported: the length of one copy';
+    const divLabel = document.getElementById('repeatMaxDiv')?.closest('label');
+    if (divLabel) divLabel.title = mode === 'tandem'
+        ? 'Maximum mismatch against the consensus unit, per base of the array (0 = identical copies)'
+        : 'Maximum mismatch between repeat copies (0 = identical)';
+    _syncTsdResultTools(isTsd);
+    const scope = document.querySelector('input[name="repeatScope"]:checked')?.value || 'single';
+    const seqSel = document.getElementById('repeatFinderSeqSelect');
+    if (seqSel) seqSel.style.display = scope === 'single' ? '' : 'none';
+    if (isTsd) _initTsdColumnDefaults();
+    _syncTsdModeSubUI();
+}
+
+// The Mark / Copy row under TSD results. It was hidden when no copy had a TSD, so the list of copies without one
+// (with the reasons) could not be copied; it now shows for any search result, with Mark off when nothing was found.
+function _syncTsdResultTools(isTsd = true) {
+    const tools = document.getElementById('tsdResultTools');
+    const res = _lastTsdResults || [];
+    const any = res.length + (res.misses?.length || 0) > 0;
+    if (tools) tools.hidden = !(isTsd && any);
+    const mark = document.getElementById('tsdMarkBtn');
+    if (mark) { mark.disabled = !res.length; mark.title = res.length ? 'Show every found TSD in the alignment' : 'No TSD was found to mark'; }
+}
+
+// "aa" for a protein alignment, "bp" otherwise; also sets the unit labels of the panel's settings
+function _repeatUnitWord() {
+    const w = isProteinAlignment() ? 'aa' : 'bp';
+    document.querySelectorAll('#repeatParamsGeneral .rf-unit').forEach(e => { e.textContent = w; });
+    return w;
+}
+
+function _fillRepeatFinderSeqSelect(seqIndex) {
+    const sel = document.getElementById('repeatFinderSeqSelect');
+    if (!sel) return;
+    sel.innerHTML = '';
+    _repeatFinderListObjs = (state.seqs || []).slice();
+    _repeatFinderSeqObj = state.seqs?.[seqIndex] || null;
+    (state.seqs || []).forEach((s, i) => {
+        const opt = document.createElement('option');
+        opt.value = i;
+        const name = s.header.length > 40 ? s.header.substring(0,40)+'...' : s.header;
+        opt.textContent = `${i+1}: ${name}`;
+        if (i === seqIndex) opt.selected = true;
+        sel.appendChild(opt);
+    });
+    // the pick is a sequence, not a row number: rows deleted or moved while the panel is open made Find search
+    // whatever row then had that number (or none, reporting "No repeats" for a row that was gone)
+    sel.onchange = () => { _repeatFinderSeqIndex = parseInt(sel.value); _repeatFinderSeqObj = _repeatFinderListObjs[_repeatFinderSeqIndex] || null; };
+}
+// Row of the "One sequence" choice now; the list is rebuilt when rows changed. -1 if it was deleted and no row has its
+// name: _seqObjResolver falls back to a row with the same name (as after an Undo that replaced the row objects), so with
+// two rows of one name, deleting the chosen one moves the choice to the other (GLM db2 #4)
+function _repeatFinderCurrentRow() {
+    const obj = _repeatFinderSeqObj;
+    let row = obj ? _seqObjResolver()(obj) : (_repeatFinderSeqIndex >= 0 ? _repeatFinderSeqIndex : 0);
+    if (row >= (state.seqs?.length || 0)) row = -1;
+    const listStale = _repeatFinderListObjs.length !== state.seqs.length || _repeatFinderListObjs.some((o, i) => o !== state.seqs[i]);
+    if (row >= 0) {
+        _repeatFinderSeqIndex = row;
+        if (listStale) _fillRepeatFinderSeqSelect(row);
+        _repeatFinderSeqObj = state.seqs[row];
+    }
+    return row;
+}
+
+// A new file: the open panel's results, sequence list and units belong to the previous one
+function _resetRepeatFinderForNewFile() {
+    _abortRepeatJob();   // a search of the previous file shows nothing afterwards
+    // a Min length typed for the previous file is not this file's: back to the mode's default (a 1000 typed for a 50 kb
+    // file silently found nothing in the next, 200-bp one; GLM m307 #16). Within a file it still survives mode changes.
+    const minInp = document.getElementById('repeatMinLen');
+    if (minInp) {
+        delete minInp.dataset.userSet;
+        minInp.value = (document.querySelector('input[name="repeatMode"]:checked')?.value || 'tandem') === 'tandem' ? '20' : '10';
+    }
+    _lastRepeatResults = [];
+    _lastRepeatView = null;
+    _repeatFinderSeqIndex = 0;
+    // PERF: one <option> per sequence was built on every load even with the panel closed
+    // (100,000 options for a 100k-row file). openRepeatFinder fills it when the panel opens.
+    const _rfModal = document.getElementById('repeatFinderModal');
+    if (_rfModal && getComputedStyle(_rfModal).display !== 'none') {
+        _fillRepeatFinderSeqSelect(0);
+    } else {
+        const _rfSel = document.getElementById('repeatFinderSeqSelect');
+        if (_rfSel) _rfSel.innerHTML = '';
+        _repeatFinderListObjs = [];
+        _repeatFinderSeqObj = null;
+    }
+    _repeatUnitWord();
+    _lastTsdResults = [];
+    _repeatResultsShown = null;
+    _tsdPreviewOnReopen = false;
+    _tsdPrefillMemo = null;
+    // the TSD columns typed or filled for the previous file are not this file's: back to the defaults
+    ['tsdUpStart', 'tsdUpEnd', 'tsdDownStart', 'tsdDownEnd'].forEach(id => { const e = document.getElementById(id); if (e) delete e.dataset.userSet; });
+    const upStart = document.getElementById('tsdUpStart');
+    if (upStart) upStart.value = 1;
+    if (document.getElementById('repeatFinderModal')?.style.display !== 'none') _initTsdColumnDefaults();   // else on opening
+    const tools = document.getElementById('tsdResultTools');
+    if (tools) tools.hidden = true;
+    const el = document.getElementById('repeatResults');
+    if (el) el.textContent = 'New alignment loaded: choose what to find, then press Find.';
+}
+
+function openRepeatFinder(seqIndex, preferredMode = null) {
+    if (seqIndex === undefined || seqIndex === null || seqIndex < 0) seqIndex = 0;
+    const reshowPreview = _tsdPreviewOnReopen;
+    _tsdPreviewOnReopen = false;
+    _repeatFinderSeqIndex = seqIndex;
+    if (preferredMode) {
+        const modeRadio = document.querySelector(`input[name="repeatMode"][value="${preferredMode}"]`);
+        if (modeRadio) modeRadio.checked = true;
+    }
+    // Populate sequence selector
+    _fillRepeatFinderSeqSelect(seqIndex);
+    _repeatUnitWord();
+    _syncRepeatFinderModeUI();
+    const modal = document.getElementById('repeatFinderModal');
+    if (modal) {
+        showExclusiveModal('repeatFinderModal');
+        _initWindowFrame(document.getElementById('repeatFinderModalInner'), document.getElementById('repeatFinderDragHandle'), document.getElementById('repeatFinderMaxBtn'), { minW: 420, minH: 260 });
+    }
+    const mode = document.querySelector('input[name="repeatMode"]:checked')?.value || 'tandem';
+    // Reopening the window kept nothing: the table of the last search (and the rows clicked in it) had to be
+    // searched again. The table of this mode stays; a repeat table is redrawn so its rows show the highlights now.
+    const resultsEl = document.getElementById('repeatResults');
+    // ... unless it is a One-sequence table and the window opens on another sequence: the list showed the new pick
+    // under the old sequence's table (GLM db2 #21)
+    const otherSeq = mode !== 'tsd' && _lastRepeatView?.obj && _seqObjResolver()(_lastRepeatView.obj) !== seqIndex;
+    if (_repeatResultsShown === mode && resultsEl.querySelector('.rf-summary') && !otherSeq) {
+        if (mode !== 'tsd' && _lastRepeatResults.length && _lastRepeatView?.mode === mode) {
+            const v = _lastRepeatView;
+            _renderRepeatResultsHTML(resultsEl, _lastRepeatResults, v.mode, v.name || '', v.totalLen, v);
+        }
+        if (mode === 'tsd' && reshowPreview) _setTsdPreview(_lastTsdResults);
+        return;
+    }
+    _repeatResultsShown = null;
+    resultsEl.textContent = mode === 'tsd'
+        ? 'The SINE body is found automatically (or set it under Manual); press Find to search both flanks of every copy.'
+        : 'Choose what to find, then press Find.';
+    // Inverted repeats and TSDs are DNA ideas (reverse complement, target-site duplication)
+    if (isProteinAlignment()) {
+        document.getElementById('repeatResults').textContent +=
+            ' This is a protein alignment: the finder is designed for nucleotide sequences, and inverted repeats and TSDs have no meaning for amino acids.';
+    }
+}
+
+// (the repeat finder's own drag code was replaced by _initWindowFrame, 2026-10-23)
+
+function openTsdFinder() {
+    const autoMode = document.querySelector('input[name="tsdMode"][value="auto"]');
+    if (autoMode) autoMode.checked = true;
+    const flankInput = document.getElementById('tsdFlankSize');
+    if (flankInput && !flankInput.value) flankInput.value = '30';
+    openRepeatFinder(-1, 'tsd');
+}
+
+function cloneTsdMarks(markMap = state.tsdMarks) {
+    return markMap instanceof ResidueMarks ? markMap.clone() : ResidueMarks.fromRowCols(markMap);
+}
+
+// ResidueMarks of the results' TSD residues, on the sequences as they are now
+function rowsForTsdResults(results) {
+    const marks = new ResidueMarks();
+    const find = _seqObjResolver();
+    results.forEach(result => {
+        const row = result.obj ? find(result.obj) : -1;
+        const obj = state.seqs[row];
+        if (!obj) return;
+        const res = marks.bySeq.get(obj) || new Set();
+        [...(result.upRes || []), ...(result.downRes || [])].forEach(n => { if (Number.isInteger(n) && n >= 0) res.add(n); });
+        if (res.size) marks.bySeq.set(obj, res);
+    });
+    return marks;
+}
+
+// The TSDs of the last run, shown faintly until they are marked (or the run is superseded)
+function _setTsdPreview(results) {
+    const modal = document.getElementById('repeatFinderModal');
+    if (modal && modal.style.display === 'none') { _clearTsdPreview(); return; }   // the run outlived the window
+    const marks = results && results.length ? rowsForTsdResults(results) : null;
+    state.tsdPreview = marks && marks.size ? marks : null;
+    document.getElementById('tsdMarkBtn')?.classList.toggle('rf-btn-attention', !!state.tsdPreview);
+    syncResidueOverlays();
+}
+// Closing the window hides the faint preview (it belongs to the open window); reopening it on the same TSD table showed
+// the table without it, so the TSDs found could only be seen again by searching again (GLM db2 #20). It comes back
+// unless the TSDs were marked meanwhile (the marks replace the preview).
+let _tsdPreviewOnReopen = false;
+function _hideTsdPreviewWithWindow() {
+    _tsdPreviewOnReopen = !!state.tsdPreview;
+    _clearTsdPreview();
+}
+function _clearTsdPreview() {
+    if (!state.tsdPreview && !document.getElementById('tsdMarkBtn')?.classList.contains('rf-btn-attention')) return;
+    state.tsdPreview = null;
+    document.getElementById('tsdMarkBtn')?.classList.remove('rf-btn-attention');
+    syncResidueOverlays();
+}
+
+function applyTsdMarking() {
+    const results = _lastTsdResults || [];
+    if (!results.length) {
+        showMessage('Run TSD analysis first.', 2200);
+        return;
+    }
+    const rowMarks = rowsForTsdResults(results);
+    if (!rowMarks.size) {
+        showMessage('No TSD positions available to mark.', 2200);
+        return;
+    }
+
+    const style = document.getElementById('tsdMarkStyle')?.value || 'color';
+    const color = document.getElementById('tsdMarkColor')?.value || '#ffd54f';
+    let lowered = null;
+    const previousMarks = cloneTsdMarks();
+    const previousStyle = state.tsdMarkStyle;
+    const previousColor = state.tsdMarkColor;
+
+    // A marking that changes nothing (Mark pressed again, or lower case on residues already lower case) used to
+    // replace the backup of the real one, so "Remove marks" (now "Undo last marking") then did nothing while saying "undone", and lower case on
+    // lower-case input wiped the colour marks while saying "Marked". It now leaves everything as it is and says so.
+    if (style === 'lowercase') {
+        // the residues whose letter this lowercases, kept as residue anchors for the undo
+        lowered = new ResidueMarks();
+        let changed = false;
+        const nextSeqs = state.seqs.map((seqObj, rowIndex) => {
+            const markPositions = rowMarks.get(rowIndex);
+            if (!markPositions?.size) return seqObj;
+            const chars = seqObj.seq.split('');
+            const done = new Set();
+            let n = 0;
+            for (let c = 0; c < chars.length; c++) {
+                const ch = chars[c];
+                if (ch === '-' || ch === '.') continue;
+                if (markPositions.has(c) && /[A-Z]/.test(ch)) { chars[c] = ch.toLowerCase(); done.add(n); }
+                n++;
+            }
+            if (!done.size) return seqObj;
+            changed = true;
+            const nextSeq = chars.join('');
+            const next = { ...seqObj, seq: nextSeq, gaplessPositions: calculateGaplessPositions(nextSeq) };
+            lowered.bySeq.set(next, done);
+            return next;
+        });
+        if (!changed) {
+            showMessage('The TSD residues are already lower case: nothing was changed. Colour or Bold marks them in lower-case sequences.', 3500);
+            return;
+        }
+        pushUndo('tsd-mark-lowercase');
+        state.seqs = nextSeqs;
+        state.tsdMarks = new Map();
+        state.tsdMarkStyle = style;
+    } else {
+        const same = (a, b) => {
+            if (!a || a.size !== b.size) return false;
+            for (const [row, cols] of b) { const x = a.get(row); if (!x || x.size !== cols.size) return false; for (const c of cols) if (!x.has(c)) return false; }
+            return true;
+        };
+        if (state.tsdMarkStyle === style && (style !== 'color' || state.tsdMarkColor === color) && same(state.tsdMarks, rowMarks)) {
+            state.tsdPreview = null;
+            document.getElementById('tsdMarkBtn')?.classList.remove('rf-btn-attention');
+            syncResidueOverlays();
+            showMessage('These TSDs are already marked.', 2000);
+            return;
+        }
+        state.tsdMarks = rowMarks;
+        state.tsdMarkStyle = style;
+        state.tsdMarkColor = color;
+    }
+
+    // prior: the marking before this one, so Undo last marking steps back through them (lower case, then colour: the
+    // colour's undo used to drop the lower case's backup)
+    state.tsdMarkUndo = { style, previousMarks, previousStyle, previousColor, lowered, prior: state.tsdMarkUndo || null };
+    state.tsdPreview = null;   // the marks replace the preview
+    document.getElementById('tsdMarkBtn')?.classList.remove('rf-btn-attention');
+    renderAlignment({ deferConservation: true });
+    showMessage(`Marked TSDs in ${rowMarks.bySeq.size} sequence(s).`, 1800);
+}
+

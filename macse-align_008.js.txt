@@ -1,0 +1,497 @@
+[macse-align.js lines 2750-3245 of ViewAlign fd8b8e4]
+                let maxPos = 0;
+                for (let k = 0; k < framed.arr.length; k++) {
+                    const c = comp[k].charCodeAt(site);
+                    if (SeqAA.isGapCode(c)) continue;
+                    const b = aByte(c);
+                    if (fq[b] < fq[maxPos]) continue;
+                    maxPos = b;
+                }
+                let nbGaps = 0; for (const s of framed.arr) if (s.isGap(site)) nbGaps++;
+                const mf = f32(f32(fq[maxPos]) / f32(framed.arr.length - nbGaps));
+                out += mf >= f32(threshold) ? B2A[maxPos] : 'X';
+            }
+            res.push(out);
+        }
+        return res;
+    }
+    function treeBounds(infoI, infoJ, delta, ctx) {        // AlignmentDynamicTreeBounds.computeBounds
+        const st = new SuffixTree(infoI.cons, infoJ.cons, 12, ctx.alphabet);
+        const mems = st.ntMems3RF();
+        const sitesCount = infoI.restricted.sites();
+        const res = Array.from({ length: sitesCount }, () => [-1, -1]);
+        for (const m of mems) for (let sh = 0; sh < m.length; sh++) {
+            const p1 = m.posS1 + sh, p2 = m.posS2 + sh;
+            const r = res[p1];
+            if (!r) throw MacseError('internal: MEM outside the profile');
+            if (r[0] === -1 || r[0] > p2) r[0] = p2;
+            if (r[1] === -1 || r[1] < p2) r[1] = p2;
+        }
+        res[0][0] = -1; res[sitesCount - 1][1] = -1;
+        const sc = infoJ.restricted.sites() + 1;
+        const ok = Array.from({ length: res.length + 1 }, () => [0, 0]);
+        ok[0][0] = -1; ok[0][1] = -1;
+        let mp = -1;
+        for (let s = 0; s < res.length; s++) { if (res[s][1] !== -1) mp = Math.max(mp, res[s][1]); ok[s + 1][1] = mp; }
+        let mf = sc;
+        for (let i = res.length - 1; i >= 0; i--) if (res[i][0] !== -1) ok[i + 1][0] = mf = Math.min(mf, res[i][0]);
+        let lm = -1;
+        for (let s = 0; s < res.length; s++) { if (res[s][0] !== -1) lm = ok[s + 1][0]; ok[s + 1][0] = lm; }
+        let nm = -1;
+        for (let s = res.length - 1; s >= 0; s--) { if (res[s][1] !== -1) nm = ok[s + 1][1]; ok[s + 1][1] = nm; }
+        for (let s = 1; s >= 0; s--) ok[s][1] = ok[s + 1][1];
+        for (let s = 0; s < ok.length - 1; s++) { const b = ok[s + 1][0]; if (ok[s][1] !== -1 && ok[s][1] < b) ok[s][1] = b; }
+        for (const r of ok) { r[0] = Math.max(0, r[0] - delta); if (r[1] === -1) r[1] = sc; r[1] = Math.min(sc, r[1] + delta); }
+        return ok;
+    }
+    function nodeLabel(a, b) { return a < b ? '(' + a + ',' + b + ')' : '(' + b + ',' + a + ')'; }
+
+    function dynamicTree(set, distances, ctx, progress) {
+        const aligner = new ProfileAligner(ctx);
+        let nbUsed = set.size;
+        const orders = new Int32Array(nbUsed), nodes = [], post = [];
+        set.arr.forEach((sq, i) => {
+            const one = new SeqSet(); one.add(sq);
+            const info = { label: sq.name, cluster: one, restricted: one, cons: seqCons3RF(sq, ctx) };
+            orders[i] = i; nodes[i] = { info, label: sq.name, children: [] }; post.push(nodes[i]);
+        });
+        let step = 0;
+        while (nbUsed > 1) {
+            let minI = 0, minJ = 1, minValue = distances[orders[0]][orders[1]];
+            for (let i = 0; i < nbUsed; i++) for (let j = i + 1; j < nbUsed; j++) {
+                const d = distances[orders[i]][orders[j]];
+                if (d < minValue) { minI = i; minJ = j; minValue = d; }
+            }
+            if (minI > minJ) { const t = minI; minI = minJ; minJ = t; }
+            const minVal = f32(f32(minValue) / f32(500));
+            const infoI = nodes[minI].info, infoJ = nodes[minJ].info;
+            let bounds = null;
+            if (minVal < 0.3) {
+                const bound = javaIntF(Math.min(f32(50), f32(f32(1 - minVal) * f32(50))));
+                bounds = treeBounds(infoI, infoJ, bound, ctx);
+            }
+            const label = nodeLabel(infoI.label, infoJ.label);
+            const aligned = aligner.alignProfiles(infoI.restricted, infoJ.restricted, bounds);
+            const restricted = restrictNT(aligned, true);
+            const info = { label, cluster: aligned, restricted, cons: null };
+            const node = { info, label, children: [nodes[minI], nodes[minJ]] };
+            info.cons = consensusSequence(toAminosSet(restricted, ctx), ctx, 0.6);
+            nodes[minI] = node;
+            const sI = infoI.cluster.size, sJ = infoJ.cluster.size;
+            for (let k = 0; k < nbUsed; k++) {
+                if (k === minI || k === minJ) continue;
+                const dk = orders[k], di = orders[minI], dj = orders[minJ];
+                const nd = idiv(distances[dk][di] * sI + distances[dk][dj] * sJ, sI + sJ);
+                distances[dk][di] = nd; distances[di][dk] = nd;
+            }
+            orders[minJ] = orders[nbUsed - 1];
+            nodes[minJ] = nodes[nbUsed - 1];
+            --nbUsed;
+            post.push(node);
+            if (progress) progress('tree', ++step, set.size - 1);
+        }
+        return post[post.length - 1].info.cluster;
+    }
+
+    // ------------------------------------------------------------------ refinement (programs.refine.Refiner.refine_2_cut)
+    function memOverlDist(a1, a2, ctx) {
+        let b1 = '', b2 = '', l1 = 0, l2 = 0;
+        for (let s = 0; s < a2.acids.length; s++) {
+            const g1 = a1.isGap(s), g2 = a2.isGap(s);
+            if (!g1) l1++;
+            if (!g2) l2++;
+            if (!g1 || !g2) { b1 += a1.acids[s]; b2 += a2.acids[s]; }
+        }
+        const alpha = alphabetChars(ctx.alphabet);
+        const t1 = translateAlphabet(b1, alpha), t2 = translateAlphabet(b2, alpha);
+        let mem = 0, over = 0;
+        for (let s = 0; s < b2.length; s++) {
+            if (t1.charCodeAt(s) !== C_X && t1.charCodeAt(s) === t2.charCodeAt(s)) ++mem;
+            else { if (mem >= 6) over = over === 0 ? mem : over + mem - 2; mem = 0; }
+        }
+        const pc = f32(f32(over) / f32(Math.min(l1, l2)));
+        return javaIntF(f32(f32(500) * f32(1 - pc)));
+    }
+    function refineTreePostOrder(set, dist) {             // RefineTree
+        let nbUsed = set.size;
+        const orders = new Int32Array(nbUsed), nodes = [], post = [];
+        set.arr.forEach((s, i) => { orders[i] = i; nodes[i] = { label: s.name }; post.push(nodes[i]); });
+        while (nbUsed > 1) {
+            let minI = 0, minJ = 1, minValue = dist[orders[0]][orders[1]];
+            for (let i = 0; i < nbUsed; i++) for (let j = i + 1; j < nbUsed; j++) {
+                const d = dist[orders[i]][orders[j]];
+                if (d < minValue) { minI = i; minJ = j; minValue = d; }
+            }
+            if (minI > minJ) { const t = minI; minI = minJ; minJ = t; }
+            const node = { label: nodeLabel(nodes[minI].label, nodes[minJ].label) };
+            nodes[minI] = node;
+            for (let k = 0; k < nbUsed; k++) {
+                if (k === minI || k === minJ) continue;
+                const dk = orders[k], di = orders[minI], dj = orders[minJ];
+                const d = idiv(dist[dk][di] + dist[dk][dj], 2);
+                dist[dk][di] = d; dist[di][dk] = d;
+            }
+            orders[minJ] = orders[nbUsed - 1];
+            nodes[minJ] = nodes[nbUsed - 1];
+            --nbUsed;
+            post.push(node);
+        }
+        return post;
+    }
+    function javaSplitComma(s) { const p = s.split(','); while (p.length > 1 && p[p.length - 1] === '') p.pop(); if (p.length === 1 && p[0] === '' && s.length === 0) return ['']; return p; }
+
+    function refine2cut(setIn, ctx, progress) {
+        if (setIn.size < 2) return setIn;
+        const aligner = new ProfileAligner(ctx);
+        const testedCut = [];
+        let improve = true, nbIter = 0, nbTest = 0, conservedScore = null;
+        let set = setIn;
+        let currentScore = spScoreLinear(frameSet(toAminosSet(set, ctx), 1), ctx);
+        let localReal = f32(ctx.localRealignInit);
+        while ((ctx.maxRefines < 0 || nbIter < ctx.maxRefines) && improve) {
+            let conserved;
+            if (nbIter > 0) { conserved = new Uint8Array(conservedScore.length); for (let i = 0; i < conserved.length; i++) conserved[i] = conservedScore[i] === nbTest ? 1 : 0; }
+            else conserved = new Uint8Array(set.sites());
+            conservedScore = new Int32Array(set.sites());
+            nbTest = 0; improve = false;
+            const framed = frameSet(toAminosSet(set, ctx), 1);
+            const n = framed.size, dist = Array.from({ length: n }, () => new Array(n).fill(0));
+            for (let i = 0; i < n; i++) for (let j = i + 1; j < n; j++) { dist[i][j] = memOverlDist(framed.arr[i], framed.arr[j], ctx); dist[j][i] = dist[i][j]; }
+            const postOrder = refineTreePostOrder(set, dist).reverse();
+            ++nbIter;
+            let done = 0;
+            for (const node of postOrder) {
+                done++;
+                const clade = javaSplitComma(node.label.replace(/\(/g, '').replace(/\)/g, ''));
+                const inClade = new Set(clade);
+                const s1 = new SeqSet(), s2 = new SeqSet();
+                for (const sq of set.arr) (inClade.has(sq.name) ? s1 : s2).add(sq);
+                if (s1.size === 0 || s2.size === 0) continue;
+                const sig = x => x.arr.map(s => s.name + ',').join('');
+                const g1 = sig(s1), g2 = sig(s2);
+                const signature = s1.size < s2.size || (s1.size === s2.size && g1 < g2) ? g1 + '  |  ' + g2 : g2 + '  |  ' + g1;
+                if (testedCut.includes(signature)) continue;
+                testedCut.push(signature);
+                ++nbTest;
+                const c1 = new RestrictedCoordinates(keptColumnsNT(s1, true)), c2 = new RestrictedCoordinates(keptColumnsNT(s2, true));
+                c1.setFacingSite(c2);
+                let deltaDefault = Math.ceil(f32(f32(s2.sites()) * localReal));
+                deltaDefault = Math.max(deltaDefault, 30);
+                const conservedMax = idiv(deltaDefault, 2);
+                const bounds = c1.boundsDeltaMax(c2, deltaDefault, conservedMax, conserved);
+                const newAlign = aligner.alignProfiles(restrictNT(s1, true), restrictNT(s2, true), bounds);
+                const newScore = spScoreLinear(frameSet(toAminosSet(newAlign, ctx), 1), ctx);
+                const accepted = newScore > currentScore;
+                if (accepted) { set = newAlign; currentScore = newScore; testedCut.length = 0; improve = true; }
+                if (progress) progress('refine', done, postOrder.length, nbIter);
+                const former = conservedScore;
+                if (accepted) {
+                    const pairs = c1.conservedSites(aligner.p1Coord);
+                    conservedScore = new Int32Array(newAlign.sites());
+                    for (const [o, nw] of pairs) conservedScore[nw] = 1 + former[o];
+                    const formerC = conserved;
+                    conserved = new Uint8Array(newAlign.sites());
+                    for (const [o, nw] of pairs) conserved[nw] = formerC[o];
+                    continue;
+                }
+                for (let s = 0; s < conservedScore.length; s++) conservedScore[s]++;
+            }
+            localReal = f32(localReal * f32(ctx.localRealignDec));
+        }
+        ctx.refineIterations = nbIter;
+        return set;
+    }
+
+    // Refiner.cutLeaves (optim = 1)
+    function cutLeaves(setIn, ctx) {
+        if (setIn.size < 2) return setIn;
+        let canImprove = true, nbIter = 0, set = setIn;
+        const aligner = new ProfileAligner(ctx);
+        let currentScore = spScoreLinear(frameSet(toAminosSet(set, ctx), 1), ctx);
+        let localReal = f32(ctx.localRealignInit);
+        while ((ctx.maxRefines < 0 || nbIter < ctx.maxRefines) && canImprove) {
+            canImprove = false;
+            for (const sq of set.arr.slice()) {
+                let s1 = new SeqSet(); s1.add(sq);
+                const k1 = keptColumnsNT(s1, true); s1 = restrictNT(s1, true);
+                let s2 = new SeqSet(); for (const o of set.arr) if (o.name !== sq.name) s2.add(o);
+                const k2 = keptColumnsNT(s2, true); s2 = restrictNT(s2, true);
+                const c1 = new RestrictedCoordinates(k1), c2 = new RestrictedCoordinates(k2);
+                c1.setFacingSite(c2);
+                let dd = Math.ceil(f32(f32(s2.sites()) * localReal)); dd = Math.max(dd, 30);
+                const nb = c1.boundsDeltaMax(c2, dd, dd, null);
+                const na = aligner.alignProfiles(s1, s2, nb);
+                const ns = spScoreLinear(frameSet(toAminosSet(na, ctx), 1), ctx);
+                if (ns > currentScore) { set = na; currentScore = ns; canImprove = true; }
+            }
+            ++nbIter;
+            localReal = f32(localReal * f32(ctx.localRealignDec));
+        }
+        return set;
+    }
+
+    // ------------------------------------------------------------------ parallel execution (same results)
+    // A DP task is one ProfileAligner.alignProfiles call: it depends only on its two profiles and its band, so it can
+    // run in another thread. alignSequencesAsync follows MACSE's control flow in MACSE's order; it only computes ahead,
+    // in parallel, the profile alignments that the sequential program would compute next if nothing changed in between:
+    // guide-tree merges whose subtrees are finished (MACSE's merge order depends only on the distances and cluster
+    // sizes), and refinement cuts after the last accepted one. Results computed ahead are used in MACSE's order and
+    // dropped as soon as an earlier cut is accepted, so the output is the same as alignSequences.
+    function setToWire(set) { return set.arr.map(q => [q.name, q.acids, q.reliable]); }
+    function wireToSet(w) { const set = new SeqSet(); for (const [name, acids, rel] of w) set.add(new SeqNT(name, acids, rel, false)); return set; }
+    function makeTask(ctx, s1, s2, bounds) { return { opts: ctx.taskOpts, s1: setToWire(s1), s2: setToWire(s2), bounds }; }
+    const taskCtxCache = new Map();
+    // Runs one DP task (called in pool threads, or in place by localRunner).
+    function runDpTask(task) {
+        let ctx = taskCtxCache.get(task.opts.key);
+        if (!ctx) { ctx = makeCtx(task.opts.o); taskCtxCache.set(task.opts.key, ctx); }
+        const al = new ProfileAligner(ctx);
+        const set = al.alignProfiles(wireToSet(task.s1), wireToSet(task.s2), task.bounds);
+        return { set: setToWire(set), k1: al.p1Kept, k2: al.p2Kept };
+    }
+    // Runner interface: { size, run(task, generation) -> Promise<result>, cancel(generation), close() }.
+    function localRunner() {
+        return {
+            size: 1, cancel() { }, close() { },
+            run: task => new Promise((resolve, reject) => { try { resolve(runTask(task)); } catch (e) { reject(e); } })
+        };
+    }
+
+    // ---- tiles of one profile alignment (parallel dynamic programming, same cells, same values)
+    // The DP grid is cut into tiles; a tile needs the last 3 rows of the tile above and the last 3 columns of the tile
+    // to its left (no move reaches further back), so tiles on an anti-diagonal run in parallel. Each tile gets the
+    // profile slices of its rows and columns; the coordinator keeps the tracebacks and walks them as dp() does.
+    // Per-thread cache of the sequence sets and profile ranges of the last tiled alignments (tiles of the same row or
+    // column block reuse the profile range when they land on the same thread).
+    const tileCache = new Map(), dpSetCache = new Map();
+    function tileCached(key, make) {
+        if (tileCache.has(key)) { const v = tileCache.get(key); tileCache.delete(key); tileCache.set(key, v); return v; }
+        const v = make();
+        tileCache.set(key, v);
+        while (tileCache.size > 160) tileCache.delete(tileCache.keys().next().value);   // room for several whole grids (2 + nI + nJ keys each)
+        return v;
+    }
+    function runWasmTile(K, t) {
+        const { nR, nC } = t, RS = (nC + 3) * 3;
+        let off = 0;
+        const al = bytes => { const ptr = off; off += (bytes + 7) & ~7; return ptr; };
+        const lay = [];
+        const put = (Ctor, src) => { const ptr = al(src.length * Ctor.BYTES_PER_ELEMENT); lay.push([ptr, Ctor, src]); return ptr; };
+        const pMin = put(Int32Array, t.rowMin), pMax = put(Int32Array, t.rowMax);
+        const pT = al(8 * (nR + 3) * RS), pTb = al(2 * nR * nC);
+        const a1 = [put(Float64Array, t.P1.internal), put(Int32Array, t.P1.cfStart), put(Int32Array, t.P1.cfLen), put(Int32Array, t.P1.cfAA),
+            put(Int32Array, t.P1.cfF), put(Int32Array, t.P1.inFront), put(Int32Array, t.P1.spStart), put(Int32Array, t.P1.spLen),
+            put(Int32Array, t.P1.spP), put(Int32Array, t.P1.spF)];
+        const a2 = [put(Float64Array, t.P2.internal), put(Int32Array, t.P2.cfStart), put(Int32Array, t.P2.cfLen), put(Int32Array, t.P2.cfAA),
+            put(Int32Array, t.P2.cfF), put(Int32Array, t.P2.inFront), put(Int32Array, t.P2.hC), put(Int32Array, t.P2.hIE), put(Int32Array, t.P2.hXIE)];
+        const have = K.memory.buffer.byteLength;
+        if (off > have) K.memory.grow(Math.ceil((off - have) / 65536));
+        const buf = K.memory.buffer;
+        for (const [ptr, Ctor, src] of lay) new Ctor(buf, ptr, src.length).set(src);
+        const T = new Float64Array(buf, pT, (nR + 3) * RS);
+        fillTileBorders(T, t, RS);
+        K.dpTile(t.S1, t.S2, t.r0, nR, t.c0, nC, pMin, pMax, pT, pTb, ...a1, ...a2);
+        return tileOutputs(T, new Uint16Array(buf, pTb, nR * nC), t, RS);
+    }
+    function fillTileBorders(T, t, RS) {
+        T.fill(-Infinity);
+        if (t.top) T.set(t.top, 0);
+        if (t.left) { const L = t.left; for (let lr = 0; lr < t.nR; lr++) { const d = (lr + 3) * RS, o = lr * 9; for (let k = 0; k < 9; k++) T[d + k] = L[o + k]; } }
+    }
+    function tileOutputs(T, tb, t, RS) {
+        const { nR, nC } = t;
+        const bottom = new Float64Array(3 * nC * 3), right = new Float64Array(nR * 9);
+        for (let k = 0; k < 3; k++) bottom.set(T.subarray((nR + k) * RS + 9, (nR + k + 1) * RS), k * nC * 3);
+        for (let lr = 0; lr < nR; lr++) { const o = (lr + 3) * RS + nC * 3, d = lr * 9; for (let k = 0; k < 9; k++) right[d + k] = T[o + k]; }
+        return { bottom, right, tb: tb.slice() };
+    }
+    // Runs one tile (called in pool threads): builds the profile ranges of its rows and columns, then dpTile.
+    function runTileTask(t) {
+        let ctx = taskCtxCache.get(t.opts.key);
+        if (!ctx) { ctx = makeCtx(t.opts.o); taskCtxCache.set(t.opts.key, ctx); }
+        // The sequence sets of a DP come with the first tile a thread gets; later tiles of that DP carry none (the
+        // pool keeps track). They are translated once per thread (never modified, so the cache stays valid).
+        let sets = dpSetCache.get(t.dpKey);
+        if (!sets) {
+            if (!t.s1) return { needSets: true };
+            const withUpd = w => { const set = wireToSet(w); for (const q of set.arr) q._updCache = q.updatedAcids(ctx); return set; };
+            sets = [withUpd(t.s1), withUpd(t.s2)];
+            dpSetCache.set(t.dpKey, sets);
+            const cap = (typeof globalThis !== 'undefined' && globalThis.MACSE_DPSET_CAP) || 64;   // tests shrink it to force resends
+            while (dpSetCache.size > cap) dpSetCache.delete(dpSetCache.keys().next().value);
+        }
+        const [set1, set2] = sets;
+        t.P1 = tileCached(`${t.dpKey}:L${t.r0}`, () => buildProfile(set1, ctx, t.r0, t.r0 + t.nR, 'line'));
+        t.P2 = tileCached(`${t.dpKey}:C${t.c0}`, () => buildProfile(set2, ctx, t.c0, t.c0 + t.nC, 'col'));
+        const K = t.useWasm === false ? null : getWasmKernel();
+        if (K) return runWasmTile(K, t);
+        const RS = (t.nC + 3) * 3, T = new Float64Array((t.nR + 3) * RS), tb = new Uint16Array(t.nR * t.nC);
+        fillTileBorders(T, t, RS);
+        dpTile(t.S1, t.S2, t.r0, t.nR, t.c0, t.nC, t.rowMin, t.rowMax, T, tb, t.P1, t.P2);
+        return tileOutputs(T, tb, t, RS);
+    }
+    // Distances of one row of pairs (i, j > i): Aligner.computeInitialSequenceDistanceMEM, one SuffixTree per pair.
+    function runDistTask(t) { return t.b.map(b => javaRoundF(f32(new SuffixTree(t.a, b, 6, t.alphabet).memDist3RF() * f32(500)))); }
+    function runTask(task) { return task.kind === 'tile' ? runTileTask(task) : (task.kind === 'dist' ? runDistTask(task) : runDpTask(task)); }
+    // Typed-array buffers of a task or result that can be moved (not copied) between threads.
+    function transferables(obj) {
+        if (obj && obj.kind === 'tile') return [obj.rowMin, obj.rowMax, obj.top, obj.left].filter(Boolean).map(a => a.buffer);
+        if (obj && obj.bottom) return [obj.bottom.buffer, obj.right.buffer, obj.tb.buffer];
+        const out = new Set();
+        const walk = o => {
+            if (!o || typeof o !== 'object') return;
+            if (ArrayBuffer.isView(o)) { if (o.byteOffset === 0 && o.byteLength === o.buffer.byteLength) out.add(o.buffer); return; }
+            for (const k in o) walk(o[k]);
+        };
+        walk(obj);
+        return [...out];
+    }
+    function blocksOf(n, size) {
+        const k = Math.max(1, Math.min(Math.round(n / size), Math.floor(n / 3))), base = Math.floor(n / k), extra = n - base * k, out = [];   // every block >= 3
+        let s0 = 0;
+        for (let i = 0; i < k; i++) { const len = base + (i < extra ? 1 : 0); out.push([s0, len]); s0 += len; }
+        return out;
+    }
+
+    let tiledCounter = 0;
+    async function alignProfilesTiled(ctx, set1, set2, bounds, runner, gen, prio) {
+        const S1 = set1.sites() + 1, S2 = set2.sites() + 1;
+        const w1 = setToWire(set1), w2 = setToWire(set2), dpKey = 'dp' + (++tiledCounter) + '.' + Math.random().toString(36).slice(2, 8);
+        const rowMin = new Int32Array(S1), rowMax = new Int32Array(S1);
+        for (let l = 0; l < S1; l++) { rowMin[l] = bounds ? bounds[l][0] : 0; rowMax[l] = bounds ? bounds[l][1] : S2; }
+        const ts = ctx.tileSize > 0 ? ctx.tileSize : Math.max(96, Math.ceil(Math.max(S1, S2) / 24));   // tile edge (auto: 96, larger for long genes)
+        const RB = blocksOf(S1, ts), CB = blocksOf(S2, ts), nI = RB.length, nJ = CB.length;
+        const blockOfRow = new Int32Array(S1), blockOfCol = new Int32Array(S2);
+        RB.forEach(([r0, n], I) => blockOfRow.fill(I, r0, r0 + n));
+        CB.forEach(([c0, n], J) => blockOfCol.fill(J, c0, c0 + n));
+        const proms = new Array(nI * nJ), NEG3 = n => new Float64Array(n).fill(-Infinity);
+        for (let I = 0; I < nI; I++) {
+            const [r0, nR] = RB[I];
+            for (let J = 0; J < nJ; J++) {
+                const [c0, nC] = CB[J];
+                let active = false;
+                for (let l = r0; l < r0 + nR && !active; l++) active = Math.max(rowMin[l], c0) < Math.min(rowMax[l], c0 + nC);
+                if (!active) { proms[I * nJ + J] = Promise.resolve(null); continue; }
+                const deps = [I > 0 ? proms[(I - 1) * nJ + J] : null, J > 0 ? proms[I * nJ + J - 1] : null, I > 0 && J > 0 ? proms[(I - 1) * nJ + J - 1] : null];
+                const pr = Promise.all(deps).then(([up, left, ul]) => {
+                    const RS = (nC + 3) * 3;
+                    let top = null;
+                    if (up || ul) {
+                        top = NEG3(3 * RS);
+                        for (let k = 0; k < 3; k++) {
+                            if (ul) { const ulC = CB[J - 1][1]; top.set(ul.bottom.subarray((k * ulC + ulC - 3) * 3, (k * ulC + ulC) * 3), k * RS); }
+                            if (up) top.set(up.bottom.subarray(k * nC * 3, (k + 1) * nC * 3), k * RS + 9);
+                        }
+                    }
+                    const task = {
+                        kind: 'tile', S1, S2, r0, nR, c0, nC, rowMin: rowMin.slice(r0, r0 + nR), rowMax: rowMax.slice(r0, r0 + nR),
+                        top, left: left ? left.right : null, useWasm: ctx.useWasm,   // copied when sent, so no slice here
+                        opts: ctx.taskOpts, dpKey, s1: w1, s2: w2
+                    };
+                    return runner.run(task, gen, prio + (I + J) / (nI + nJ));   // within one DP: earlier anti-diagonals first
+                });
+                pr.catch(() => { });
+                proms[I * nJ + J] = pr;
+            }
+        }
+        const res = await Promise.all(proms);
+        // computeBacktrackPosition: the last cell, in the bottom rows of the last tile
+        const lastTile = res[nI * nJ - 1];
+        if (!lastTile) throw MacseError('internal: no alignment path inside the band');
+        const lastC = CB[nJ - 1][1];
+        let best = -Infinity, bm = -1;
+        for (let m = 0; m < 3; m++) { const v = lastTile.bottom[(2 * lastC + lastC - 1) * 3 + m]; if (v !== -Infinity && v >= best) { best = v; bm = m; } }
+        if (bm < 0) throw MacseError('internal: no alignment path inside the band');
+        const parts1 = [], parts2 = [];
+        let line = S1 - 1, col = S2 - 1, m = bm;
+        while (line !== 0 || col !== 0) {
+            if (col < rowMin[line] || col >= rowMax[line]) throw MacseError('internal: traceback left the band');
+            const I = blockOfRow[line], J = blockOfCol[col], tl = res[I * nJ + J];
+            const mv = tl.tb[(line - RB[I][0]) * CB[J][1] + (col - CB[J][0])];
+            let di, dj, pm;
+            if (m === DEL) { const x = mv >> 10; di = 0; dj = x & 3; pm = (x & 0xC) >> 2; }
+            else if (m === INS) { const x = mv >> 6; di = x & 3; dj = 0; pm = (x & 0xC) >> 2; }
+            else { dj = mv & 3; di = (mv & 0xC) >> 2; pm = (mv & 0x30) >> 4; }
+            if (di === 0 && dj === 0) throw MacseError('Infinite loop : ' + line + ' ' + col + '.');
+            parts1.push(TEMPLATE_FWD[di]); parts2.push(TEMPLATE_FWD[dj]);
+            line -= di; col -= dj; m = pm;
+        }
+        const t1 = parts1.reverse().join(''), t2 = parts2.reverse().join('');
+        if (t1.length > S1 + S2) throw MacseError('Crash.');
+        const al = new ProfileAligner(ctx);
+        const set = al.finish({ set: set1 }, { set: set2 }, t1, t2);
+        return { set: setToWire(set), k1: al.p1Kept, k2: al.p2Kept };
+    }
+
+    // Runs one ProfileAligner.alignProfiles through the runner: tiled when it is large and threads are available.
+    function makeExecutor(ctx, runner) {
+        let prio = 0;
+        return (s1, s2, bounds, gen) => {
+            const pr = ++prio;
+            if (runner.size >= 2 && ctx.tileMinCells >= 0) {
+                const S1 = s1.sites() + 1, S2 = s2.sites() + 1;
+                let tot = 0;
+                if (bounds) for (let l = 0; l < S1; l++) tot += Math.max(0, bounds[l][1] - bounds[l][0]); else tot = S1 * S2;
+                if (tot >= ctx.tileMinCells && S1 >= 6 && S2 >= 6) return alignProfilesTiled(ctx, s1, s2, bounds, runner, gen, pr);
+            }
+            return runner.run(makeTask(ctx, s1, s2, bounds), gen, pr);
+        };
+    }
+
+    async function dynamicTreeAsync(set, distances, ctx, runner, progress) {
+        const exec = makeExecutor(ctx, runner);
+        const n = set.size, info = new Map();
+        set.arr.forEach((sq, i) => {
+            const one = new SeqSet(); one.add(sq);
+            info.set(i, Promise.resolve({ label: sq.name, cluster: one, restricted: one, cons: seqCons3RF(sq, ctx) }));
+        });
+        // merge order of AlignmentDynamicTree (findMinimumDistances / loadDistances), computed before any alignment
+        let nbUsed = n;
+        const orders = new Int32Array(n), ids = [], size = new Map();
+        for (let i = 0; i < n; i++) { orders[i] = i; ids.push(i); size.set(i, 1); }
+        const merges = [];
+        while (nbUsed > 1) {
+            let minI = 0, minJ = 1, minValue = distances[orders[0]][orders[1]];
+            for (let i = 0; i < nbUsed; i++) for (let j = i + 1; j < nbUsed; j++) {
+                const d = distances[orders[i]][orders[j]];
+                if (d < minValue) { minI = i; minJ = j; minValue = d; }
+            }
+            if (minI > minJ) { const t = minI; minI = minJ; minJ = t; }
+            const idI = ids[minI], idJ = ids[minJ], id = n + merges.length;
+            merges.push({ idI, idJ, id, minValue });
+            ids[minI] = id;
+            const sI = size.get(idI), sJ = size.get(idJ);
+            for (let k = 0; k < nbUsed; k++) {
+                if (k === minI || k === minJ) continue;
+                const dk = orders[k], di = orders[minI], dj = orders[minJ];
+                const nd = idiv(distances[dk][di] * sI + distances[dk][dj] * sJ, sI + sJ);
+                distances[dk][di] = nd; distances[di][dk] = nd;
+            }
+            size.set(id, sI + sJ);
+            orders[minJ] = orders[nbUsed - 1];
+            ids[minJ] = ids[nbUsed - 1];
+            --nbUsed;
+        }
+        let step = 0;
+        for (const m of merges) {
+            const pr = Promise.all([info.get(m.idI), info.get(m.idJ)]).then(async ([infoI, infoJ]) => {
+                const minVal = f32(f32(m.minValue) / f32(500));
+                let bounds = null;
+                if (minVal < 0.3) bounds = treeBounds(infoI, infoJ, javaIntF(Math.min(f32(50), f32(f32(1 - minVal) * f32(50)))), ctx);
+                const res = await exec(infoI.restricted, infoJ.restricted, bounds, 0);
+                const aligned = wireToSet(res.set);
+                if (aligned.size !== size.get(m.id)) throw MacseError('internal: cluster size differs from the guide tree');
+                const restricted = restrictNT(aligned, true);
+                const out = { label: nodeLabel(infoI.label, infoJ.label), cluster: aligned, restricted, cons: consensusSequence(toAminosSet(restricted, ctx), ctx, 0.6) };
+                if (progress) progress('tree', ++step, n - 1);
+                return out;
+            });
+            pr.catch(() => { });
+            info.set(m.id, pr);
+        }
+        return (await info.get(merges[merges.length - 1].id)).cluster;
+    }
+
+    async function refine2cutAsync(setIn, ctx, runner, progress) {
+        if (setIn.size < 2) return setIn;
+        const width = Math.max(1, runner.size | 0), exec = makeExecutor(ctx, runner);

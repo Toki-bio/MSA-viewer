@@ -1,0 +1,272 @@
+[script.js lines 34760-35030 of ViewAlign fd8b8e4]
+// The context around (row, col) on the diagonal: A[row+k] and B[col+k] for |k| <= ctx where both exist
+function _dotDiagonalSlices(seqA, seqB, row, col, ctx) {
+    const kLo = Math.max(-ctx, -row, -col);
+    const kHi = Math.min(ctx, seqA.length - 1 - row, seqB.length - 1 - col);
+    if (kHi < kLo) return { a: '', b: '', aStart: row, bStart: col };
+    return { a: seqA.substring(row + kLo, row + kHi + 1), b: seqB.substring(col + kLo, col + kHi + 1), aStart: row + kLo, bStart: col + kLo };
+}
+
+// ---- The strip under the plot: ruler, wrapping, position sliders (owner, 2026-11-01) --------------------------------
+// The strip shows A[row+k] above B[col+k] (see _dotUpdateHoverInfo). It gets a ruler above A and below B in each
+// sequence's own residue numbers (ungapped; with RevComp B the numbers of the row, so they run down), a "Strip lines"
+// setting that wraps a longer stretch into several lines, and, as in Staden's SIP, one slider per sequence: A moves
+// the position down the plot, B across it, the plot shows the position as a marker and a click on the plot (or a drag
+// on the marker, or Shift+drag) moves both sliders there.
+function _dotNumAt(which, idx) {   // the number a plotted position carries in its own sequence, 0 = none (a range keeps the real numbers)
+    const S = _dotPlotState;
+    if (which === 'A') return (idx >= 0 && idx < S.rows) ? _dotShownA(idx) : 0;
+    return (idx >= 0 && idx < S.cols) ? _dotShownB(idx) : 0;
+}
+// ---- Ranges (owner, 2026-11-01): the plot may hold only part of a sequence ----------------------------------------
+// 1-based inclusive [from, to] clamped to 1..len, or null for "all" (null, empty, or the whole length)
+function _dotClampRange(r, len) {
+    if (!Array.isArray(r) || r.length !== 2 || !len) return null;
+    let f = Math.round(+r[0]), t = Math.round(+r[1]);
+    if (!Number.isFinite(f) || !Number.isFinite(t)) return null;
+    f = Math.min(len, Math.max(1, f)); t = Math.min(len, Math.max(1, t));
+    if (f > t) [f, t] = [t, f];
+    return (f === 1 && t === len) ? null : [f, t];
+}
+function _dotRangeText(which) {   // ' [100-300 of 500]' when only part of the sequence is plotted, else ''; B with RevComp reads ' [300-100 of 500]'
+    const S = _dotPlotState, a = which === 'A';
+    const n = a ? S.seqA.length : S.seqB.length, full = a ? S.fullLenA : S.fullLenB;
+    return (n && n < full) ? ` [${a ? _dotSpanA(0, n) : _dotSpanB(0, n)} of ${full}]` : '';
+}
+// THE number rule (owner, 2026-11-02): every B number shown to the user is the B row's own forward residue number
+// (1-based, ungapped, inclusive), whatever RevComp and range say; with RevComp B they run DOWN along the axis.
+// _dotBNum is the one conversion: j is a 0-based index into the PLOTTED orientation of the whole sequence B (the reverse
+// complement of the whole row with RevComp B, else the row itself); rev and len default to the open plot's, a collection
+// entry passes its own. Everything that prints, labels or names a B position goes through it (via _dotShownB for a plot index).
+function _dotBNum(j, rev = _dotPlotRevB(), len = _dotPlotState.fullLenB) { return rev ? len - j : j + 1; }
+// plot index -> the number shown (A: index + offA; B: the row's own number)
+function _dotShownA(i) { return _dotPlotState.offA + i + 1; }
+function _dotShownB(i) { return _dotBNum(_dotPlotState.dispOffB + i); }
+// the inverse for B: a row number -> the plot index it sits at (typed into the slider's number box)
+function _dotBIndexOfNum(num) { const S = _dotPlotState; return (_dotPlotRevB() ? S.fullLenB - num : num - 1) - S.dispOffB; }
+// "first-last" of the plot indices [i0, i1) in the plotted direction: A ascending, B the row's own numbers (descending with RevComp)
+function _dotSpanA(i0, i1) { return _dotShownA(i0) + '-' + _dotShownA(i1 - 1); }
+function _dotSpanB(i0, i1) { return _dotShownB(i0) + '-' + _dotShownB(i1 - 1); }
+// the same for a stretch kept in whole-sequence plotted coordinates (collection, presets): its own strand and length
+function _dotSpanBWhole(bStart, bEnd, rev, len) {
+    return (rev && !len) ? `${bStart + 1}-${bEnd} (plotted)` : _dotBNum(bStart, rev, len) + '-' + _dotBNum(bEnd - 1, rev, len);
+}
+// a stretch in the whole sequences' plotted coordinates (0-based, end exclusive: what the alignment marks, the collection
+// and presets keep, with RevComp B counted along the reverse complement of the whole row)
+function _dotRealStretch(r) {
+    const S = _dotPlotState;
+    return { aStart: r.aStart + S.offA, aEnd: r.aEnd + S.offA, bStart: r.bStart + S.dispOffB, bEnd: r.bEnd + S.dispOffB };
+}
+function _dotSyncRangeInputs() {
+    const S = _dotPlotState, g = id => document.getElementById(id);
+    const set = (id, v) => { const i = g(id); if (i && document.activeElement !== i) i.value = v; };
+    set('dotPlotRangeAFrom', S.fullLenA ? S.offA + 1 : ''); set('dotPlotRangeATo', S.fullLenA ? S.offA + S.seqA.length : '');
+    set('dotPlotRangeBFrom', S.fullLenB ? S.offB + 1 : ''); set('dotPlotRangeBTo', S.fullLenB ? S.offB + S.seqB.length : '');
+    const rowEl = g('dotPlotRangeRow');   // hidden until asked for (it would shrink the plot), but shown while a part or a pasted sequence is plotted
+    if (rowEl) rowEl.hidden = !(S._rangeOpen || S.ext || (S.fullLenA && S.seqA.length < S.fullLenA) || (S.fullLenB && S.seqB.length < S.fullLenB) || S.rangeNote);
+    const note = g('dotPlotRangeNote');
+    if (note && !S._rangeNoteKeep) {
+        note.textContent = (S.ext ? `${S.ext.side === 'AB' ? 'Both sides' : 'Side ' + S.ext.side} ${S.ext.cons ? 'is the consensus, computed from the rows when this was plotted' : `is the pasted sequence "${S.ext.name}"`} (no alignment map: the arrow and Highlight all mark only the row side). ` : '') +
+            (S.rangeNote || '');
+    }
+    S._rangeNoteKeep = false;
+}
+
+// ---- Typed ranges, selected columns, rectangle and a pasted sequence (owner, 2026-11-01) ---------------------------
+// The owner wants the comparison limited to chosen parts. Ranges are residue numbers of the WHOLE ungapped sequence
+// (1-based, inclusive); the plot holds only that slice but every number it shows stays real (offA / dispOffB above).
+// Replots the typed ranges. Empty fields mean "all"; numbers outside the sequence are clamped to it, with a message.
+async function _dotRangeReplot() {
+    const S = _dotPlotState, g = id => document.getElementById(id);
+    if (!(S.sourceSeqA && S.sourceSeqB)) return;
+    const notes = [], out = {};
+    for (const side of ['A', 'B']) {
+        const len = side === 'A' ? S.sourceSeqA.length : S.sourceSeqB.length;
+        const fv = (g('dotPlotRange' + side + 'From')?.value ?? '').trim(), tv = (g('dotPlotRange' + side + 'To')?.value ?? '').trim();
+        if (fv === '' && tv === '') { out[side] = null; continue; }
+        const f = fv === '' ? 1 : Number(fv), t = tv === '' ? len : Number(tv);
+        if (!Number.isInteger(f) || !Number.isInteger(t)) { const m = `${side}: type whole numbers for from and to.`; S.rangeNote = m; _dotSyncRangeInputs(); showMessage(m, 3500); return; }
+        // a "to" of 0 or below is no residue (the first is 1): refused, not clamped, which swapped the ends and plotted the wrong one silently.
+        // (A "from" below 1 is only clamped to 1: it has an unambiguous meaning and an existing check relies on it.)
+        if (t < 1) { const m = `${side}: "to" must be 1 or more (the first residue is 1); nothing was re-plotted.`; S.rangeNote = m; _dotSyncRangeInputs(); showMessage(m, 3500); return; }
+        if (f > t) { const m = `${side}: "from" (${f}) is after "to" (${t}).`; S.rangeNote = m; _dotSyncRangeInputs(); showMessage(m, 3500); return; }
+        const cf = Math.min(len, Math.max(1, f)), ct = Math.min(len, Math.max(1, t));
+        if (cf !== f || ct !== t) notes.push(`${side} range clamped to ${cf}-${ct} (the sequence has ${len} residues)`);
+        out[side] = (cf === 1 && ct === len) ? null : [cf, ct];
+    }
+    S._pendingRangeNote = notes.join('; ');
+    if (notes.length) showMessage(notes.join('; '), 4000);
+    await _dotReopen({ rangeA: out.A, rangeB: out.B, note: '' });
+}
+async function _dotRangeWhole() { await _dotReopen({ rangeA: null, rangeB: null, note: '' }); }
+// plots the same sequences again with changed meta (ranges)
+function _dotReopen(patch) {
+    const S = _dotPlotState;
+    if (!(S.sourceSeqA && S.sourceSeqB)) return Promise.resolve();
+    clearTimeout(_dotLiveTimer);
+    _dotMarkDirty(false);
+    const meta = Object.assign({}, S.meta || {}, patch);
+    return openDotPlot(S.sourceSeqA, S.sourceSeqB, S.nameA, _dotPlotNameB(), meta);
+}
+
+// Alignment columns c0..c1 (0-based, inclusive) of a gapped row -> [from, to] residue numbers (1-based, ungapped), or null
+function _dotColsToRange(alignedSeq, c0, c1) {
+    let before = 0, inside = 0;
+    for (let i = 0; i < alignedSeq.length && i <= c1; i++) {
+        const ch = alignedSeq[i];
+        if (ch === '-' || ch === '.' || ch === ' ') continue;
+        if (i < c0) before++; else inside++;
+    }
+    return inside ? [before + 1, before + inside] : null;
+}
+// Two rows (or one row against itself) over alignment columns c0..c1, or whole when cols is null
+async function _dotOpenRows(rowA, rowB, cols, note) {
+    if (rowA === -1 || rowB === -1) await _dotConsensusBusy();
+    // a side is an alignment row, or -1 = the consensus (computed now, WITH gaps like a row, ungapped below for the plot; no row behind it, so like a pasted side it is
+    // never stale and the arrow marks only the row side)
+    const side = r => {
+        if (r === -1) { const al = _dotConsensusAligned(); return al ? { seq: al, header: 'Consensus', cons: true } : null; }
+        const q = state.seqs[r]; return q ? { seq: q.seq, header: q.header, cons: false } : null;
+    };
+    const sA = side(rowA), sB = side(rowB);
+    if (!sA || !sB) {
+        const goneRow = (!sA && rowA !== -1) || (!sB && rowB !== -1);   // a row index that no longer exists (deleted or undone while a chooser was open)
+        showMessage(goneRow ? 'That row is no longer in the alignment: nothing to plot.' : 'There is no consensus to plot.', 2500);
+        return;
+    }
+    const ung = s => s.seq.replace(/[-. ]/g, '');
+    let rangeA = null, rangeB = null;
+    if (cols) {
+        rangeA = _dotColsToRange(sA.seq, cols.c0, cols.c1); rangeB = _dotColsToRange(sB.seq, cols.c0, cols.c1);
+        const none = !rangeA ? sA.header : (!rangeB ? sB.header : '');
+        if (none) { showMessage(`${none} has no residues in columns ${cols.c0 + 1}-${cols.c1 + 1}: nothing to plot.`, 3500); return; }
+    }
+    const meta = { rangeA, rangeB, note: note || '', cols: cols ? [cols.c0 + 1, cols.c1 + 1] : null };
+    if (!sA.cons) { meta.rowIndexA = rowA; meta.alignedSeqA = sA.seq; }
+    if (!sB.cons) { meta.rowIndexB = rowB; meta.alignedSeqB = sB.seq; }
+    if (sA.cons || sB.cons) meta.ext = { side: sA.cons && sB.cons ? 'AB' : sA.cons ? 'A' : 'B', name: 'Consensus', cons: true };
+    return openDotPlot(ung(sA), ung(sB), sA.header, sB.header, meta);
+}
+// The selected alignment columns as a span (selected columns, or a residue selection that is not one rectangle)
+function _dotSelectedColumns() {
+    let cols = state.selectedColumns;
+    if (!cols || !cols.size) {
+        if (!state.selectedNucs || !state.selectedNucs.size || _dotRectSelection()) return null;
+        cols = new Set(); state.selectedNucs.forEach(set => set.forEach(c => cols.add(c)));
+        if (!cols.size) return null;
+    }
+    let c0 = Infinity, c1 = -Infinity;
+    cols.forEach(c => { if (c < c0) c0 = c; if (c > c1) c1 = c; });
+    return { c0, c1, count: cols.size, contiguous: cols.size === c1 - c0 + 1 };
+}
+// The rows a column-based plot uses: the two selected rows, the rows a residue selection covers (1 or 2), else the clicked row
+// The consensus line is separate from the sequences (index -1 in selectedNucs) and stays so everywhere else; in the dot plot only
+// (owner, 2026-11-04) a residue selection that covers it plus rows makes it a choosable side: [rows..., -1], else null
+function _dotConsensusEntries() {
+    const n = state.selectedNucs;
+    if (!n || !n.size || !n.has(-1) || (state.selectedColumns && state.selectedColumns.size)) return null;
+    const rows = [...n.keys()].filter(r => r >= 0 && state.seqs[r]).sort((a, b) => a - b);
+    return rows.length ? [...rows, -1] : null;
+}
+// The consensus of the rows as they are now, WITH gaps (columns are alignment columns), computed from the current rows at plot time
+// The cached one (the consensus display's cache, else the last one this function computed for the same rows) or null
+let _dotConsPrivate = null;
+function _dotConsensusCached(len = _maxOf(state.seqs, q => q.seq.length), fp = _seqsFingerprint()) {   // len and fp may be passed in: the fingerprint walks every residue, so a caller that also stores computes it once
+    if (!state.seqs.length) return '';
+    const c = state.consensusCache;
+    const ok = _consensusOptsKey();   // threshold, minimum coverage, type, fallback: a consensus from other settings is not the one the alignment line shows now
+    if (c && c.len === len && c.fp === fp && c.opts === ok) return c.values.join('');
+    if (_dotConsPrivate && _dotConsPrivate.len === len && _dotConsPrivate.fp === fp && _dotConsPrivate.opts === ok) return _dotConsPrivate.str;
+    return null;
+}
+function _dotConsensusAligned() {
+    const len = _maxOf(state.seqs, q => q.seq.length), fp = _seqsFingerprint();   // once: the lookup and the store below use the same two
+    const cached = _dotConsensusCached(len, fp); if (cached !== null) return cached;
+    const str = computeConsensusForSequences(state.seqs.map(q => q.seq));
+    _dotConsPrivate = { len, fp, opts: _consensusOptsKey(), str };
+    return str;
+}
+// A consensus of a big alignment takes a third of a second or more (measured 2026-11-04: 330 ms for 1500 x 4000, 800 ms for 5000 x 2000)
+// with no cache: the plot says so first and gives the browser a frame, so the tab does not just freeze
+const DOT_CONSENSUS_BUSY_RESIDUES = 2_000_000;
+async function _dotConsensusBusy() {
+    if (state.seqs.length * _maxOf(state.seqs, q => q.seq.length) < DOT_CONSENSUS_BUSY_RESIDUES || _dotConsensusCached() !== null) return;
+    showMessage('Computing the consensus of all rows for the dot plot (this alignment is big, a moment)...', 6000);
+    await new Promise(res => setTimeout(res, 60));
+}
+function _dotSideName(r) { return r === -1 ? 'Consensus' : (state.seqs[r] ? state.seqs[r].header : '(row no longer there)'); }
+function _dotSelectionRows(index) {
+    const ce = _dotConsensusEntries(); if (ce && ce.length === 2) return ce;   // one row and the consensus: A = the row, B = the consensus
+    if (state.selectedRows.size === 2) return Array.from(state.selectedRows).sort((a, b) => a - b);
+    if (!(state.selectedColumns && state.selectedColumns.size) && state.selectedNucs && state.selectedNucs.size) {
+        const rows = [...state.selectedNucs.keys()].filter(r => state.seqs[r]).sort((a, b) => a - b);
+        if (rows.length === 1 || rows.length === 2) return rows;
+    }
+    return [index];
+}
+// The residue selection as one rectangle: { rows, c0, c1 } (one row is a range of one row), or null
+function _dotRectSelection() {
+    if (state.selectedNucs && state.selectedNucs.has(-1)) return null;   // a selection that covers the consensus goes the columns way (the consensus is a choosable side there)
+    const r = typeof _nucSelectionRectangle === 'function' ? _nucSelectionRectangle() : null;
+    if (r) return { rows: r.rows, c0: r.c0, c1: r.c1 };
+    if (state.selectedNucs && state.selectedNucs.size === 1) {
+        const [[row, set]] = [...state.selectedNucs.entries()];
+        if (!state.seqs[row] || !set || !set.size) return null;
+        let lo = Infinity, hi = -Infinity; set.forEach(c => { if (c < lo) lo = c; if (c > hi) hi = c; });
+        if (set.size === hi - lo + 1) return { rows: [row], c0: lo, c1: hi };
+    }
+    return null;
+}
+// A residue selection over 3 or more rows that is not one rectangle: the rows it covers, to choose two of (else null)
+function _dotSelectionManyRows() {
+    const ce = _dotConsensusEntries(); if (ce && ce.length >= 3) return ce;   // the consensus is one of the entries to choose two of
+    if (state.selectedRows.size === 2) return null;
+    if ((state.selectedColumns && state.selectedColumns.size) || !state.selectedNucs || !state.selectedNucs.size) return null;
+    const rows = [...state.selectedNucs.keys()].filter(r => state.seqs[r]).sort((a, b) => a - b);
+    return rows.length >= 3 ? rows : null;
+}
+function _dotColsText(c) { return `columns ${c.c0 + 1}-${c.c1 + 1}`; }
+// The context-menu entries (the row menu calls this once)
+function _dotAddSelectionMenuItems(menu, index) {
+    const add = (text, fn) => { const d = document.createElement('div'); d.textContent = text; d.addEventListener('click', () => { closeContextMenu(); fn(); }); menu.appendChild(d); };
+    const sel = _dotSelectedColumns();
+    if (sel) {
+        const many = _dotSelectionManyRows(), rows = _dotSelectionRows(index), h = _dotSideName;
+        add(many ? (many.includes(-1) ? `Dot-plot of selected columns (choose two of ${many.length - 1} rows and the consensus)` : `Dot-plot of selected columns (choose two of ${many.length} rows)`) : rows.length === 2 ? `Dot-plot of selected columns (${h(rows[0])} vs ${h(rows[1])})` : 'Dot-plot of selected columns (self)', () => {
+            const note = sel.contiguous ? `${_dotColsText(sel)}.` : `Non-contiguous selection (${sel.count} columns): the whole span ${_dotColsText(sel)} is plotted, including the columns between the selected ones.`;
+            if (!sel.contiguous) showMessage(note, 5000);
+            if (many) _dotChooseTwoRows(many, (a, b) => _dotOpenRows(a, b, sel, note + ` Rows ${h(a)} and ${h(b)}.`), 'selection');   // 3 or more rows covered: ask, as for the rectangle
+            else _dotOpenRows(rows[0], rows.length === 2 ? rows[1] : rows[0], sel, note);
+        });
+    }
+    const rect = _dotRectSelection();
+    if (rect) {
+        add('Dot-plot of rectangle', () => {
+            const note = `Rectangle: ${rect.rows.length} row${rect.rows.length === 1 ? '' : 's'} x ${_dotColsText(rect)}.`;
+            if (rect.rows.length <= 2) _dotOpenRows(rect.rows[0], rect.rows.length === 2 ? rect.rows[1] : rect.rows[0], rect, note);
+            else _dotChooseTwoRows(rect.rows, (a, b) => _dotOpenRows(a, b, rect, note + ` Rows ${_dotSideName(a)} and ${_dotSideName(b)}.`));
+        });
+    }
+    add('Dot-plot vs consensus', () => _dotOpenRows(index, -1, null, 'Row vs the consensus (computed from the rows now).'));
+    add('Dot-plot vs pasted sequence…', () => {
+        const s = state.seqs[index];
+        _dotAskPasted({
+            sides: [{ value: 'A', label: `${s.header} down, pasted across` }, { value: 'B', label: `pasted down, ${s.header} across` }],
+            onOk: (parsed, choice) => _dotOpenPasted(parsed, choice, { seq: s.seq.replace(/[-. ]/g, ''), name: s.header, row: index, range: null })
+        });
+    });
+}
+
+// ---- Small windows (no prompt(): the viewer refuses it) ------------------------------------------------------------
+function _dotMiniBox(id, title) {
+    document.getElementById(id)?.remove();
+    const box = document.createElement('div');
+    box.id = id; box.setAttribute('role', 'dialog');
+    box.style.cssText = 'position:fixed;left:50%;top:18%;transform:translateX(-50%);z-index:10030;background:#fff;color:#222;border:1px solid #888;border-radius:6px;box-shadow:0 6px 24px rgba(0,0,0,0.35);padding:12px 14px;max-width:min(560px,94vw);font-size:12px;';
+    const h = document.createElement('div'); h.textContent = title; h.style.cssText = 'font-weight:bold;margin-bottom:8px;font-size:13px;';
+    box.appendChild(h);
+    // typing here must not reach the alignment's keyboard shortcuts
+    ['keydown', 'keyup', 'keypress'].forEach(t => box.addEventListener(t, e => { e.stopPropagation(); if (t === 'keydown' && e.key === 'Escape') box.remove(); }));
+    document.body.appendChild(box);
+    return box;
+}

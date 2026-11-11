@@ -1,0 +1,645 @@
+[script.js lines 29677-30320 of ViewAlign fd8b8e4]
+// The link of an example: this page with ?url=&title=&demo= (and ?reads=)
+function _demoUrl(id) {
+    const d = DEMOS[id];
+    const q = new URLSearchParams();
+    q.set('url', d.file);
+    if (d.reads) q.set('reads', d.reads);
+    q.set('title', d.title);
+    q.set('demo', id);
+    return location.href.split(/[?#]/)[0] + '?' + q.toString();
+}
+
+function _initDemoButtons() {
+    for (const [id, d] of Object.entries(DEMOS)) {
+        const target = document.querySelector(d.place.sel);
+        if (!target || document.querySelector(`.demo-pill[data-demo="${id}"]`)) continue;
+        const b = document.createElement('button');
+        b.type = 'button';
+        b.className = 'demo-pill';
+        b.dataset.demo = id;
+        b.textContent = 'Example ↗';
+        b.title = 'Open a worked example in a new tab';
+        b.setAttribute('aria-label', 'Open a worked example in a new tab');
+        // no stopPropagation on mousedown: in a window's title bar a drag that starts on the pill still moves the
+        // window (regression check 'Dot plot window: ... draggable' grabs the bar where the pill sits); a click stays a click
+        b.addEventListener('click', e => {
+            e.preventDefault();
+            e.stopPropagation();
+            window.open(_demoUrl(id), '_blank', 'noopener');
+        });
+        const how = d.place.how;
+        if (how === 'title') {
+            const t = target.closest('.cluster-block')?.querySelector('.cluster-block-title');
+            if (!t) continue;
+            t.appendChild(b);
+        } else if (how === 'wrap') {
+            const w = document.createElement('div');
+            w.className = 'demo-wrap' + (target.classList.contains('al-btn-wide') ? ' al-btn-wide' : '');
+            target.parentNode.insertBefore(w, target);
+            w.appendChild(target);
+            w.appendChild(b);
+        } else if (how === 'afterLabel') {
+            const lab = target.closest('label') || target;
+            lab.parentNode.insertBefore(b, lab.nextSibling);
+        } else if (how === 'append') {
+            const row = document.createElement('div');
+            row.className = 'demo-row';
+            row.appendChild(document.createTextNode(d.place.label || d.name));
+            row.appendChild(b);
+            target.appendChild(row);
+        } else if (how === 'before') {
+            target.parentNode.insertBefore(b, target);
+        } else {
+            target.parentNode.insertBefore(b, target.nextSibling);
+        }
+    }
+}
+
+function _showDemoNote(id) {
+    const d = DEMOS[id];
+    document.getElementById('demoNote')?.remove();
+    const box = document.createElement('div');
+    box.id = 'demoNote';
+    box.setAttribute('role', 'region');
+    box.setAttribute('aria-label', 'About this example');
+    const head = document.createElement('div');
+    head.className = 'demo-note-head';
+    const h = document.createElement('strong');
+    h.textContent = 'Example: ' + d.name;
+    const x = document.createElement('button');
+    x.type = 'button';
+    x.id = 'demoNoteClose';
+    x.className = 'demo-note-close';
+    x.textContent = '×';
+    x.title = 'Close this note';
+    x.setAttribute('aria-label', 'Close the example note');
+    x.addEventListener('click', () => box.remove());
+    head.appendChild(h);
+    head.appendChild(x);
+    const p = document.createElement('p');
+    p.textContent = d.note;
+    box.appendChild(head);
+    box.appendChild(p);
+    document.body.appendChild(box);
+}
+
+// ?demo=<id>: run the example after the ?url= alignment (and ?reads=) has loaded, then explain it
+async function _runDemoFromUrl(id) {
+    const d = Object.prototype.hasOwnProperty.call(DEMOS, id) ? DEMOS[id] : null;
+    if (!d) return;
+    try {
+        await d.run();
+    } catch (err) {
+        console.warn('Example could not run:', err);
+        showMessage(`The example could not run: ${err.message}`, 6000);
+        return;
+    }
+    _showDemoNote(id);
+}
+
+document.addEventListener('DOMContentLoaded', initializeAppUI);
+
+// UI listener wiring is wrapped in a function so we can attach listeners after DOMContentLoaded
+function _numSliderPopKeepsOpen() {
+    const pop = document.getElementById('numSliderPop');
+    if (!pop || pop.style.display === 'none') return false;
+    if (pop._pinned) return true;
+    try {
+        if (pop.matches(':hover')) return true;
+    } catch (e) { /* :hover can throw on disconnected nodes */ }
+    return pop.contains(document.activeElement);
+}
+
+function _initNumSliderPop() {
+    if (document.getElementById('numSliderPop')) return;
+    const pop = document.createElement('div');
+    pop.id = 'numSliderPop';
+    pop.className = 'num-slider-pop';
+    pop.innerHTML = '<input type="range" tabindex="-1">';
+    document.body.appendChild(pop);
+    const slider = pop.querySelector('input[type="range"]');
+    let current = null;
+
+    function setPinned(v) {
+        pop._pinned = !!v;
+    }
+
+    // The slider used to hide only when focus moved to another element or on Esc. Clicking
+    // the alignment (whose mousedown prevents the focus change), a menu background or the
+    // page moves no focus, so it stayed on screen, and kept its menu open, for good.
+    let watch = 0;
+    function hide() {
+        const inp = current;
+        pop.style.display = 'none';
+        setPinned(false);
+        current = null;
+        clearInterval(watch); watch = 0;
+        if (inp) {
+            const section = inp.closest('.menu-section');
+            if (section && !section.matches(':hover')) {
+                section.classList.remove('menu-open');
+                section.classList.remove('hover-active');
+                if (typeof clearMenuCloseDelay === 'function') clearMenuCloseDelay(section);
+            }
+        }
+    }
+
+    function keepMenu(inp) {
+        const section = (inp || current) && (inp || current).closest('.menu-section');
+        if (section && typeof openMenuSection === 'function') openMenuSection(section);
+    }
+
+    function rangeFor(inp) {
+        let min = parseFloat(inp.min);
+        let max = parseFloat(inp.max);
+        let step = parseFloat(inp.step);
+        if (!Number.isFinite(step) || step <= 0) step = 1;
+        if (!Number.isFinite(min)) min = 0;
+        if (!Number.isFinite(max)) {
+            if (inp.id === 'trimKeepFrom' || inp.id === 'trimKeepTo') max = Math.max(min + 1, _trimAlnLen() || min + 1);
+            else {
+                const v = parseFloat(inp.value);
+                max = Number.isFinite(v) ? Math.max(min + step, v * 2, min + 10) : min + 10;
+            }
+        }
+        if (max <= min) max = min + step;
+        return { min, max, step };
+    }
+
+    function show(inp) {
+        if (!(inp instanceof HTMLInputElement) || inp.type !== 'number' || inp.readOnly || inp.disabled) {
+            hide();
+            return;
+        }
+        if (inp.closest('.slider-container')) {
+            hide();
+            return;
+        }
+        current = inp;
+        const r = rangeFor(inp);
+        slider.min = String(r.min);
+        slider.max = String(r.max);
+        slider.step = String(r.step);
+        const v = parseFloat(inp.value);
+        slider.value = String(Number.isFinite(v) ? Math.min(r.max, Math.max(r.min, v)) : r.min);
+        const rect = inp.getBoundingClientRect();
+        pop.style.display = 'block';
+        const width = Math.max(148, rect.width);
+        pop.style.width = width + 'px';
+        slider.style.width = '100%';
+        let left = rect.left;
+        if (left + width > window.innerWidth - 8) left = Math.max(8, window.innerWidth - width - 8);
+        pop.style.left = left + 'px';
+        // Overlap the input by 1px so the pointer never falls in a hover gap
+        // that would close the parent menu before the slider can be grabbed.
+        const popH = pop.offsetHeight || 28;
+        let top = rect.bottom - 1;
+        if (top + popH > window.innerHeight - 8) top = Math.max(8, rect.top - popH + 1);
+        pop.style.top = top + 'px';
+        keepMenu(inp);
+        // Hide as soon as the number box is no longer on screen (its menu closed, its window hid)
+        if (!watch) watch = setInterval(() => {
+            if (!current || !current.isConnected || current.getClientRects().length === 0 || current.disabled) hide();
+        }, 250);
+    }
+
+    function applySlider() {
+        if (!current) return;
+        current.value = slider.value;
+        current.dispatchEvent(new Event('input', { bubbles: true }));
+    }
+
+    function valueFromPointer(e) {
+        const box = slider.getBoundingClientRect();
+        const min = parseFloat(slider.min);
+        const max = parseFloat(slider.max);
+        let step = parseFloat(slider.step);
+        if (!Number.isFinite(step) || step <= 0) step = 1;
+        const span = Math.max(box.width, 1);
+        const ratio = Math.min(1, Math.max(0, (e.clientX - box.left) / span));
+        let v = min + ratio * (max - min);
+        v = Math.round(v / step) * step;
+        const decimals = (String(step).split('.')[1] || '').length;
+        if (decimals) v = parseFloat(v.toFixed(decimals));
+        if (v < min) v = min;
+        if (v > max) v = max;
+        return v;
+    }
+
+    function dragTo(e) {
+        if (!current) return;
+        slider.value = String(valueFromPointer(e));
+        applySlider();
+        keepMenu();
+    }
+
+    pop.addEventListener('pointerdown', (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        setPinned(true);
+        keepMenu();
+        try { slider.setPointerCapture(e.pointerId); } catch (err) { /* ignore */ }
+        dragTo(e);
+    });
+    pop.addEventListener('pointermove', (e) => {
+        if (!pop._pinned) return;
+        dragTo(e);
+    });
+    pop.addEventListener('pointerup', (e) => {
+        if (!pop._pinned) return;
+        dragTo(e);
+        if (current) current.dispatchEvent(new Event('change', { bubbles: true }));
+        try { slider.releasePointerCapture(e.pointerId); } catch (err) { /* ignore */ }
+    });
+    slider.addEventListener('input', () => {
+        applySlider();
+        keepMenu();
+    });
+    slider.addEventListener('change', () => {
+        if (!current) return;
+        current.dispatchEvent(new Event('change', { bubbles: true }));
+        keepMenu();
+    });
+    pop.addEventListener('mouseenter', () => keepMenu());
+    document.addEventListener('focusin', (e) => {
+        const inp = e.target;
+        if (pop.contains(inp)) return;
+        // data-no-slider-pop: windows (Statistics) whose number boxes should not grow a slider
+        if (inp instanceof HTMLInputElement && inp.type === 'number' && !inp.closest('[data-no-slider-pop]')) show(inp);
+        else hide();
+    });
+    document.addEventListener('pointerup', () => {
+        setPinned(false);
+    });
+    // Any press outside the slider and its number box ends it (capture: the alignment's own
+    // handlers stop propagation)
+    document.addEventListener('pointerdown', (e) => {
+        if (!current || pop.style.display === 'none') return;
+        if (pop.contains(e.target) || e.target === current) return;
+        hide();
+    }, true);
+    document.addEventListener('focusout', (e) => {
+        if (e.target === current && !(e.relatedTarget && pop.contains(e.relatedTarget))) hide();
+    });
+    document.addEventListener('scroll', () => { if (current) show(current); }, true);
+    window.addEventListener('resize', () => { if (current) show(current); });
+    document.addEventListener('keydown', (e) => {
+        if (e.key === 'Escape' && current) hide();
+    });
+}
+
+function attachUIListeners() {
+    if (state.uiListenersAttached) return;
+    state.uiListenersAttached = true;
+    _initNumSliderPop();
+    _initGuideTreeKSync();
+    _initGuideTreeAuto();
+    el('clusterWithinTypes')?.addEventListener('change', _updateSplitHint);
+    _updateSplitHint();
+    // Set up slider/input pairs manually to avoid function reference issues
+    const sliderPairs = [
+        ['blackSlider', 'blackInput'],
+        ['darkSlider', 'darkInput'],
+        ['lightSlider', 'lightInput'],
+        ['nameLengthSlider', 'nameLengthInput'],
+        ['blockSizeSlider', 'blockSizeInput'],
+        ['consensusThreshold', 'consensusThresholdInput'],
+        ['groupConsensusThreshold', 'groupConsensusThresholdInput'],
+        ['consensusMinCoverage', 'consensusMinCoverageInput'],
+        ['varSitesThreshold', 'varSitesThresholdInput']
+    ];
+
+    sliderPairs.forEach(([sliderId, inputId]) => {
+        const slider = el(sliderId);
+        const input = el(inputId);
+        if (slider && input) {
+            const renderCb = sliderId === 'varSitesThreshold' ? debouncedDiffRefresh : debounceRender;
+            slider.addEventListener('input', () => {
+                if (sliderId === 'consensusThreshold') {
+                    const clamped = clampConsensusPercent(slider.value);
+                    slider.value = clamped;
+                    input.value = clamped;
+                } else if (sliderId === 'groupConsensusThreshold') {
+                    const clamped = clampGroupConsensusPercent(slider.value);
+                    slider.value = clamped;
+                    input.value = clamped;
+                } else if (sliderId === 'nameLengthSlider') {
+                    const clamped = clampNameLength(slider.value);
+                    slider.value = clamped;
+                    input.value = clamped;
+                    applyNameLengthLive(clamped);
+                } else {
+                    input.value = slider.value;
+                }
+                if (sliderId === 'blockSizeSlider') { _blockReq = _clampBlockSize(slider.value); _blockShown = parseInt(slider.value, 10); }
+                updateSliderBackground(slider);
+                if (sliderId.includes('black') || sliderId.includes('dark') || sliderId.includes('light')) {
+                    validateThresholds();
+                }
+                // Name length is applied live (width + labels); a full render per drag step
+                // queued behind each ~150 ms relayout doubled the cost. Render once on release.
+                if (sliderId === 'nameLengthSlider') return;
+                renderCb();
+            });
+            if (sliderId === 'nameLengthSlider') slider.addEventListener('change', () => renderCb());
+            if (sliderId === 'blockSizeSlider') {
+                // while the thumb is held it stays where it is dragged; on release it shows the width drawn
+                slider.addEventListener('pointerdown', () => { slider._dragging = true; });
+                const release = () => { if (!slider._dragging) return; slider._dragging = false; _syncBlockSizeDisplay(); };
+                slider.addEventListener('change', release);
+                window.addEventListener('pointerup', release);
+            }
+
+            input.addEventListener('input', () => {
+                if (sliderId === 'consensusThreshold') {
+                    const clamped = clampConsensusPercent(input.value);
+                    slider.value = clamped;
+                    input.value = clamped;
+                } else if (sliderId === 'groupConsensusThreshold') {
+                    const clamped = clampGroupConsensusPercent(input.value);
+                    slider.value = clamped;
+                    input.value = clamped;
+                } else if (sliderId === 'nameLengthSlider') {
+                    // Apply only a complete number inside the range and leave the box alone
+                    // while typing: clamping each keystroke turned "1" (of "12") into 3 and
+                    // then "32". Out-of-range values are corrected on change (Enter / leaving).
+                    // Applied after a short pause, so typing "42" does not show 4 on the way.
+                    clearTimeout(input._nameLenTimer);
+                    input._nameLenTimer = setTimeout(() => {
+                        const num = Number(input.value);
+                        const max = parseInt(slider.max, 10) || 50;
+                        if (input.value === '' || !Number.isInteger(num) || num < 3 || num > max) return;
+                        slider.value = num;
+                        updateSliderBackground(slider);
+                        applyNameLengthLive(num);
+                        renderCb();
+                    }, 400);
+                    return;
+                } else if (sliderId === 'consensusMinCoverage') {
+                    const clamped = clampMinCoverage(input.value);
+                    slider.value = clamped;
+                    input.value = clamped;
+                } else if (input.value !== '' && !Number.isNaN(Number(input.value))) {
+                    // Guard against transient empty/invalid states while typing (e.g.
+                    // select-all before entering a new value). A <input type=range>
+                    // coerces value='' to the SPEC DEFAULT - the midpoint of min/max -
+                    // rather than leaving its position alone, which is what produced
+                    // the slider visibly "jumping to the middle" while editing the
+                    // paired number box. Only push a value across once it's a real
+                    // number; an empty/partial box just leaves the slider where it was.
+                    slider.value = input.value;
+                    // Block size: a width typed is a width asked for (the slider clamps it to its range)
+                    if (sliderId === 'blockSizeSlider') { input._typing = true; _blockReq = _clampBlockSize(input.value); _blockShown = parseInt(slider.value, 10); }
+                }
+                updateSliderBackground(slider);
+                if (inputId.includes('black') || inputId.includes('dark') || inputId.includes('light')) {
+                    validateThresholds();
+                }
+                renderCb();
+            });
+
+            // On blur/Enter, an empty or out-of-range box snaps back to the
+            // slider's current (last valid) value instead of staying blank or
+            // silently keeping an invalid number.
+            input.addEventListener('change', () => {
+                if (sliderId === 'nameLengthSlider') return;   // clamps to the range instead (its own handler)
+                if (sliderId === 'blockSizeSlider') { input._typing = false; _syncBlockSizeDisplay(); return; }   // the box shows the width drawn again
+                const n = Number(input.value);
+                if (input.value === '' || Number.isNaN(n) || n < Number(slider.min) || n > Number(slider.max)) {
+                    input.value = slider.value;
+                }
+            });
+        }
+    });
+
+    // Set up zoom slider (no input pair, just direct handling)
+    const zoomSlider = el('zoomSlider');
+    if (zoomSlider) {
+        zoomSlider.addEventListener('input', debounce(() => {
+            setZoomFromSlider();
+            updateSliderBackground(zoomSlider);
+        }, 50));
+        _placeZoom100Tick();
+        window.addEventListener('resize', () => window.requestAnimationFrame(_placeZoom100Tick));
+        if (typeof ResizeObserver !== 'undefined') {
+            const wrap = zoomSlider.parentElement;
+            if (wrap) {
+                const zoomTickObserver = new ResizeObserver(() => _placeZoom100Tick());
+                zoomTickObserver.observe(wrap);
+            }
+        }
+    }
+    const zoom100Tick = el('zoom100Tick');
+    if (zoom100Tick) {
+        zoom100Tick.addEventListener('click', (event) => {
+            event.preventDefault();
+            event.stopPropagation();
+            resetZoom();
+        });
+    }
+    const zoomWrap = zoomSlider?.parentElement;
+    if (zoomWrap?.classList.contains('zoom-slider-wrap')) {
+        zoomWrap.addEventListener('mousedown', (event) => {
+            if (event.target !== zoomSlider) return;
+            const rect = zoomSlider.getBoundingClientRect();
+            const thumb = 8;
+            const usable = Math.max(0, rect.width - thumb);
+            if (usable <= 0) return;
+            const frac = (event.clientX - rect.left - thumb / 2) / usable;
+            const min = Number(zoomSlider.min) || 0;
+            const max = Number(zoomSlider.max) || 100;
+            const raw = min + frac * (max - min);
+            if (raw >= _zoomToSlider(100)) {
+                event.preventDefault();
+                resetZoom();
+            }
+        });
+    }
+
+    // Set up radio button groups
+    const radioGroups = ['shadeMode', 'mode', 'consensusType', 'consensusFallback'];
+    // consensusPosition gets a direct (non-debounced) handler for instant feedback
+    document.querySelectorAll('input[name="consensusPosition"]').forEach(radio => {
+        radio.addEventListener('change', () => renderAlignment());
+    });
+    radioGroups.forEach(group => {
+        document.querySelectorAll(`input[name="${group}"]`).forEach(radio => {
+            const handler = group === 'shadeMode' ? onShadeModeChange :
+                           group === 'mode' ? onModeChange : debounceRender;
+            radio.addEventListener('change', handler);
+        });
+    });
+
+    // The top-bar view switch is built and wired by _ensureQuickModeSwitch (from QUICK_VIEW_OPTIONS)
+    syncQuickModeSwitch();
+    syncCodonModePanel();
+    syncSearchControlsAvailability();
+    syncVariationControls();
+
+    // Breakpoint marker style popover: colour + symbol (including empty).
+    // Built directly under <body> with fixed positioning (computed from the
+    // trigger button's own screen rect, not any ancestor) so it can never be
+    // clipped or misplaced by the settings panel's own scrolling/overflow -
+    // and uses plain buttons instead of a native <select>, since a native
+    // dropdown's OS-rendered popup can dispatch its closing click in a way
+    // that doesn't bubble through the select element, tripping outside-click
+    // detection and closing the whole popover mid-selection.
+    loadBrkStyle();
+    setupBrkStylePopover();
+
+    // Set up checkbox listeners
+    const checkboxes = ['enableBlack', 'enableDark', 'enableLight', 'showConsensus',
+                        'highlightDiffs', 'varSitesOnly',
+                        'codonAnalysis'];
+    checkboxes.forEach(id => {
+        const elRef = el(id);
+        if (elRef) elRef.addEventListener('change', () => {
+            // Highlight-diffs and Variable-sites-only are two presentations of the same
+            // conserved-column computation and cannot both apply; keep the checkboxes in
+            // step with that so the panel never shows two mutually exclusive states ticked.
+            // Say what was switched off, and bring Highlight diffs back when Variable sites only
+            // (which paused it) is turned off again, instead of dropping it silently.
+            if (id === 'highlightDiffs') {
+                state._diffsPausedByVarSites = false;
+                const other = el('varSitesOnly');
+                if (elRef.checked && other?.checked) {
+                    other.checked = false;
+                    showMessageAfterRender('Variable sites only switched off: it cannot be combined with Highlight diffs.', 3500);
+                }
+            }
+            if (id === 'varSitesOnly') {
+                const other = el('highlightDiffs');
+                if (elRef.checked && other?.checked) {
+                    other.checked = false;
+                    state._diffsPausedByVarSites = true;
+                    showMessageAfterRender('Highlight diffs is paused while Variable sites only is on; it comes back when you turn that off.', 4000);
+                } else if (!elRef.checked && state._diffsPausedByVarSites) {
+                    state._diffsPausedByVarSites = false;
+                    if (other) other.checked = true;
+                    showMessageAfterRender('Highlight diffs is back on.', 2000);
+                }
+            }
+            if (id === 'highlightDiffs') {
+                document.body.classList.toggle('highlight-diffs', elRef.checked);
+            }
+            if (id === 'highlightDiffs' || id === 'varSitesOnly') {
+                syncVariationControls();
+            }
+            if (id === 'highlightDiffs' && _refreshDiffHighlightInPlace()) return;
+            debounceRender();
+        });
+    });
+
+    // Var-sites threshold: slider and typed-number box both drive the same label.
+    // The generic sliderPairs loop above keeps the two controls' values in sync;
+    // this just keeps the "\u2265N% diff" / "\u2265N seqs" label current for either input method.
+    const varThreshold = el('varSitesThreshold');
+    const varThresholdInput = el('varSitesThresholdInput');
+    const onVarThresholdChange = debouncedDiffRefresh;
+    if (varThreshold) {
+        varThreshold.addEventListener('input', updateVarThresholdLabel);
+        varThreshold.addEventListener('change', onVarThresholdChange);
+    }
+    if (varThresholdInput) {
+        varThresholdInput.addEventListener('input', updateVarThresholdLabel);
+        varThresholdInput.addEventListener('change', onVarThresholdChange);
+    }
+    // Switching % <-> count changes what the same number means and its valid
+    // range (100 vs nSeq), so bounds/label must refresh before the next render.
+    const varThresholdMode = el('varThresholdMode');
+    if (varThresholdMode) {
+        varThresholdMode.addEventListener('change', () => {
+            updateVarThresholdBounds();
+            debounceRender();
+        });
+    }
+    // Var-sites breakpoints toggle
+    const varBrk = el('varSitesBreakpoints');
+    if (varBrk) varBrk.addEventListener('change', debounceRender);
+
+    const codonCode = el('codonCode');
+    if (codonCode) codonCode.addEventListener('change', debounceRender);
+
+    const codonFrame = el('codonFrame');
+    if (codonFrame) codonFrame.addEventListener('change', debounceRender);
+
+    const codonFsRef = el('codonFsRef');
+    if (codonFsRef) codonFsRef.addEventListener('change', debounceRender);
+
+    document.querySelectorAll('#codonFrameSwitch input[name="codonFrameQuick"]').forEach(r => {
+        r.addEventListener('change', () => {
+            if (!r.checked) return;
+            const sel = document.getElementById('codonFrame');
+            if (sel && sel.value !== r.value) {
+                sel.value = r.value;
+                debounceRender();
+            }
+        });
+    });
+    el('aaOnly')?.addEventListener('change', e => { const on = e.target.checked; e.target.checked = !on; setAaOnly(on); });
+    el('aaOnlyButton')?.addEventListener('click', () => setAaOnly(!el('aaOnly')?.checked));
+    syncAaOnly();
+
+    const colorSchemeSelect = el('colorSchemeSelect');
+    if (colorSchemeSelect) colorSchemeSelect.addEventListener('change', debounceRender);
+
+    const sticky = el('stickyNames');
+    if (sticky) sticky.addEventListener('change', toggleStickyNames);
+
+    // Name length box: on Enter / leaving, correct an out-of-range or partial entry
+    el('nameLengthInput')?.addEventListener('change', () => {
+        clearTimeout(el('nameLengthInput')._nameLenTimer);
+        if (el('nameLengthNoLimit')?.checked) return;
+        setNameLengthUI(clampNameLength(el('nameLengthInput').value), true);
+    });
+
+    // Name length "No limit" checkbox
+    const noLimit = el('nameLengthNoLimit');
+    if (noLimit) {
+        noLimit.addEventListener('change', () => {
+            const slider = el('nameLengthSlider');
+            const input = el('nameLengthInput');
+            if (slider) slider.disabled = noLimit.checked;
+            if (input) input.disabled = noLimit.checked;
+            state.nameLength = effectiveNameLength();
+            applyNameLengthLive(state.nameLength);
+            debounceRender();
+        });
+    }
+
+    // Alignment container events (document capture: survives innerHTML clears and
+    // always sees reliable modifier state via getModifierState on the mouse event)
+    const controls = el('controls');
+    if (!state._alignmentPointerBound) {
+        state._alignmentPointerBound = true;
+        document.addEventListener('mousedown', (e) => {
+            const container = document.getElementById('alignmentContainer');
+            if (!container || !container.contains(domEventTarget(e))) return;
+            if (e.button === 0) _blurFocusInWindow();
+            // Capture-phase chain: column (Ctrl+Alt) -> row name (Ctrl/Shift) -> nucleotide (Ctrl) -> edit
+            if (handleTrimEdgeMouseDown(e)) return;
+            if (handleColumnSelectMouseDown(e)) return;
+            if (handleRowSelectMouseDown(e)) return;
+            if (handleNucleotideSelectMouseDown(e)) return;
+            handleGeneDocEditMouseDown(e);
+            handleAlignmentPanStart(e);
+        }, true);
+        document.addEventListener('mousemove', handleMouseMove);
+        // Double-click a residue to enter GeneDoc edit mode positioned at that
+        // cell — replaces the old "plain click enters edit mode" behavior,
+        // which was removed because it made a plain click unusable for
+        // starting a nucleotide-selection drag (see handleNucleotideSelectMouseDown).
+        document.addEventListener('dblclick', (e) => {
+            const container = document.getElementById('alignmentContainer');
+            if (!container || !container.contains(domEventTarget(e))) return;
+            if (isCanvasMode()) return; // Canvas mode has its own click handling
+            const span = closestFromEvent(e, '.seq-data > span[data-pos]');
+            if (!span) return;
+            const seqLine = span.closest('.seq-line');
+            if (!seqLine || seqLine.classList.contains('consensus-line') || seqLine.classList.contains('scale-ruler-line')) return;
+            const rowIndex = parseInt(seqLine.dataset.seqIndex, 10);
+            const pos = parseInt(span.dataset.pos, 10);
+            if (!Number.isInteger(rowIndex) || !Number.isInteger(pos) || !state.seqs[rowIndex]) return;
+            // With a gap tool active, two quick clicks are two clicks of that tool (both already applied by
+            // mousedown), not a switch to Type: "Ins Gap Other turned into Type after a few quick clicks" (owner)

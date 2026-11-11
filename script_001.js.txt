@@ -1,0 +1,450 @@
+[script.js lines 1-449 of ViewAlign fd8b8e4]
+// ============================================================================
+// ViewAlign - browser-based multiple sequence alignment viewer & editor
+// RELEASE_VERSION is the release version (package.json, CITATION.cff, git tag
+// v<RELEASE_VERSION>, tests/meta/version.test.js); BUILD_TAG counts every deploy.
+const RELEASE_VERSION = '1.34.1';
+const BUILD_TAG = 'v339';
+// Sentinel row index for consensus-line nucleotide selection (not in state.seqs).
+const CONSENSUS_ROW_INDEX = -1;
+const COL_SEL_EDGE = '#4fc3f7';   // the edge line of a run of selected columns (styles.css .col-sel-l / .col-sel-r)
+// Test-only: the Block radio shows the old DOM Block renderer (see isBlockLayout / isDomBlock)
+let _domBlockForTests = typeof window !== 'undefined' && !!window.__vaDomBlockForTests;
+
+// ---- Browser compatibility ----
+// Supported: Chrome/Edge 80+, Firefox 100+ and Safari 15.4+ (reading .gz/BAM
+// files needs DecompressionStream: Firefox 113+, Safari 16.4+).
+// AbortSignal.timeout (Chrome 103, Firefox 100, Safari 16) is used by every
+// optional-server probe.
+if (typeof AbortSignal !== 'undefined' && typeof AbortSignal.timeout !== 'function') {
+    AbortSignal.timeout = function (ms) {
+        const controller = new AbortController();
+        setTimeout(() => controller.abort(), ms);
+        return controller.signal;
+    };
+}
+// navigator.clipboard exists only in secure contexts (https, localhost). On
+// plain http (the optional server reached over the LAN) every Copy button
+// threw; fall back to a hidden textarea and execCommand('copy').
+if (typeof navigator !== 'undefined' && !(navigator.clipboard && navigator.clipboard.writeText)) {
+    try {
+        Object.defineProperty(navigator, 'clipboard', {
+            configurable: true,
+            value: {
+                writeText(text) {
+                    return new Promise((resolve, reject) => {
+                        const ta = document.createElement('textarea');
+                        ta.value = String(text);
+                        ta.setAttribute('readonly', '');
+                        ta.style.cssText = 'position:fixed;left:-9999px;top:0;';
+                        document.body.appendChild(ta);
+                        ta.select();
+                        let ok = false;
+                        try { ok = document.execCommand('copy'); } catch (_) { ok = false; }
+                        ta.remove();
+                        ok ? resolve() : reject(new Error('Copy is not available in this browser context'));
+                    });
+                },
+                readText() { return Promise.reject(new Error('Reading the clipboard needs https or localhost')); }
+            }
+        });
+    } catch (_) { /* leave navigator as it is */ }
+}
+// Opened from disk: browsers block Web Workers and fetch() there, so the
+// tools that run in workers (MAFFT, MACSE, search, dot plots) cannot start.
+if (typeof location !== 'undefined' && location.protocol === 'file:') {
+    window.addEventListener('load', () => {
+        if (typeof showMessage === 'function') {
+            showMessage('Opened from a file (file://): viewing and editing work, but MAFFT, MACSE, sequence search, dot plots and ?url= loading need the page served over http(s) - see the README.', 0);
+        }
+    });
+}
+
+// Largest / smallest value of a list (optionally of f(item)), as a loop: Math.max(...list) passes one
+// argument per item and overflows the call stack from about 125,000 items (a tall alignment, a long
+// column selection). Empty list: -Infinity / Infinity, like Math.max() / Math.min().
+function _maxOf(list, f) {
+    let m = -Infinity;
+    for (const x of list) { const v = f ? f(x) : x; if (v > m) m = v; }
+    return m;
+}
+function _minOf(list, f) {
+    let m = Infinity;
+    for (const x of list) { const v = f ? f(x) : x; if (v < m) m = v; }
+    return m;
+}
+
+function _escapeHtml(s) {
+    if (!s) return '';
+    return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+}
+
+// Breakpoint marker appearance (colour + glyph) is a display preference, not
+// alignment data, so it lives outside `state` (which gets reset on every
+// file load) and persists across sessions via localStorage.
+const BRK_STYLE_DEFAULT = { color: '#d0d0d0', symbol: '⋮' };
+let brkStyle = BRK_STYLE_DEFAULT;
+
+function applyBrkStyle(style) {
+    // Stored values come from localStorage: keep only a text colour and a text symbol (audit U2)
+    style = {
+        color: (style && typeof style.color === 'string' && style.color) || BRK_STYLE_DEFAULT.color,
+        symbol: (style && typeof style.symbol === 'string' && style.symbol) || BRK_STYLE_DEFAULT.symbol,
+    };
+    brkStyle = style;
+    document.documentElement.style.setProperty('--brk-bg', style.color);
+}
+
+function loadBrkStyle() {
+    applyBrkStyle(safeLocalGet('msaviewer_brk_style', BRK_STYLE_DEFAULT));
+}
+
+function saveBrkStyle(style) {
+    applyBrkStyle(style);
+    try { localStorage.setItem('msaviewer_brk_style', JSON.stringify(style)); } catch (e) {}
+}
+
+const BRK_SYMBOL_CHOICES = [
+    { value: '⋮', label: '⋮' },
+    { value: '¦', label: '¦' },
+    { value: ':', label: ':' },
+    { value: '•', label: '•' },
+    { value: '❘', label: '❘' },
+    { value: '', label: '(empty)' },
+];
+
+function setupBrkStylePopover() {
+    const btn = document.getElementById('brkStyleBtn');
+    if (!btn) return;
+
+    const pop = document.createElement('div');
+    pop.id = 'brkStylePopover';
+    pop.style.cssText = 'display:none;position:fixed;z-index:9999;background:#fff;border:1px solid #999;'
+        + 'border-radius:3px;box-shadow:0 2px 8px rgba(0,0,0,0.3);padding:8px;font-size:10px;white-space:nowrap;';
+    pop.innerHTML = `
+        <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:6px;">
+            <strong style="font-size:10px;">Breakpoint marker</strong>
+            <button type="button" id="brkStyleClose" title="Close" style="font-size:11px;line-height:1;padding:0 3px;border:1px solid #ccc;border-radius:2px;background:#f5f5f5;cursor:pointer;">×</button>
+        </div>
+        <div style="display:flex;align-items:center;gap:6px;margin-bottom:6px;">
+            <label for="brkColorInput" style="flex:0 0 auto;">Colour</label>
+            <input type="color" id="brkColorInput" style="width:28px;height:18px;padding:0;border:1px solid #ccc;cursor:pointer;">
+        </div>
+        <div style="display:flex;align-items:center;gap:4px;">
+            <span style="flex:0 0 auto;">Symbol</span>
+            <div id="brkSymbolChoices" style="display:flex;gap:2px;"></div>
+        </div>
+    `;
+    document.body.appendChild(pop);
+
+    const choicesEl = pop.querySelector('#brkSymbolChoices');
+    BRK_SYMBOL_CHOICES.forEach(choice => {
+        const b = document.createElement('button');
+        b.type = 'button';
+        b.dataset.symbol = choice.value;
+        b.textContent = choice.label;
+        b.title = choice.value === '' ? 'No glyph - shading colour only' : `Use "${choice.label}"`;
+        b.style.cssText = 'min-width:20px;height:20px;padding:0 3px;font-size:11px;border:1px solid #ccc;'
+            + 'border-radius:2px;background:#f7f7f7;cursor:pointer;';
+        b.addEventListener('click', () => {
+            saveBrkStyle({ ...brkStyle, symbol: choice.value });
+            syncBrkSymbolButtons();
+            debounceRender();
+        });
+        choicesEl.appendChild(b);
+    });
+
+    function syncBrkSymbolButtons() {
+        [...choicesEl.children].forEach(b => {
+            const active = b.dataset.symbol === brkStyle.symbol;
+            b.style.background = active ? '#cfe3ff' : '#f7f7f7';
+            b.style.borderColor = active ? '#6699cc' : '#ccc';
+        });
+    }
+
+    const colorInput = pop.querySelector('#brkColorInput');
+    colorInput.addEventListener('input', () => {
+        saveBrkStyle({ ...brkStyle, color: colorInput.value });
+    });
+
+    function closePopover() { pop.style.display = 'none'; }
+
+    function openPopover() {
+        colorInput.value = brkStyle.color;
+        syncBrkSymbolButtons();
+        pop.style.display = 'block';
+        // Position from the button's own screen rect (not any ancestor's
+        // coordinate space), then clamp so it can never render off-screen
+        // regardless of where the button sits in a scrollable panel.
+        const r = btn.getBoundingClientRect();
+        const popRect = pop.getBoundingClientRect();
+        let left = r.left;
+        let top = r.bottom + 4;
+        left = Math.max(4, Math.min(left, window.innerWidth - popRect.width - 4));
+        if (top + popRect.height > window.innerHeight - 4) top = r.top - popRect.height - 4;
+        top = Math.max(4, top);
+        pop.style.left = `${left}px`;
+        pop.style.top = `${top}px`;
+    }
+
+    btn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        if (pop.style.display === 'none') openPopover(); else closePopover();
+    });
+    pop.querySelector('#brkStyleClose').addEventListener('click', closePopover);
+    document.addEventListener('click', (e) => {
+        if (pop.style.display !== 'none' && !pop.contains(e.target) && e.target !== btn) closePopover();
+    });
+    document.addEventListener('keydown', (e) => {
+        if (e.key === 'Escape' && pop.style.display !== 'none') closePopover();
+    });
+    window.addEventListener('resize', closePopover);
+}
+
+function safeLocalGet(key, fallback) {
+    // No fallback given: an empty store of named entries, without a prototype (see below)
+    if (fallback === undefined) fallback = Object.create(null);
+    try {
+        const raw = localStorage.getItem(key);
+        if (!raw) return fallback;
+        const value = JSON.parse(raw);
+        // A stored value of the wrong kind (null, a number, a list where an object is expected)
+        // used to be handed on and threw in the caller, at start-up for some keys (audit U2).
+        if (value === null || typeof value !== typeof fallback
+            || Array.isArray(value) !== Array.isArray(fallback)) return fallback;
+        // A store of named entries has no prototype: a preset named __proto__ is an entry like any
+        // other (on an ordinary object that name set the prototype and nothing was stored; audit U15)
+        if (typeof value === 'object' && !Array.isArray(value)) return Object.assign(Object.create(null), value);
+        return value;
+    } catch (e) {
+        // Blocked storage throws here too: never let that stop the page loading
+        console.warn(`localStorage key "${key}" unreadable, resetting.`, e);
+        try { localStorage.removeItem(key); } catch (_) {}
+        return fallback;
+    }
+}
+
+// Opens or closes the Recent list. It opens under its button, kept inside the window: it used to open
+// at a fixed place near the right edge, about 700 px from the button on a wide window (audit U12).
+function _toggleRecentDropdown(button) {
+    const d = document.getElementById('recentDropdown');
+    if (!d) return;
+    if (d.style.display === 'block') { d.style.display = 'none'; return; }
+    d.style.display = 'block';
+    _historyManager.renderDropdown();
+    const r = button && button.getBoundingClientRect();
+    if (!r || (!r.width && !r.height)) return;   // button not on screen: the place set in index.html stays
+    const w = d.offsetWidth || 360;
+    const left = Math.max(4, Math.min(r.left, window.innerWidth - w - 4));
+    const top = Math.max(4, Math.min(r.bottom + 2, window.innerHeight - 120));
+    d.style.left = left + 'px';
+    d.style.right = 'auto';
+    d.style.top = top + 'px';
+    d.style.maxHeight = Math.max(100, Math.min(400, window.innerHeight - top - 8)) + 'px';
+}
+
+// Writes a localStorage value; storage can be full or blocked by the browser.
+// With a label, tells the user what could not be saved.
+function safeLocalSet(key, value, label) {
+    try {
+        localStorage.setItem(key, value);
+        return true;
+    } catch (e) {
+        if (label) showMessage(`Could not save ${label}: browser storage is full or blocked.`, 4000);
+        return false;
+    }
+}
+
+function safeLocalGetRaw(key) {
+    try { return localStorage.getItem(key); } catch (_) { return null; }
+}
+
+function _checkedRadioValue(name, fallback) {
+    return document.querySelector(`input[name="${name}"]:checked`)?.value ?? fallback;
+}
+
+function _clusterAlignmentColumnOffset() {
+    if (state.clusterColumnRange) return state.clusterColumnRange.lo;   // "Selected columns only": kept with the result
+    const stb = state.softTrimBoundaries;
+    if (!stb) return 0;
+    return (stb.leftTrimEnd >= 0) ? stb.leftTrimEnd + 1 : 0;
+}
+
+function _clearClusterTrimState() {
+    state.clusterResults = null;
+    state.clusterMap = null;
+    state._clusterCharMap = null;
+    state.clusterSource = null;
+    state.clusterSourceLabel = null;
+    state.clusterColumnRange = null;
+    state.softTrimBoundaries = null;
+    state.trimBoundaries = null;
+    state.trimManualLeft = false;
+    state.trimManualRight = false;
+    state.trimBackup = null;
+}
+
+// The key of a row's chromatogram in state.ab1Traces: the name it was read under (a renamed row keeps
+// it in ab1Name), else its header; null when the row has none
+function _ab1KeyOf(seq) {
+    if (!seq || !state.ab1Traces) return null;
+    if (seq.ab1Name && state.ab1Traces[seq.ab1Name]) return seq.ab1Name;
+    return state.ab1Traces[seq.header] ? seq.header : null;
+}
+
+function _migrateColourMapping(oldName, newName) {
+    if (!oldName || !newName || oldName === newName) return;
+    if (!colourState?.mappings?.has(oldName)) return;
+    const colour = colourState.mappings.get(oldName);
+    colourState.mappings.delete(oldName);
+    colourState.mappings.set(newName, colour);
+    if (colourState.history?.has(oldName)) {
+        colourState.history.set(newName, colourState.history.get(oldName));
+        colourState.history.delete(oldName);
+    }
+}
+
+function _queryAllByClass(className) {
+    if (!className) return [];
+    if (typeof CSS !== 'undefined' && typeof CSS.escape === 'function') {
+        return Array.from(document.querySelectorAll('.' + CSS.escape(className)));
+    }
+    return Array.from(document.querySelectorAll('[data-search-hit="' + className + '"]'));
+}
+
+// ---- Search highlights: a layer derived from state, never baked into spans ----
+// Hits are recomputed from each row's current sequence, so every path that builds
+// or repaints a residue (full render, windowed scroll, drag, typing, undo) gets
+// the right residues. Painting classes onto spans once and hoping edits carry them
+// along is what left highlights on the old columns after an edit.
+
+// Bumped whenever the set of searches or their on/off state changes; part of the
+// per-row hit cache key alongside the row's sequence string.
+let _searchLayerVersion = 0;
+let _searchHitsCache = new Map(); // rowIndex -> { seq, version, hits }
+
+function bumpSearchLayer() {
+    _searchLayerVersion++;
+    _searchHitsCache = new Map();
+}
+
+function _searchEntryMotif(entry) {
+    let v = entry.searchValue || entry.label || '';
+    v = String(v).replace(/\s*\(rev comp\)\s*$/i, '').trim();
+    if (!v && entry.motif) v = String(entry.motif).replace(/:(fwd|rev comp|rev)$/i, '').trim();
+    // Rows are searched with U read as T; a regex keeps its case, so convert u too (but not
+    // an escape such as \u0041)
+    // (callback instead of a lookbehind, which Safari before 16.4 cannot parse)
+    return v.replace(/(\\?)([Uu])/g, (m, esc) => esc ? m : 'T');
+}
+
+// Matches of one search in one degapped, upper-cased, U->T display string.
+// Returns [{ idx, len, matchingPositions }] or null for an invalid regex.
+function _searchMatchesInDegapped(displayString, entry) {
+    const motif = _searchEntryMotif(entry);
+    if (!motif || !displayString) return [];
+    const maxMismatches = Number.isInteger(entry.maxMismatches) ? entry.maxMismatches : 0;
+    if (entry.useRegex) {
+        const matches = [];
+        let re;
+        try { re = new RegExp(motif, 'gi'); } catch (_) { return null; }
+        let m;
+        while ((m = re.exec(displayString)) !== null) {
+            // An empty match (q*, ^) covers no residue: neither a hit nor a count
+            if (m[0].length === 0) { re.lastIndex++; continue; }
+            matches.push({ idx: m.index, len: m[0].length, matchingPositions: null });
+            // Restriction sites overlap (GCGC twice in GCGCGC): resume one past the start
+            if (entry.overlapping) re.lastIndex = m.index + 1;
+        }
+        return matches;
+    }
+    return findFuzzyMatches(displayString, motif, maxMismatches, !!entry.iupac)
+        .map(m => ({ idx: m.idx, len: m.len, matchingPositions: m.matchingPositions }));
+}
+
+function _degapForSearch(seq) {
+    const cols = [];
+    const chars = [];
+    for (let col = 0; col < seq.length; col++) {
+        const ch = seq[col];
+        if (ch !== '-' && ch !== '.' && ch !== undefined) {
+            cols.push(col);
+            chars.push(ch);
+        }
+    }
+    // U is uracil in nucleotides (searched as T) but selenocysteine in proteins: kept there, or a
+    // search for U matched every threonine
+    const text = chars.join('').toUpperCase();
+    return { cols, text: isProteinAlignment() ? text : text.replace(/U/g, 'T') };
+}
+
+// Map(col -> search entry) for one sequence string. With mismatches allowed only
+// the matching residues are painted, as the search has always done.
+function _computeSearchHitsForSeq(seq) {
+    const hits = new Map();
+    const entries = (state.searchHistory || []).filter(e => e.className && e.enabled !== false);
+    if (!entries.length || !seq) return hits;
+    const { cols, text } = _degapForSearch(seq);
+    if (!text) return hits;
+    entries.forEach(entry => {
+        const matches = _searchMatchesInDegapped(text, entry);
+        if (!matches) return;
+        const partial = !entry.useRegex && (entry.maxMismatches || 0) > 0;
+        matches.forEach(m => {
+            if (partial && m.matchingPositions?.length) {
+                // findFuzzyMatches gives absolute degapped indices, not offsets into the match
+                m.matchingPositions.forEach(pos => {
+                    const col = cols[pos];
+                    if (col !== undefined) hits.set(col, entry);
+                });
+            } else {
+                for (let j = 0; j < m.len; j++) {
+                    const col = cols[m.idx + j];
+                    if (col !== undefined) hits.set(col, entry);
+                }
+            }
+        });
+    });
+    return hits;
+}
+
+function _getSearchHitsForRow(rowIndex) {
+    const seq = state.seqs[rowIndex]?.seq;
+    if (!seq || !state.searchHistory?.length) return _EMPTY_HITS;
+    const cached = _searchHitsCache.get(rowIndex);
+    if (cached && cached.seq === seq && cached.version === _searchLayerVersion) return cached.hits;
+    const hits = _computeSearchHitsForSeq(seq);
+    _searchHitsCache.set(rowIndex, { seq, version: _searchLayerVersion, hits });
+    return hits;
+}
+const _EMPTY_HITS = new Map();
+
+// ' search-hit-xxx' for a residue span, or ''.
+function searchClassAt(rowIndex, pos) {
+    if (!state.searchHistory?.length || rowIndex < 0) return '';
+    const e = _getSearchHitsForRow(rowIndex).get(pos);
+    return e ? ' ' + e.className : '';
+}
+
+function _ensureSearchStyle(entry) {
+    let style = document.querySelector(`style[data-search-class="${entry.className}"]`);
+    if (!style) {
+        style = document.createElement('style');
+        style.setAttribute('data-search-class', entry.className);
+        style.setAttribute('data-motif', entry.motif);
+        document.head.appendChild(style);
+    }
+    style.textContent = `.${entry.className} { background-color: ${entry.color || '#ffcc00'} !important; color: black !important; font-weight: bold; }`;
+}
+
+function _removeSearchStyle(entry) {
+    document.querySelector(`style[data-search-class="${entry.className}"]`)?.remove();
+}
+
+// Bring every rendered residue span in line with the search layer. Touches only
+// spans whose highlight actually changes.
+function reapplySearchHighlights() {
+    (state.searchHistory || []).forEach(_ensureSearchStyle);
+    syncResidueOverlays();
+}
+

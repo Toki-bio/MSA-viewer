@@ -1,0 +1,389 @@
+[script.js lines 18571-18958 of ViewAlign fd8b8e4]
+function paneClose(rec) {
+    const i = _panes.list.indexOf(rec);
+    if (i < 0) return;
+    _panes.list.splice(i, 1);
+    _newTabHandoffs.delete(rec.handoffId);   // still there when the pane closed before it loaded
+    clearTimeout(rec.armed); rec.armed = 0;
+    rec.wrap.remove();
+    _paneLayout();
+}
+function _paneRefreshOne(rec, shared) {
+    if (rec.mode !== 'mirror') return;   // an own copy or another file is not reloaded from the main view
+    try {
+        const payload = shared || _buildSnapshotPayload();
+        payload.sourceTitle = state.currentFilename || payload.sourceTitle || 'alignment';
+        rec.frame.contentWindow.postMessage({ type: 'viewalign-pane-load', payload }, location.origin);
+        rec.name = payload.sourceTitle;
+        _paneShowMode(rec);
+    } catch (e) { /* pane still loading */ }
+}
+function _paneShowMode(rec) {
+    rec.title.textContent = rec.name + (rec.mode === 'mirror' ? ' (read-only copy)' : rec.mode === 'own' ? ' (own copy)' : '');
+    rec.modeBtn.hidden = rec.mode === 'file';
+    rec.modeBtn.textContent = rec.armed ? 'discard edits?' : rec.mode === 'mirror' ? 'mirror' : 'own copy';
+    rec.modeBtn.title = rec.mode === 'mirror'
+        ? 'This pane follows the main view and is reloaded after every edit there. Click to keep it as its own copy (an edit in the pane does that too)'
+        : 'This pane is its own copy: edits in the main view do not reach it. Click (twice) to make it a mirror of the main view again; its own edits are discarded';
+    rec.wrap.querySelector('.pane-refresh').hidden = rec.mode !== 'mirror';
+}
+// mirror -> own copy at once; own copy -> mirror on a second click within 4 s (the pane's edits are discarded)
+function _paneToggleMode(rec) {
+    if (rec.mode === 'mirror') { rec.mode = 'own'; _paneShowMode(rec); return; }
+    if (rec.mode !== 'own') return;
+    if (!rec.armed) {
+        rec.armed = setTimeout(() => { rec.armed = 0; _paneShowMode(rec); }, 4000);
+        _paneShowMode(rec);
+        return;
+    }
+    clearTimeout(rec.armed); rec.armed = 0;
+    rec.mode = 'mirror';
+    _paneRefreshOne(rec);
+    _paneShowMode(rec);
+}
+// a pane reports an edit made in it (same origin: called from the pane's own pushUndo): a mirror becomes an own copy
+function _paneChildEdited(win) {
+    const rec = _panes.list.find(r => r.frame.contentWindow === win);
+    if (!rec || rec.mode !== 'mirror') return;
+    rec.mode = 'own';
+    _paneShowMode(rec);
+    showMessage('The pane you edited is now its own copy: edits in the main view no longer reload it.', 4000);
+}
+// Swap: the pane's alignment and view go to the main view and the main view's to the pane. A copy of the other
+// side's payload (JSON, so no object of one window lives on in the other) loads on each side; each payload carries
+// its view position. The pane then holds the former main alignment as its own copy (a mirror stays a mirror:
+// both held the same alignment); other mirror panes follow the new main view.
+// (state is a top-level const, not a property of window: another window reads it through these)
+function _paneRowCount() { return state.seqs ? state.seqs.length : 0; }
+function _paneFileName() { return state.currentFilename || ''; }
+function paneSwap(rec) {
+    let pw;
+    try { pw = rec.frame.contentWindow; if (!pw || !pw._paneRowCount || !pw._paneRowCount()) throw 0; } catch (e) { showMessage('The pane is still loading.', 2000); return; }
+    if (rec.mode === 'mirror') {
+        const mine = _captureViewAnchor(), theirs = pw._captureViewAnchor();
+        _link.muteUntil = performance.now() + 400;
+        try { pw._link.muteUntil = pw.performance.now() + 400; } catch (e) { /* older pane */ }
+        if (theirs) _applyViewAnchor(theirs);
+        if (mine) pw._applyViewAnchor(mine);
+        return;
+    }
+    if (performance.now() - (_panes.swapAt || 0) < 2500) { showMessage('The last Swap is still loading.', 2000); return; }
+    _panes.swapAt = performance.now();
+    const theirs = JSON.parse(JSON.stringify(pw._buildSnapshotPayload()));
+    theirs.sourceTitle = pw._paneFileName() || theirs.sourceTitle || rec.name;
+    const mine = _buildSnapshotPayload();
+    mine.sourceTitle = state.currentFilename || mine.sourceTitle || 'alignment';
+    const mineName = mine.sourceTitle;
+    pw._loadSnapshotPayload(pw.JSON.parse(JSON.stringify(mine)));
+    _loadSnapshotPayload(theirs);
+    if (rec.mode !== 'mirror') { rec.mode = 'own'; rec.file = false; }
+    rec.name = mineName;
+    _paneShowMode(rec);
+    _panes.list.forEach(r => { if (r !== rec) _paneRefreshOne(r); });
+}
+// The pane layout for a saved snapshot: side, size, and per pane its mode with its place (a mirror) or its whole
+// content and view (an own copy, a file pane)
+function _paneLayoutPayload() {
+    if (_paneIsChild || !_panes.list.length) return null;
+    return {
+        side: _panes.side, frac: _panes.frac,
+        list: _panes.list.map(rec => {
+            let pw = null;
+            try { pw = rec.frame.contentWindow; if (!pw._paneRowCount || !pw._paneRowCount()) pw = null; } catch (e) { pw = null; }
+            if (rec.mode === 'mirror') return { mode: 'mirror', anchor: pw ? pw._captureViewAnchor() : null };
+            const payload = pw ? JSON.parse(JSON.stringify(pw._buildSnapshotPayload())) : null;
+            if (payload) payload.sourceTitle = rec.name;
+            return { mode: rec.mode, name: rec.name, payload };
+        }).filter(x => x.mode === 'mirror' || x.payload)
+    };
+}
+function _paneRestoreLayout(lay) {
+    if (_paneIsChild || !lay || !Array.isArray(lay.list) || !lay.list.length) return;
+    _panes.list.slice().forEach(paneClose);
+    const side = lay.side === 'below' ? 'below' : 'right';
+    if (Number.isFinite(lay.frac)) _panes.frac = Math.max(0.15, Math.min(0.8, lay.frac));
+    for (const p of lay.list.slice(0, _paneMax)) {
+        if (p.mode === 'mirror') {
+            const rec = paneOpen(side);
+            if (rec && p.anchor) _paneWhenLoaded(rec, pw => pw._applyViewAnchor(p.anchor));
+        } else if (p.payload && typeof p.payload.fasta === 'string') {
+            paneOpen(side, { name: String(p.name || 'alignment'), payload: p.payload, mode: p.mode === 'file' ? 'file' : 'own' });
+        }
+    }
+}
+// runs fn(paneWindow) once the pane has its alignment (up to 20 s)
+function _paneWhenLoaded(rec, fn, tries = 0) {
+    let pw = null;
+    try { pw = rec.frame.contentWindow; } catch (e) { /* not yet */ }
+    if (pw && pw._paneRowCount && pw._paneRowCount()) { setTimeout(() => fn(pw), 300); return; }
+    if (tries < 80 && _panes.list.includes(rec)) setTimeout(() => _paneWhenLoaded(rec, fn, tries + 1), 250);
+}
+function _paneRefreshAll() {
+    if (!_panes.list.some(r => r.mode === 'mirror')) return;
+    const payload = _buildSnapshotPayload();   // one payload for every mirror
+    _panes.list.forEach(r => _paneRefreshOne(r, payload));
+}
+// called after every edit step: the panes follow once the edits stop for a moment
+function _paneEditNote() {
+    if (_paneIsChild) { try { window.parent._paneChildEdited?.(window); } catch (e) { /* not ours */ } return; }
+    if (!_panes.list.length) return;
+    clearTimeout(_panes.timer);
+    _panes.timer = setTimeout(_paneRefreshAll, 700);
+}
+// a pane's own side: no toolbar, and it reloads its content when the main view sends it again
+function _paneChildInit() {
+    document.documentElement.classList.add('is-pane');
+    window.addEventListener('message', e => {
+        const m = e.data;
+        if (e.origin !== location.origin || e.source !== window.parent || !m || m.type !== 'viewalign-pane-load' || !m.payload) return;
+        const a = _captureViewAnchor();
+        if (m.payload.view) m.payload.view.keepPlace = true;   // not the main view's scroll position
+        // this pane's own place, once the load has finished (a timer could fire before it)
+        Promise.resolve(_loadSnapshotPayload(m.payload)).then(() => { if (a) requestAnimationFrame(() => _applyViewAnchor(a)); });
+    });
+    setTimeout(() => { if (!_menuMinimized) minimizeMenu(); }, 600);
+}
+// Full / Block: a click on a fold marker (any row, the consensus or the ruler) shows that run again
+function _foldDomInit() {
+    alignmentContainer?.addEventListener('click', e => {
+        const m = e.target.closest && e.target.closest('.col-fold');
+        if (!m || e.ctrlKey || e.altKey || e.shiftKey || e.metaKey) return;
+        const [a, b] = String(m.dataset.fold || '').split('-').map(Number);
+        if (!Number.isInteger(a) || !Number.isInteger(b)) return;
+        e.preventDefault(); e.stopPropagation();
+        hideTooltip?.();
+        _foldReveal([[a, b]]);
+    }, true);
+}
+function _paneInit() {
+    el('paneSplitRight')?.addEventListener('click', () => paneOpen('right'));
+    el('paneSplitBelow')?.addEventListener('click', () => paneOpen('below'));
+    const pick = el('paneOpenFile');
+    if (pick) {
+        const input = document.createElement('input');
+        input.type = 'file'; input.hidden = true;
+        input.addEventListener('change', async () => {
+            const f = input.files && input.files[0];
+            input.value = '';
+            if (f) paneOpen(_panes.list.length ? _panes.side : 'right', { name: f.name, text: await f.text() });
+        });
+        document.body.appendChild(input);
+        pick.addEventListener('click', () => input.click());
+    }
+    el('paneRefresh')?.addEventListener('click', () => { _paneRefreshAll(); showMessage('Panes refreshed', 1500); });
+    window.addEventListener('resize', () => {
+        if (!_panes.list.length || !_panes.dock) return;
+        const right = _panes.side === 'right', px = _paneSizePx();
+        _panes.dock.style[right ? 'width' : 'height'] = px + 'px';
+        document.body.style[right ? 'marginRight' : 'marginBottom'] = px + 'px';
+        if (right) document.documentElement.style.setProperty('--pane-right', px + 'px');
+    });
+    if (_paneIsChild) _paneChildInit();
+}
+
+// Opens this whole view in a new tab, exactly as it is here (owner, 2026-10-23): the full snapshot payload
+// (sequences, view, Canvas position, searches, selections and marks, name colours, trim, annotation) goes over
+// the same postMessage hand-off as openSelectedInNewTab, so there is no storage quota or URL length to hit.
+function openViewInNewTab() {
+    if (!state.seqs.length) { showMessage('Load an alignment first.', 2500); return; }
+    const payload = _buildSnapshotPayload();
+    const name = state.currentFilename || payload.sourceTitle || 'alignment';
+    payload.sourceTitle = name;
+    const id = Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
+    _newTabHandoffs.set(id, { fasta: payload.fasta, name, payload });
+    const view = { modeSingle: 'full', modeBlocks: 'block', modeCanvas: 'canvas' }[document.querySelector('input[name="mode"]:checked')?.id] || '';
+    const w = window.open(location.pathname + '?handoff=' + id + (view ? '&view=' + view : '') + _linkUrlParam(), '_blank');
+    if (!w) {
+        _newTabHandoffs.delete(id);
+        showMessage("The browser blocked the new tab: allow pop-ups for this site.", 5000);
+        return;
+    }
+    showMessage(_link.on ? 'This view opened in a new tab, linked with this one' : 'This view opened in a new tab', 2000);
+}
+function openSelectedInNewTab() {
+    if (state.selectedRows.size === 0) {
+        showMessage("No sequences selected.", 3000);
+        return;
+    }
+    const rows = Array.from(state.selectedRows).sort((a, b) => a - b);
+    const fasta = rows.map(i => {
+        const s = state.seqs[i];
+        return `>${_fastaDefline(s)}\n${s.seq}`;
+    }).join('\n') + '\n';
+    const base = (state.currentFilename || 'alignment').replace(/\.[^.]+$/, '');
+    const id = Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
+    _newTabHandoffs.set(id, { fasta, name: `${base} (${rows.length} selected)` });
+    // the new tab opens in the view of this one
+    const view = { modeSingle: 'full', modeBlocks: 'block', modeCanvas: 'canvas' }[document.querySelector('input[name="mode"]:checked')?.id] || '';
+    const w = window.open(location.pathname + '?handoff=' + id + (view ? '&view=' + view : ''), '_blank');
+    if (!w) {
+        _newTabHandoffs.delete(id);
+        showMessage("The browser blocked the new tab: allow pop-ups for this site.", 5000);
+        return;
+    }
+    showMessage(`${rows.length} selected sequence${rows.length === 1 ? '' : 's'} opened in a new tab`, 2000);
+}
+// The new tab's side of openSelectedInNewTab: resolves { fasta, name } from the opener.
+function _receiveNewTabHandoff(id) {
+    return new Promise((resolve, reject) => {
+        const opener = window.opener || (window.parent !== window ? window.parent : null);   // a pane's opener is its parent page
+        if (!opener) { reject(new Error('the tab that opened this one is gone')); return; }
+        const done = (fn, v) => { clearInterval(ask); clearTimeout(give); window.removeEventListener('message', on); fn(v); };
+        const on = (e) => {
+            const m = e.data;
+            if (e.origin === location.origin && m && m.type === 'viewalign-handoff' && m.id === id) done(resolve, m);
+        };
+        window.addEventListener('message', on);
+        const request = () => { try { opener.postMessage({ type: 'viewalign-handoff-request', id }, location.origin); } catch (err) { /* opener navigated away */ } };
+        request();
+        const ask = setInterval(request, 300);   // in case the opener was busy rendering
+        const give = setTimeout(() => done(reject, new Error('no answer from the tab that opened this one')), 10000);
+    });
+}
+function savePreset() {
+    const preset = {
+        black: el('blackSlider').value,
+        dark: el('darkSlider').value,
+        light: el('lightSlider').value,
+        zoom: el('zoomSlider').value,
+        zoomFormat: 'logSlider',
+        mode: (el('modeCanvas')?.checked || el('modeReads')?.checked) ? 'canvas' : (el('modeBlocks').checked ? 'blocks' : 'single'),
+        blockSize: String(blockSizeRequested()),   // the width asked for, not the narrower one a small window drew
+        nameLen: el('nameLengthSlider').value,
+        consensusThreshold: el('consensusThreshold').value,
+        groupConsensusThreshold: el('groupConsensusThreshold')?.value ?? DEFAULTS.groupConsensusThreshold,
+        consensusType: _checkedRadioValue('consensusType', 'normal'),
+        showConsensus: el('showConsensus').checked,
+        // Persist new consensus options
+        consensusMinCoverage: el('consensusMinCoverage')?.value,
+        consensusFallback: el('consensusFallback')?.value,
+        shadeMode: _checkedRadioValue('shadeMode', 'all'),
+        colorScheme: getAlignmentColorScheme(),
+        enableBlack: el('enableBlack').checked,
+        enableDark: el('enableDark').checked,
+        enableLight: el('enableLight').checked,
+        stickyNames: el('stickyNames').checked,
+        nameLenNoLimit: !!el('nameLengthNoLimit')?.checked
+    };
+    if (safeLocalSet('msaviewer_preset_v44', JSON.stringify(preset), 'the preset')) showMessage("Preset saved!", 2000);
+}
+function loadPreset() {
+    const saved = safeLocalGetRaw('msaviewer_preset_v44');
+    if (!saved) {
+        showMessage("No saved preset found.", 3000);
+        return;
+    }
+    let p;
+    try {
+        p = JSON.parse(saved);
+    } catch (e) {
+        console.error('Preset JSON corrupted:', e);
+        showMessage('Saved preset is corrupted and was reset.', 4000);
+        try { localStorage.removeItem('msaviewer_preset_v44'); } catch (_) {}
+        return;
+    }
+    ['black','dark','light','zoom','blockSize','nameLen','consensusThreshold', 'groupConsensusThreshold', 'consensusMinCoverage'].forEach(k => {
+        let value = p[k];
+        if (k === 'consensusThreshold') {
+            value = clampConsensusPercent(value);
+            setConsensusThresholdUI(value);
+            return;
+        }
+        if (k === 'groupConsensusThreshold') {
+            value = clampGroupConsensusPercent(value);
+            setGroupConsensusThresholdUI(value);
+            return;
+        }
+        if (k === 'consensusMinCoverage') {
+            // Clamp and apply to slider/input pair if present
+            const clamped = clampMinCoverage(value ?? DEFAULTS.minCoverage);
+            const sliderEl = el('consensusMinCoverage');
+            const inputElement = el('consensusMinCoverageInput');
+            if (sliderEl) {
+                sliderEl.value = clamped;
+                updateSliderBackground(sliderEl);
+            }
+            if (inputElement) inputElement.value = clamped;
+            return;
+        }
+        if (k === 'blockSize') {
+            if (value != null) setBlockSizeRequested(value);
+            return;
+        }
+        if (k === 'zoom') {
+            const n = _normalizeStoredZoomSlider(value, p.zoomFormat !== 'logSlider');
+            const zoomSliderEl = el('zoomSlider');
+            if (zoomSliderEl) {
+                zoomSliderEl.min = '0';
+                zoomSliderEl.max = '100';
+                zoomSliderEl.value = n;
+                updateSliderBackground(zoomSliderEl);
+            }
+            return;
+        }
+        const sliderEl = el(k + 'Slider');
+        if (sliderEl) {
+            sliderEl.value = value;
+            updateSliderBackground(sliderEl);
+        }
+        const inputElement = el(k + 'Input');
+        if (inputElement) inputElement.value = value;
+        if (k === 'nameLen') {
+            document.documentElement.style.setProperty('--nameLen', value);
+        }
+    });
+    setZoom(_sliderToZoom(_readZoomSliderRaw()));
+    // canvas -> Canvas, blocks -> Block, anything else (an old preset's 'single' too) -> Canvas.
+    // owner 2026-11-01: legacy 'single' -> Canvas; a page opened in Full by ?view=full keeps Full
+    const _pm = p.mode === 'blocks' ? 'blocks' : (p.mode === 'single' && _pageOpenedInFull() ? 'single' : 'canvas');
+    el('modeBlocks').checked = _pm === 'blocks';
+    el('modeSingle').checked = _pm === 'single';
+    if (el('modeCanvas')) el('modeCanvas').checked = _pm === 'canvas';
+    el('stickyNames').checked = p.stickyNames !== undefined ? p.stickyNames : true;
+    _applyNameLenNoLimit(!!p.nameLenNoLimit);
+    onModeChange();
+    toggleStickyNames();
+    const consTypeEl = document.querySelector(`input[name="consensusType"][value="${p.consensusType}"]`);
+    if (consTypeEl) consTypeEl.checked = true;
+    el('showConsensus').checked = p.showConsensus;
+    // Restore consensus position if present
+    if (p.consensusPosition) {
+        const consensusPosRadio = document.querySelector(`input[name="consensusPosition"][value="${p.consensusPosition}"]`);
+        if (consensusPosRadio && !consensusPosRadio.disabled) consensusPosRadio.checked = true;
+    }
+    // Restore fallback mode if present (defaults to current select's default)
+    if (p.consensusFallback && el('consensusFallback')) {
+        el('consensusFallback').value = p.consensusFallback;
+    }
+    if (p.colorScheme && el('colorSchemeSelect')) {
+        el('colorSchemeSelect').value = ALIGNMENT_COLOR_SCHEMES.has(p.colorScheme) ? p.colorScheme : DEFAULTS.colorScheme;
+    }
+    const shadeModeEl = document.querySelector(`input[name="shadeMode"][value="${p.shadeMode}"]`);
+    if (shadeModeEl) shadeModeEl.checked = true;
+    el('enableBlack').checked = p.enableBlack;
+    el('enableDark').checked = p.enableDark;
+    el('enableLight').checked = p.enableLight;
+    renderAlignment();
+    showMessage("Preset loaded!", 2000);
+}
+
+function _toBase64Utf8(text) {
+    const bytes = new TextEncoder().encode(text);
+    let binary = '';
+    const chunkSize = 0x8000;
+    for (let i = 0; i < bytes.length; i += chunkSize) {
+        const chunk = bytes.subarray(i, i + chunkSize);
+        binary += String.fromCharCode(...chunk);
+    }
+    return btoa(binary);
+}
+
+function _fromBase64Utf8(base64) {
+    const binary = atob(base64);
+    const bytes = new Uint8Array(binary.length);
+    for (let i = 0; i < binary.length; i++) {
+        bytes[i] = binary.charCodeAt(i);
+    }
+    return new TextDecoder().decode(bytes);
+}
+

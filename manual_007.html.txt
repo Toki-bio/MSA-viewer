@@ -1,0 +1,168 @@
+[manual.html lines 2203-2369 of ViewAlign fd8b8e4]
+    <tr><td><strong>Direct</strong></td><td>Two copies of the same sequence in the same orientation, anywhere in the sequence. In a run of three or more copies every neighbouring pair is a row (see below).</td></tr>
+    <tr><td><strong>Inverted</strong></td><td>Two copies in opposite orientation (reverse-complement). Finds palindromic/inverted repeat structures; a perfect palindrome or a hairpin with a loop of 0–1 bases is reported as its two arms, split at the centre.</td></tr>
+  </table>
+  <p><strong>Parameters:</strong></p>
+  <ul>
+    <li><strong>Search in</strong> - one sequence (chosen in the list), all sequences, or the selected rows (with no rows selected the panel says so and does not search). The sequence chosen is followed if rows are deleted or moved while the panel is open; if it was deleted, Find says so and the list shows the current rows.</li>
+    <li><strong>Min array length</strong> (Tandem) - the shortest array reported, all copies together, in bp (aa for a protein alignment); an array must also hold at least two full copies of its unit, so 21 bp of a 15-bp unit (1.4 copies) is not listed at 20; <strong>Min length</strong> (Direct, Inverted) - the shortest copy. The label changes with the mode (default: 20 for Tandem, 10 for Direct and Inverted; a value you type is kept when you change the mode, but a new file starts again from the default, and an emptied field means the default; range: 3–1000, so Direct and Inverted can list only long repeats such as LTRs). At 20, random sequence gives about one chance tandem array per 100 kb at 15% divergence, against about one per kb at 10</li>
+    <li><strong>Max divergence</strong> - maximum allowed mismatch rate between repeat copies; for Tandem, mismatches against the array's consensus unit per base of the array (default: 15%, range: 0–50%)</li>
+  </ul>
+  <p>A value typed outside a field's range is set to the nearest allowed value, shown in the field, and the results give the values used. Direct and inverted repeats are found from short exact matches (at least 4 bases) extended in both directions; at a short Min length with a high divergence (e.g. 6 bp at 50%) two copies need not share 4 matching bases in a row, such pairs can be missed, and the summary says so. A copy always starts and ends on a matching base, so a perfect repeat is reported at its own length with 0% divergence. The whole sequence is searched; at most the 100 longest rows per sequence are listed (pairs, and microsatellite groups, below), and the summary then says how many there were ("showing the 100 longest of N"). In long low-complexity sequence the search can stop at a work limit, and the summary says where.</p>
+  <p><strong>Runs of copies (Direct).</strong> Two copies may not overlap, so a copy is at most as long as the distance between the two copies. When the matching stretch at a distance <em>d</em> is longer than <em>d</em> (three or more copies <em>d</em> apart), it is cut into consecutive pairs no longer than <em>d</em>: copy 1 / copy 2, copy 2 / copy 3, copy 3 / copy 4 and so on are each a row. Pairs further apart come from their own distance: copy 1 / copy 3 is the stretch at distance 2<em>d</em>, cut the same way. For example, a 20-bp stretch repeated three times (Min length 15, 0%) gives copy 1 / copy 2, copy 2 / copy 3 and copy 1 / copy 3; repeated four times, it gives the three neighbouring pairs, copies 1–2 / copies 3–4 (40 bp) and copy 1 / copy 4 (copy 1 / copy 3 and copy 2 / copy 4 lie inside the 40-bp row, pairing the same bases). A pair is dropped as a shifted copy of a longer row only when both its copies lie at least 70% inside that row's copies and it pairs nearly the same bases (copy distances differing by at most 60% of the shorter length). A long run therefore gives many pairs (a microsatellite many hundreds). Tandem lists such a run as one array.</p>
+  <p><strong>Microsatellite groups (Direct, Inverted).</strong> In low-complexity sequence the longest pairs are pairs of one microsatellite against itself or against another of the same unit, and they used to fill the list of 100. Such pairs are now gathered into one row per unit and sequence, for example <em>▸ (AT)n, 1,654 pairs (in 4 tandem arrays, 4,002 bp)</em>, ranked by its longest pair among the other rows. A pair belongs to a group when each of its two copies lies (at least 70%) inside a tandem array, both arrays having the same unit up to rotation (CA is AC; for Inverted, the second copy's array may have the reverse-complement unit). The arrays are those the Tandem search finds with Min array length 20 and Max divergence 15%, whatever the settings of this search. Clicking a group row lists its pairs underneath, longest first, 20 at a time (<em>show 20 more</em> under them), and highlights the group's arrays in the alignment; clicking it again closes it and removes that highlight. A pair inside a group is clicked, highlighted and removed like any other row. The summary counts the other pairs and the groups ("1,014 direct repeats and 4 microsatellite groups (5,165 direct pairs)"), and the 100 longest rows are listed ("showing the 100 longest of 1,018": groups and pairs). With All or Selected rows, each sequence has its own groups. No pair is dropped or added by grouping: the pairs of the groups and the other pairs are exactly those found.</p>
+  <p> A tandem array starts on its first base that agrees with the consensus unit and ends on its last, so a partial last unit is included and the copy number can be fractional (54 bp of a 12-bp unit is 4.5 copies, as in TRF). The consensus unit is the most common base at each unit position, so a copy with a few substitutions neither splits the array nor raises its divergence beyond its own mismatches. This holds at the ends too: after the array is found, each end is extended over the bases beyond it that continue the unit, as long as they agree with the consensus unit (in phase) at more than 70% of their bases (more than 1 − 2<em>d</em> at a divergence <em>d</em> under 15%), hold at least 6 agreeing bases, and the whole array stays within Max divergence (an array is extended only if it reached Min array length without this). So a 12-bp unit whose first copy has substitutions at its 6th and 9th bases is reported whole, from its first base, and so is one whose last copy has substitutions at its 4th and 7th bases from the end. An array still starts and ends on a base that agrees with the consensus unit: in TACACA… the T is left out and the array reads ACAC…. Random flanking sequence agrees at about 25% and is not taken in (over 3,000 test arrays between random flanks, on average less than one flanking base ended up in the array, about as before). A consensus unit that is itself repeated (AAAAA) is given as its shortest period (A). A copy that differs at most of its positions can split the array; each part is then listed only if it reaches Min array length on its own. N and other ambiguity codes never match. Copies are compared base by base: an insertion or deletion inside an array ends the array there. Units up to 500 bp are tried; for a very long sequence the longest unit tried is lowered to keep the search fast, and the summary says so. At most the 100 longest arrays per sequence are listed, and the summary then says how many were found.</p>
+  <p>Results list each repeat with its sequence (when several were searched), columns, for tandem arrays the unit length, copy number, array length, divergence and consensus unit, for direct and inverted repeats the copy length, divergence and sequence of the first copy. Clicking a row highlights the repeat in the sequence where it was found (both copies, for direct and inverted repeats) and scrolls to it; clicking it again, or its <strong>×</strong> (shown on highlighted rows), removes that highlight; <strong>Clear highlights</strong> removes them all (so does the Selections panel, §7.6). A new search of the same kind keeps the highlight of a repeat it finds again and removes the others.</p>
+  <p><strong>Long searches.</strong> A Tandem, Direct or Inverted search runs in short steps, so the tab stays usable while it runs (no step holds the page for more than a few tens of milliseconds). The results area shows "Searching sequence <em>k</em> of <em>M</em>…" (or the sequence name) with a bar and the percentage done, and two buttons: <strong>Pause</strong> stops the search where it is (the button then reads <strong>Resume</strong> and goes on from there), and <strong>Cancel</strong> stops it and lists what was found so far, saying so: "stopped by you after <em>k</em> of <em>M</em> sequences", and for the sequence being searched how far it got (Direct, Inverted: the position reached; Tandem: the longest unit searched). <strong>Find</strong> is disabled while a search runs. Loading a new file, closing the window (or opening another window in its place) or choosing another mode abandons the search: nothing of it is shown afterwards. A search of many sequences at once (All, Selected rows) searches every sequence: 200 sequences of 50 kb take about a minute of Tandem, with the tab usable throughout. The results are the same as those of a search run in one go.</p>
+  <p>The Repeat Finder is a floating panel: the alignment stays visible and usable while it is open, and the panel can be moved and resized. Closing it keeps the highlights, and reopening it shows the last results again (a One sequence result only when the panel opens on that sequence).</p>
+
+  <h3 id="ac-tsd-finder">9.9 TSD Finder</h3>
+  <p>
+    The TSD (Target Site Duplication) Finder, the <strong>TSD (SINE)</strong> mode of the Repeat Finder
+    (Actions → <strong>Repeats</strong>, or right-click → <strong>Find TSD (SINE)</strong>), locates short
+    duplications flanking SINE/TE insertion boundaries in aligned sequences. For each sequence it compares a short window
+    just upstream of the insertion against a short window just downstream, trying a small
+    range of nearby offsets and lengths, and keeps the best-scoring near-match as the TSD. In Auto and Reference
+    modes the 3′ copy is looked for from 6 bases before the body's end to as many bases past it as <em>Search … bp on each side</em> says (30 by default), because a copy's own A-rich tail
+    often runs on past the end found for the whole alignment; away from the first 0–3 bases only a strict pair counts
+    (at least 10 bp, at most 10% mismatches). Manual mode searches the ranges given. A pair never ends on a mismatch,
+    and a mismatch within its first 4 bases with only A's before it is cut off with those A's (tail A's matching flank
+    A's by chance), so a mismatch does not lengthen a TSD.
+  </p>
+  <p><strong>SINE boundary detection modes:</strong></p>
+  <table>
+    <tr><th>Mode</th><th>How it works</th></tr>
+    <tr><td><strong>Auto</strong> (default)</td><td>Scans every alignment column for a run where most sequences agree on the same base ("column-level conservation") - this identifies the SINE body without relying on any one sequence's gap pattern. Each edge is then trimmed inward to the first run of 3 conserved columns, so the body does not reach into the flank where the TSD lies; a column counts the copies present there, so 5′-truncated copies do not pull the edge in. Falls back to <strong>Reference</strong> mode if no clear conserved run is found (e.g. too few non-reference sequences to score conservation against).</td></tr>
+    <tr><td><strong>Reference</strong></td><td>Uses the reference / consensus row: the first row whose name contains <em>consensus</em>, <em>reference</em>, <em>ref</em> (as a word or a <code>REF_</code> prefix), <em>master</em> or <em>_cons</em>, or a consensus row ViewAlign inserted. Its first to last residue is the SINE body (gaps inside it do not matter); each copy's TSD is looked for in its own residues within <em>Search N bp</em> on either side of that body. If no row is named so, or the named row has residues in the first and the last column (a reference locus with its flanks, which marks no body), the results say so and the body is found as in Auto. A reference row that is gap-padded is not searched for a TSD itself; it is named under the results.</td></tr>
+    <tr><td><strong>Manual</strong></td><td>User specifies the 5′ and 3′ flank column ranges explicitly. They start from the SINE body Auto finds (5′ flank from column 1 to the body, 3′ flank from the body to the end) until you change them; if Auto finds no body, they start as the first and last <em>Search N bp</em> columns, where a TSD is found only by chance, so set them yourself. <strong>Use selected columns as the SINE body</strong> fills both ranges from Ctrl+Alt-selected columns.</td></tr>
+  </table>
+  <p>
+    <strong>Which to use:</strong> start with <strong>Auto</strong> - it needs no reference
+    row and works from the whole alignment's agreement pattern. Switch to
+    <strong>Reference</strong> if your alignment has a clear, trusted "empty site" or
+    consensus row and you want the boundary tied to that row specifically rather than a
+    conservation vote. Use <strong>Manual</strong> when both automatic modes pick a boundary
+    you can see is wrong on inspection, or when you already know the exact columns.
+  </p>
+  <p>Parameters:</p>
+  <table>
+    <tr><th>Parameter</th><th>Default</th><th>Range</th><th>Meaning</th></tr>
+    <tr><td>Search … bp on each side</td><td>30 bp</td><td>5–200</td><td>Bases searched on each side of the detected SINE body (in Auto and Reference, also how far past the body the 3′ copy may start; a value typed outside 5–200 is used as 5 or 200)</td></tr>
+    <tr><td>TSD length</td><td>4–20 bp</td><td>2–50</td><td>Shortest and longest duplication tried</td></tr>
+    <tr><td>Max mismatch</td><td>20%</td><td>0–50</td><td>Largest mismatch fraction allowed between the 5′ and 3′ copies (a value typed above 50 is used as 50)</td></tr>
+  </table>
+  <p>
+    Results open with a summary: in how many copies a TSD was found, the length range and median with a small histogram, how many pairs are identical, and the SINE body columns used. The table shows each pair with the 5′ copy above the 3′ copy and mismatched bases in red, with the 3 bases just outside each copy in small grey letters (same sequence, gaps skipped): if the grey letters next to the two copies match each other, the duplication may be longer than the pair shown, so this is how to tell a full TSD from a partial one. Then the length, the mismatch count and the columns; click a column title to sort, or a row to show that copy in the alignment. Copies without a TSD are listed underneath with the reason (no flank bases next to the body, on one side or both, or no pair within the mismatch limit). When the SINE body found reaches the first or last column of the alignment, no copy has a flank on that side: the results say so (this happens with very few rows, rows that agree in their flanks too, or a reference row that includes its flanks); set the body under Manual then. <strong>Use selected columns as the SINE body</strong> refuses a selection that reaches the first or last column, since that side has no flank. The median length is the mean of the two middle lengths for an even number of TSDs. As soon as the search is done the TSDs are shown faintly in the alignment and the <strong>Mark in alignment</strong> button is highlighted; the button marks them properly (colour, bold or lower case), <strong>Undo last marking</strong> steps back to the marking before the last one (pressed again, the one before that; with no marking before, the marks are removed), and <strong>Copy table</strong> copies the results tab-separated for a spreadsheet, including the copies without a TSD (it is offered also when no TSD was found). A marking that would change nothing (Mark pressed again, or lower case on letters already lower case) leaves everything as it is and says so; Undo last marking after <kbd>Ctrl+Z</kbd> has already restored the case says that too, without adding a step to Undo (and says so when it brings back the marking before). Reopening the panel shows the last TSD table again, with the faint TSDs if they were not marked; a new file resets the Manual columns.
+  </p>
+
+  <h3 id="ac-export">9.10 Export &amp; Share</h3>
+  <table>
+    <tr><th>Format</th><th>Use</th><th>Notes</th></tr>
+    <tr><td>FASTA</td><td>Downstream tools</td><td>Toolbar <strong>Save</strong> button (full alignment); selected sequences by Copy Sel / New Tab</td></tr>
+    <tr><td>RTF</td><td>Microsoft Word</td><td>Input menu <strong>RTF</strong>. Monospace, per-residue shading, scale ruler, consensus line. Blocks of the Block Size width; in Block view, of the width the blocks have on screen (narrower when the window holds fewer columns). Every column, including hidden ones and those Variable sites only hides. Letters follow the Case setting (aa | Aa | AA)</td></tr>
+    <tr><td>SVG</td><td>Publication figures</td><td>Input menu <strong>SVG</strong> / <strong>Full SVG</strong>. Vector graphics. <em>Viewport</em> saves what is on screen, overlays included, in Full, Block and Canvas (in Block and Canvas it is drawn from what the canvas draws: names, ruler, consensus, residues with their colours and marks, translation rows, annotation track, selections); <em>Full</em> draws every sequence and column from the data in the screen's colours (ruler, names, consensus; search and annotation overlays are not included), in any view mode, wrapped like the blocks on screen in Block view and unwrapped in the others; it holds every column, including hidden ones, and its letters follow the Case setting</td></tr>
+    <tr><td>Print</td><td>Paper, PDF</td><td>The browser's Print (<kbd>Ctrl+P</kbd>). In Block view every block is printed, as vector graphics scaled to the paper's width, in place of the page (a block taller than a page is split between rows); above 400,000 residues the blocks from the one in view are printed up to that size, under a note, and <strong>Full SVG</strong> has the rest. In Canvas view the print is the picture on screen; Full (hidden) prints the page as it is</td></tr>
+    <tr><td>Newick (<code>.nwk</code>)</td><td>Phylogenetics tools</td><td>Tree window <strong>Download .nwk</strong>: UPGMA or Neighbor-Joining tree with branch lengths, whichever the Tree window last built</td></tr>
+    <tr><td>Tables and pictures of the windows</td><td>Spreadsheets, figures</td><td>Statistics: matrix as CSV, TSV or Excel, pairs as a table or FASTA (in the CSV a name starting with <code>=</code>, <code>@</code>, <code>+</code> or <code>-</code> gets a leading apostrophe, so a spreadsheet does not run it as a formula). Variants: <code>.tsv</code>. Dot plot: PNG, SVG and the collection as a table. Tree: SVG or PNG. Translation: Copy AA / Save AA. Row order: a <code>.json</code> file (Order: Export / Import)</td></tr>
+    <tr><td>Standalone HTML</td><td>Sharing</td><td>Input menu <strong>Create</strong>: a JSON snapshot plus a self-contained HTML snapshot page with embedded alignment, and a <code>?snapshot=</code> URL on the clipboard (§2.6)</td></tr>
+    <tr><td>New tab</td><td>A sub-alignment</td><td>Selected sequences opened as an alignment in a new ViewAlign tab (<kbd>Alt+T</kbd>)</td></tr>
+    <tr><td>Clone tab</td><td>This view</td><td>The whole alignment in a new tab exactly as shown here, searches, selections and marks included (Actions &gt; Clone Tab)</td></tr>
+    <tr><td>Copy Selected</td><td>Clipboard</td><td>FASTA of selected sequences (<kbd>Alt+C</kbd>)</td></tr>
+    <tr><td>Copy Columns</td><td>Clipboard</td><td>FASTA of selected columns (<kbd>Ctrl+Shift+V</kbd>)</td></tr>
+  </table>
+  <p>
+    RTF export uses Courier New 9pt, wraps the alignment into blocks of the Block-mode width,
+    and gives every residue the background and text colour it has on screen (conservation
+    shading or the residue colour scheme). The scale ruler and the consensus line start in the
+    same column as the sequences. Shading uses Word's character shading, so any colour is kept
+    exactly (highlighting would limit it to 16 colours).
+  </p>
+
+  <h3 id="ac-colour-names">9.11 Colour Names</h3>
+  <p>
+    The Colour Names panel (its own menu in the menu bar) provides tools for
+    colouring sequence name labels individually or in groups. This is independent
+    of Clustering’s k-mer / SNP groups.
+  </p>
+  <p><strong>Pattern Match</strong></p>
+  <ul>
+    <li>Enter a regex or text pattern to match sequence names</li>
+    <li>Pick a colour and click <strong>Apply</strong> to colour all matching sequence names</li>
+  </ul>
+  <p><strong>Auto by Similarity</strong></p>
+  <ul>
+    <li>Groups sequences by name prefix similarity using N-gram Jaccard distance</li>
+    <li><strong>First N chars</strong> - number of leading characters to compare (default: 10)</li>
+    <li><strong>Sensitivity</strong> - Jaccard similarity threshold (0 = strict 90%, 10 = loose 40%)</li>
+    <li><strong>Mode</strong> - Discrete (distinct colours per group) or Gradient (colour gradient by similarity)</li>
+  </ul>
+  <p><strong>Presets</strong></p>
+  <ul>
+    <li>Save, load, and reset colour assignments as named presets</li>
+    <li>Presets persist in <code>localStorage</code> across sessions</li>
+  </ul>
+  <p><strong>Actions</strong></p>
+  <ul>
+    <li><strong>Sort by Color</strong> - reorder sequences so same-coloured sequences are adjacent</li>
+    <li><strong>Group at Top</strong> - move all coloured sequences to the top of the alignment</li>
+    <li><strong>Inspect Colors</strong> - open a colour history inspector showing every colour assignment with timestamps and methods (pattern, auto-similarity, manual)</li>
+  </ul>
+
+  <h4 style="margin: 16px 0 4px;">Worked example</h4>
+  <p>
+    The repository includes <code>example-colour-names.fa</code> - 12 sequences, 120 columns,
+    named <em>organism_family_locus</em>:
+  </p>
+  <pre style="font-size: 11px; line-height: 1.45;">Hsap_AluY_chr1_10023    Mmus_B1_chr4_33012     Rnor_ID_chr5_55120
+Hsap_AluY_chr7_88110    Mmus_B1_chr11_90455    Rnor_ID_chr8_66301
+Hsap_AluY_chr12_31740   Mmus_B1_chr19_50877
+Hsap_AluSx_chr2_45501   Mmus_B2_chr6_21877
+Hsap_AluSx_chr9_12388   Mmus_B2_chr13_40988</pre>
+
+  <p><strong>1. Pattern Match.</strong> Type a pattern, pick a colour, click Apply:</p>
+  <table>
+    <tr><th>Pattern</th><th>Colours</th><th>Point</th></tr>
+    <tr><td><code>^Hsap</code></td><td>5 names</td><td><code>^</code> anchors to the start, so this takes the organism and nothing else</td></tr>
+    <tr><td><code>Alu</code></td><td>5 names</td><td>plain text needs no regex syntax - here it happens to select the same five</td></tr>
+    <tr><td><code>B1|ID</code></td><td>5 names</td><td><code>|</code> is alternation: mouse B1 <em>and</em> rat ID together, across two organisms</td></tr>
+    <tr><td><code>chr1</code></td><td>5 names</td><td>an unanchored substring also matches chr12, chr11, chr19 and chr13</td></tr>
+    <tr><td><code>chr1_</code></td><td>1 name</td><td>the trailing underscore pins it to chromosome 1 alone</td></tr>
+  </table>
+  <div class="note">
+    <strong>The <code>chr1</code> row is the one worth remembering.</strong> Patterns match anywhere
+    in the name unless you anchor them, so a pattern that looks specific can quietly pick up
+    neighbours. Colour it, glance at which names changed, and adjust before moving on.
+  </div>
+
+  <p><strong>2. Auto by Similarity.</strong> Set <em>First N chars</em> and <em>Sensitivity</em>, then apply:</p>
+  <table>
+    <tr><th>First N chars</th><th>Sensitivity</th><th>Result</th></tr>
+    <tr><td>4</td><td>3</td><td><strong>3 groups</strong> - one per organism (Hsap, Mmus, Rnor), because only the prefix is compared</td></tr>
+    <tr><td>10</td><td>3</td><td><strong>5 groups</strong> - one per element family (AluY, AluSx, B1, B2, ID), since 10 characters reach past the organism</td></tr>
+    <tr><td>10</td><td>0</td><td><strong>5 groups</strong> - strict (90% similarity) keeps the families apart</td></tr>
+    <tr><td>10</td><td>8</td><td><strong>3 groups</strong> - loose (about 40%) merges the families back into organisms</td></tr>
+  </table>
+  <p>
+    Those two controls do different jobs: <em>First N chars</em> decides how much of the name is
+    read, <em>Sensitivity</em> decides how alike two prefixes must be to share a colour. The last
+    two rows show they can reach the same answer from opposite directions.
+  </p>
+  <p>
+    Then <strong>Sort by Color</strong> brings same-coloured sequences together, and the alignment
+    shows the grouping is real: in this file each family has its own consensus, so the coloured
+    blocks line up with visibly distinct sequence blocks.
+  </p>
+  <figure style="margin: 12px 0;">
+    <img src="img/colour-names-example.png" alt="The example alignment after grouping names by
+      similarity over the first 10 characters and sorting by colour: five colour bands, one per
+      element family, each band showing its own shading pattern in the sequences."
+      style="max-width: 100%; border: 1px solid #ddd; border-radius: 4px;">
+    <figcaption style="font-size: 11px; color: #666; margin-top: 5px;">
+      <code>example-colour-names.fa</code> after <em>Auto by Similarity</em> (first 10 chars,
+      sensitivity 3) followed by <em>Sort by Color</em>. Five bands, one per element family. The
+      shading blocks change where the colours change, which is the check that the name-based
+      grouping matches the sequences rather than only the labels.
+    </figcaption>
+  </figure>
+</section>
+

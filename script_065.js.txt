@@ -1,0 +1,520 @@
+[script.js lines 28004-28522 of ViewAlign fd8b8e4]
+// ============================================================
+// Undo/Redo Dropdown Menus
+// ============================================================
+
+// Names shown in the Undo / Redo history lists and messages. Entries carry the internal
+// action type; typing and drag edits also carry their own label.
+const UNDO_TYPE_LABELS = {
+    'tsd-unmark-lowercase': 'Undo TSD lower case',
+    'trim': 'Hard trim', 'undo-trim': 'Undo trim',
+    'order': 'Reorder rows', 'reorder': 'Reorder rows', 'rename': 'Rename', 'delete': 'Delete sequences',
+    'duplicate': 'Duplicate sequences', 'revcomp': 'Reverse complement', 'sample-row': 'Add sample row from reads',
+    'sort-name': 'Sort by name', 'sort-length': 'Sort by length', 'sort-similarity': 'Sort by similarity',
+    'sort-by-color': 'Sort by colour', 'group-colored': 'Group coloured rows', 'group-by-type': 'Group by type',
+    'import-order': 'Load sequence order',
+    'tsd-mark-lowercase': 'Mark TSDs in lower case',
+    'seqedit': 'Edit sequence', 'seqedit-add': 'Add sequence', 'seqedit-multi': 'Edit sequences',
+    'add-sequences': 'Add sequences', 'add-and-align': 'Add and align',
+    'replaceWithConsensus': 'Replace with consensus', 'insertConsensus': 'Insert consensus',
+    'insertGap': 'Insert gaps', 'insertSingleGap': 'Insert gap', 'removeGaps': 'Remove gaps',
+    'removeSingleGap': 'Remove gap', 'deleteColumns': 'Delete columns',
+    'degap-block-left': 'Degap block (left)', 'degap-block-right': 'Degap block (right)',
+    'realign-all': 'Realign all', 'realign-selected': 'Realign selected', 'realign-block': 'Realign block',
+    'realign-to-consensus': 'Realign to consensus', 'geneDocResidueEdit': 'Edit residue',
+};
+function undoEntryLabel(entry) {
+    if (!entry) return 'Edit';
+    const named = UNDO_TYPE_LABELS[entry.type];
+    if (entry.label && entry.label !== entry.type) {
+        // Row edits: say which sequence changed
+        const row = Number.isInteger(entry.rowIndex) ? state.seqs[entry.rowIndex]?.header : null;
+        const base = entry.label === 'TypeResidue' ? 'Type residue' : entry.label;
+        return row ? `${base} (${row})` : base;
+    }
+    return named || (entry.type ? String(entry.type) : 'Edit');
+}
+
+// History list under the Undo / Redo carets. Picking entry N takes N steps back (or
+// forward) and redraws once. Positioned against the viewport: the toolbar is fixed, so
+// page coordinates put the list off screen once the page was scrolled (it opened at
+// top -271 px after scrolling 300 px).
+function showUndoRedoDropdown(buttonEl, stack, actionFn, labelPrefix) {
+    const open = document.querySelector('.undo-redo-dropdown');
+    if (open) {
+        const sameButton = open._owner === buttonEl;
+        open._close();
+        if (sameButton) return;   // second click on the same caret closes the list
+    }
+
+    if (stack.length === 0) {
+        showMessage(`Nothing to ${labelPrefix.toLowerCase()}.`, 2000);
+        return;
+    }
+
+    const dropdown = document.createElement('div');
+    dropdown.className = 'undo-redo-dropdown';
+    dropdown._owner = buttonEl;
+    dropdown.setAttribute('role', 'menu');
+    const rect = buttonEl.getBoundingClientRect();
+    dropdown.style.left = `${Math.max(4, Math.min(rect.left, window.innerWidth - 260))}px`;
+    dropdown.style.top = `${rect.bottom + 2}px`;
+
+    const head = document.createElement('div');
+    head.className = 'undo-redo-head';
+    head.textContent = `${labelPrefix} history (newest first)`;
+    dropdown.appendChild(head);
+
+    const items = [];
+    for (let i = stack.length - 1; i >= 0; i--) {
+        const steps = stack.length - i;
+        const item = document.createElement('button');
+        item.type = 'button';
+        item.className = 'undo-redo-item';
+        item.setAttribute('role', 'menuitem');
+        item.innerHTML = `<span class="undo-redo-num">${steps}</span><span class="undo-redo-name"></span>`;
+        item.querySelector('.undo-redo-name').textContent = undoEntryLabel(stack[i]);
+        item.title = `${labelPrefix} ${steps} step${steps > 1 ? 's' : ''}, back to before this action`;
+        if (labelPrefix === 'Redo') item.title = `Redo ${steps} step${steps > 1 ? 's' : ''}, up to and including this action`;
+        // Hovering an entry marks it and every newer one: those are the steps that will be taken
+        item.addEventListener('mouseenter', () => items.forEach((it, k) => it.classList.toggle('in-range', k < steps)));
+        item.addEventListener('click', () => {
+            close();
+            const quiet = steps > 1;
+            for (let j = 0; j < steps; j++) actionFn(quiet);
+            if (quiet) {
+                renderWithNotice(`${labelPrefix} ${steps} steps\u2026`);
+                showMessage(`${labelPrefix}: ${steps} steps`, 2000);
+            }
+        });
+        items.push(item);
+        dropdown.appendChild(item);
+    }
+    dropdown.addEventListener('mouseleave', () => items.forEach(it => it.classList.remove('in-range')));
+
+    document.body.appendChild(dropdown);
+
+    const closeHandler = (ev) => {
+        if (!dropdown.contains(ev.target) && ev.target !== buttonEl && !buttonEl.contains(ev.target)) close();
+    };
+    const escHandler = (ev) => { if (ev.key === 'Escape') close(); };
+    function close() {
+        dropdown.remove();
+        document.removeEventListener('mousedown', closeHandler, true);
+        document.removeEventListener('keydown', escHandler);
+        window.removeEventListener('resize', close);
+    }
+    dropdown._close = close;
+    setTimeout(() => {
+        document.addEventListener('mousedown', closeHandler, true);
+        document.addEventListener('keydown', escHandler);
+        window.addEventListener('resize', close);
+    }, 0);
+}
+
+function deleteSequence(index) {
+    if (state.seqs.length === 1) {
+        showMessage("Cannot delete the last sequence.", 3000);
+        return;
+    }
+    if (confirm('Delete this sequence?')) {
+        pushUndo('delete');
+        state.seqs.splice(index, 1);
+        state.selectedRows.clear();
+        renderAlignment();
+        showMessage("Sequence deleted!", 2000);
+    }
+}
+let contextMenu = null;
+let contextMenuHighlightedRow = null;
+
+// The document listener that closes the open menu on an outside click: removed whenever the menu
+// closes (closing through a menu item used to leave one more listener behind each time)
+let _ctxOutsideHandler = null;
+function closeContextMenu() {
+    if (_ctxOutsideHandler) { document.removeEventListener('click', _ctxOutsideHandler); _ctxOutsideHandler = null; }
+    if (contextMenu) {
+        contextMenu.remove();
+        contextMenu = null;
+    }
+    // Remove highlight
+    if (contextMenuHighlightedRow !== null) {
+        document.querySelectorAll(`.seq-line[data-seq-index="${contextMenuHighlightedRow}"]`)
+            .forEach(line => line.classList.remove('context-menu-highlight'));
+        contextMenuHighlightedRow = null;
+        if (isCanvasMode()) _canvasState.scheduleOverlay?.();   // Canvas / Block draw it on the overlay
+    }
+}
+
+// canvasPos: the column of the cell right-clicked in Canvas / Block (no span there to read it from)
+function showContextMenu(e, index, canvasPos) {
+    closeContextMenu();
+
+    // Highlight the sequence this menu is for
+    contextMenuHighlightedRow = index;
+    document.querySelectorAll(`.seq-line[data-seq-index="${index}"]`)
+        .forEach(line => line.classList.add('context-menu-highlight'));
+
+    contextMenu = document.createElement('div');
+    contextMenu.className = 'context-menu';
+    if (isCanvasMode()) _canvasState.scheduleOverlay?.();   // the row's highlight (drawOverlayStrip)
+
+    // Temporarily position off-screen to measure height
+    contextMenu.style.visibility = 'hidden';
+    contextMenu.style.left = `${e.pageX}px`;
+    contextMenu.style.top = `${e.pageY}px`;
+    // Residues selected: their copy comes first (owner 2026-10-28: plain text or FASTA, easily)
+    if (state.selectedNucs.size > 0) {
+        const nucItem = (text, build, what) => {
+            const d = document.createElement('div');
+            d.textContent = text;
+            d.addEventListener('click', () => {
+                const t = build();
+                closeContextMenu();
+                if (!t) return;
+                navigator.clipboard.writeText(t).then(() => showMessage(`Copied the selected bases as ${what}`, 2000), () => showMessage('Could not copy (clipboard refused).', 3000));
+            });
+            contextMenu.appendChild(d);
+        };
+        nucItem('Copy selected bases: plain text', buildNucCopyText, 'plain text');
+        nucItem('Copy selected bases: FASTA', buildNucFastaText, 'FASTA');
+        const sep = document.createElement('div');
+        sep.style.borderTop = '1px solid #ccc'; sep.style.margin = '4px 0';
+        contextMenu.appendChild(sep);
+    }
+    const copyFastaGapped = document.createElement('div');
+    copyFastaGapped.textContent = 'Copy as FASTA gapped';
+    copyFastaGapped.addEventListener('click', () => {
+        copySequences(true, true, index);
+        closeContextMenu();
+    });
+    const copyFastaUngapped = document.createElement('div');
+    copyFastaUngapped.textContent = 'Copy as FASTA ungapped';
+    copyFastaUngapped.addEventListener('click', () => {
+        copySequences(false, true, index);
+        closeContextMenu();
+    });
+    const copyPlainGapped = document.createElement('div');
+    copyPlainGapped.textContent = 'Copy as plain text gapped';
+    copyPlainGapped.addEventListener('click', () => {
+        copySequences(true, false, index);
+        closeContextMenu();
+    });
+    const copyPlainUngapped = document.createElement('div');
+    copyPlainUngapped.textContent = 'Copy as plain text ungapped';
+    copyPlainUngapped.addEventListener('click', () => {
+        copySequences(false, false, index);
+        closeContextMenu();
+    });
+    contextMenu.appendChild(copyFastaGapped);
+    contextMenu.appendChild(copyFastaUngapped);
+    contextMenu.appendChild(copyPlainGapped);
+    contextMenu.appendChild(copyPlainUngapped);
+
+    // Add color-specific copy options if this sequence has a color
+    const seqName = state.seqs[index].header;
+    if (colourState.mappings.has(seqName)) {
+        const separator1 = document.createElement('div');
+        separator1.style.borderTop = '1px solid #ccc';
+        separator1.style.margin = '4px 0';
+        contextMenu.appendChild(separator1);
+
+        const colour = colourState.mappings.get(seqName);
+        const colorLabel = document.createElement('div');
+        colorLabel.textContent = `Color: ${colour}`;
+        colorLabel.style.fontSize = '11px';
+        colorLabel.style.color = '#666';
+        colorLabel.style.padding = '2px 0';
+        contextMenu.appendChild(colorLabel);
+
+        const copySameColorGapped = document.createElement('div');
+        copySameColorGapped.textContent = 'Copy this color (gapped)';
+        copySameColorGapped.addEventListener('click', () => {
+            copySequencesByColor(colour, false, true);
+            closeContextMenu();
+        });
+
+        const copySameColorUngapped = document.createElement('div');
+        copySameColorUngapped.textContent = 'Copy this color (ungapped)';
+        copySameColorUngapped.addEventListener('click', () => {
+            copySequencesByColor(colour, true, true);
+            closeContextMenu();
+        });
+
+        contextMenu.appendChild(copySameColorGapped);
+        contextMenu.appendChild(copySameColorUngapped);
+    }
+
+    // AB1 chromatogram viewer, if this sequence came from an AB1 file
+    const ab1Key = _ab1KeyOf(state.seqs[index]);
+    if (ab1Key) {
+        const sepAb1 = document.createElement('div');
+        sepAb1.style.borderTop = '1px solid #ccc';
+        sepAb1.style.margin = '4px 0';
+        contextMenu.appendChild(sepAb1);
+
+        const viewChromatogram = document.createElement('div');
+        viewChromatogram.textContent = 'View Chromatogram...';
+        viewChromatogram.addEventListener('click', () => {
+            if (typeof ChromatogramViewer !== 'undefined') ChromatogramViewer.open(ab1Key);
+            closeContextMenu();
+        });
+        contextMenu.appendChild(viewChromatogram);
+    }
+
+    // ---- Edit section ----
+    const sepEdit = document.createElement('div');
+    sepEdit.style.borderTop = '1px solid #ccc';
+    sepEdit.style.margin = '4px 0';
+    contextMenu.appendChild(sepEdit);
+
+    // Edit in Sequence Editor
+    const seqEditItem = document.createElement('div');
+    seqEditItem.textContent = 'Edit Sequence...';
+    seqEditItem.addEventListener('click', () => {
+        openSeqEditor(index);
+        closeContextMenu();
+    });
+    contextMenu.appendChild(seqEditItem);
+
+    const revCompItem = document.createElement('div');
+    revCompItem.textContent = 'Reverse complement';
+    revCompItem.addEventListener('click', () => {
+        const targets = (state.selectedRows.size > 0 && state.selectedRows.has(index))
+            ? Array.from(state.selectedRows)
+            : [index];
+        reverseComplementSequences(targets);
+        closeContextMenu();
+    });
+    contextMenu.appendChild(revCompItem);
+
+    if (state.selectedRows.size <= 1) {
+        const renameItem = document.createElement('div');
+        renameItem.textContent = 'Rename sequence';
+        renameItem.addEventListener('click', () => {
+            closeContextMenu();
+            // the row's name, wherever the menu was opened: e.target may be a residue in the sequence,
+            // which the old inline box replaced (the residue vanished and the box sat inside the row)
+            if (isCanvasMode()) { _startSeqNameEditCanvas(index, e.clientY); return; }   // Block: in the band right-clicked
+            const nameEl = document.querySelector(`#alignmentContainer .seq-line[data-seq-index="${index}"] .seq-name`);
+            if (nameEl) _startSeqNameEdit(nameEl, index);
+        });
+        contextMenu.appendChild(renameItem);
+    }
+
+    // Add "Replace / Add consensus" if multiple sequences selected
+    if (state.selectedRows.size >= 2) {
+        const replaceConsensusItem = document.createElement('div');
+        replaceConsensusItem.textContent = `Replace ${state.selectedRows.size} selected with consensus`;
+        replaceConsensusItem.addEventListener('click', () => {
+            replaceSelectedWithConsensus();
+            closeContextMenu();
+        });
+        contextMenu.appendChild(replaceConsensusItem);
+
+        const addConsensusItem = document.createElement('div');
+        addConsensusItem.textContent = `Add consensus below (${state.selectedRows.size} selected)`;
+        addConsensusItem.addEventListener('click', () => {
+            insertGroupConsensus();
+            closeContextMenu();
+        });
+        contextMenu.appendChild(addConsensusItem);
+    }
+
+    const deleteItem = document.createElement('div');
+    deleteItem.textContent = state.selectedRows.size > 1 ? 'Delete selected' : 'Delete sequence';
+    deleteItem.addEventListener('click', () => {
+        if (state.selectedRows.size > 1) {
+            deleteSelected();
+        } else {
+            deleteSequence(index);
+        }
+        closeContextMenu();
+    });
+    contextMenu.appendChild(deleteItem);
+
+    const clearSelItem = document.createElement('div');
+    clearSelItem.textContent = 'Clear selection (Esc)';
+    clearSelItem.addEventListener('click', () => {
+        clearActiveSelection(true);
+        closeContextMenu();
+    });
+    contextMenu.appendChild(clearSelItem);
+
+    // ---- Movement section ----
+    const sepMovement = document.createElement('div');
+    sepMovement.style.borderTop = '1px solid #ccc';
+    sepMovement.style.margin = '4px 0';
+    contextMenu.appendChild(sepMovement);
+
+    // Move to Top
+    const moveTopItem = document.createElement('div');
+    moveTopItem.textContent = 'Move to Top';
+    moveTopItem.addEventListener('click', () => {
+        if (!state.selectedRows.has(index)) {
+            state.selectedRows.clear();
+            state.selectedRows.add(index);
+        }
+        moveSelectedToTop();
+        closeContextMenu();
+    });
+    contextMenu.appendChild(moveTopItem);
+
+    // Move to Bottom
+    const moveBottomItem = document.createElement('div');
+    moveBottomItem.textContent = 'Move to Bottom';
+    moveBottomItem.addEventListener('click', () => {
+        if (!state.selectedRows.has(index)) {
+            state.selectedRows.clear();
+            state.selectedRows.add(index);
+        }
+        moveSelectedToBottom();
+        closeContextMenu();
+    });
+    contextMenu.appendChild(moveBottomItem);
+
+    // ---- Gap tools (on nucleotide click) ----
+    // Canvas / Block: from the cell's column (the DOM Block had these on a residue; Canvas Block, now the Block view, did not)
+    const onSpan = e.target.tagName === 'SPAN' && e.target.parentNode.className === 'seq-data';
+    if (onSpan || Number.isInteger(canvasPos)) {
+        const pos = onSpan ? parseInt(e.target.dataset.pos) : canvasPos;
+        const sepGap = document.createElement('div');
+        sepGap.style.borderTop = '1px solid #ccc';
+        sepGap.style.margin = '4px 0';
+        contextMenu.appendChild(sepGap);
+
+        const insertGapItem = document.createElement('div');
+        insertGapItem.textContent = 'Insert Single Gap Here';
+        insertGapItem.addEventListener('click', () => {
+            insertSingleGap(index, pos);
+            closeContextMenu();
+        });
+        contextMenu.appendChild(insertGapItem);
+
+        const removeGapItem = document.createElement('div');
+        removeGapItem.textContent = 'Remove Single Gap Here';
+        removeGapItem.addEventListener('click', () => {
+            removeSingleGap(index, pos);
+            closeContextMenu();
+        });
+        contextMenu.appendChild(removeGapItem);
+    }
+
+    // ---- Analysis tools ----
+    if (state.selectedRows.size <= 1) {
+        const sepAnalysis = document.createElement('div');
+        sepAnalysis.style.borderTop = '1px solid #ccc';
+        sepAnalysis.style.margin = '4px 0';
+        contextMenu.appendChild(sepAnalysis);
+
+        const blastItem = document.createElement('div');
+        blastItem.textContent = 'BLAST Search';
+        blastItem.addEventListener('click', () => {
+            const seqData = state.seqs[index];
+            const ungappedSeq = seqData.seq.replace(/-/g, '');
+            showBlastDialog(seqData.header, ungappedSeq);
+            closeContextMenu();
+        });
+        contextMenu.appendChild(blastItem);
+
+        // Re-align against consensus
+        const realignItem = document.createElement('div');
+        realignItem.textContent = 'Re-align against consensus';
+        realignItem.addEventListener('click', () => {
+            realignSequenceAgainstConsensus(index);
+            closeContextMenu();
+        });
+        contextMenu.appendChild(realignItem);
+
+        // Dot-plot self
+        const dotSelfItem = document.createElement('div');
+        dotSelfItem.textContent = 'Dot-plot (self)';
+        dotSelfItem.addEventListener('click', () => {
+            const s = state.seqs[index];
+            const ungapped = s.seq.replace(/[-. ]/g, '');
+            openDotPlot(ungapped, ungapped, s.header, s.header, {
+                rowIndexA: index,
+                rowIndexB: index,
+                alignedSeqA: s.seq,
+                alignedSeqB: s.seq
+            });
+            closeContextMenu();
+        });
+        contextMenu.appendChild(dotSelfItem);
+
+        // Repeat/TSD finder
+        const repeatItem = document.createElement('div');
+        repeatItem.textContent = 'Find repeats';
+        repeatItem.addEventListener('click', () => {
+            openRepeatFinder(index);
+            closeContextMenu();
+        });
+        contextMenu.appendChild(repeatItem);
+
+        const tsdItem = document.createElement('div');
+        tsdItem.textContent = 'Find TSD (SINE)';
+        tsdItem.addEventListener('click', () => {
+            openTsdFinder();
+            closeContextMenu();
+        });
+        contextMenu.appendChild(tsdItem);
+    }
+
+    // Dot-plot between two selected sequences
+    if (state.selectedRows.size === 2) {
+        const dotPairItem = document.createElement('div');
+        const selIndices = Array.from(state.selectedRows).sort((a, b) => a - b);
+        dotPairItem.textContent = `Dot-plot (${state.seqs[selIndices[0]].header} vs ${state.seqs[selIndices[1]].header})`;
+        dotPairItem.addEventListener('click', () => {
+            const sA = state.seqs[selIndices[0]];
+            const sB = state.seqs[selIndices[1]];
+            openDotPlot(sA.seq.replace(/[-. ]/g, ''), sB.seq.replace(/[-. ]/g, ''), sA.header, sB.header, {
+                rowIndexA: selIndices[0],
+                rowIndexB: selIndices[1],
+                alignedSeqA: sA.seq,
+                alignedSeqB: sB.seq
+            });
+            closeContextMenu();
+        });
+        contextMenu.appendChild(dotPairItem);
+    }
+
+    // Dot-plot of the selected columns / rectangle / a pasted sequence (ranges keep the real residue numbers)
+    _dotAddSelectionMenuItems(contextMenu, index);
+
+    document.body.appendChild(contextMenu);
+
+    // Adjust position if menu would overflow viewport
+    const menuRect = contextMenu.getBoundingClientRect();
+    const viewportHeight = window.innerHeight;
+    const viewportWidth = window.innerWidth;
+
+    // Check vertical overflow
+    if (menuRect.bottom > viewportHeight) {
+        // Position above the cursor instead
+        const newTop = e.pageY - menuRect.height;
+        contextMenu.style.top = `${Math.max(0, newTop)}px`;
+    }
+
+    // Check horizontal overflow
+    if (menuRect.right > viewportWidth) {
+        // Position to the left of the cursor instead
+        const newLeft = e.pageX - menuRect.width;
+        contextMenu.style.left = `${Math.max(0, newLeft)}px`;
+    }
+
+    // Make visible after positioning
+    contextMenu.style.visibility = 'visible';
+
+    // Close menu when clicking outside
+    const closeOnClickOutside = (event) => {
+        if (contextMenu && !contextMenu.contains(event.target)) closeContextMenu();
+    };
+    // Use setTimeout to avoid immediate closure from the same click that opened the menu
+    setTimeout(() => {
+        if (!contextMenu) return;   // closed already
+        _ctxOutsideHandler = closeOnClickOutside;
+        document.addEventListener('click', closeOnClickOutside);
+    }, 0);
+}
+

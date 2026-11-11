@@ -1,0 +1,203 @@
+[block-bicluster.js lines 1903-2105 of ViewAlign fd8b8e4]
+    var rects = [];
+    var seen = {};
+    var isCons = [];
+    var consCover = [];
+    var col;
+
+    for (col = 0; col < nCols; col++) {
+      var cov = _coveringRows(allRows, col, spans);
+      var cs = columnStats(A, cov.length ? cov : allRows, col, spans);
+      isCons[col] = cov.length >= minH && cs.covered >= minH && cs.dominant >= 0 && (cs.dominantCount / cs.covered) >= consP;
+      consCover[col] = isCons[col] ? _coverKey(cov) : '';
+    }
+    var c0 = -1;
+    for (col = 0; col <= nCols; col++) {
+      var on = col < nCols && isCons[col];
+      if (c0 >= 0 && (!on || consCover[col] !== consCover[c0])) {
+        var c1 = col - 1;
+        if (c1 >= c0 && (c1 - c0 + 1) >= minW) {
+          var consRows = _coveringRows(allRows, c0, spans);
+          var consFeats = [];
+          for (var cc = c0; cc <= c1; cc++) {
+            var ccs = columnStats(A, consRows, cc, spans);
+            consFeats.push({ col: cc, state: ccs.dominant });
+          }
+          _addRect(rects, seen, A, consRows, c0, c1, spans, P, 'conserved', consFeats);
+        }
+        c0 = -1;
+      }
+      if (on && c0 < 0) c0 = col;
+    }
+
+    function collectFrom(rowPool, colStart, colEnd, kind) {
+      if (rowPool.length < minH || colEnd - colStart + 1 < minW) return;
+      var avail = rowPool.slice();
+      var opts = _clusterOptsFrom(P, { returnAll: false, relaxUpperBound: false });
+      for (var round = 0; round < maxIter && avail.length >= minH; round++) {
+        var group = _findBestDiagnosticGroup(A, allRows, avail, colStart, colEnd, spans, P, opts);
+        if (!group) break;
+        group = _pruneDiagnosticGroup(A, group, allRows, spans, opts);
+        if (!group || group.rows.length < minH) break;
+        if (group.rows.length === allRows.length) break;
+        if (group.rows.length >= Math.ceil(allRows.length * 0.8)) break;
+        if (group.rows.length >= avail.length) {
+          if ((group.good || 0) < (P.minPerfect || 5)) break;
+          _emitGroupRanges(rects, seen, A, group, spans, P, kind, allRows);
+          break;
+        }
+        _emitGroupRanges(rects, seen, A, group, spans, P, kind, allRows);
+        var drop = {};
+        for (var d = 0; d < group.rows.length; d++) drop[group.rows[d]] = true;
+        avail = avail.filter(function (idx) { return !drop[idx]; });
+      }
+    }
+
+    collectFrom(allRows, 0, nCols - 1, 'diagnostic');
+
+    c0 = -1;
+    for (col = 0; col <= nCols; col++) {
+      var open = col < nCols && !isCons[col];
+      if (open && c0 < 0) c0 = col;
+      if (!open && c0 >= 0) {
+        collectFrom(allRows, c0, col - 1, 'diagnostic');
+        c0 = -1;
+      }
+    }
+
+    var diag = [];
+    for (var r = 0; r < rects.length; r++) if (rects[r].kind !== 'conserved') diag.push(rects[r]);
+    for (var i = 0; i < diag.length; i++) {
+      for (var j = i + 1; j < diag.length; j++) {
+        var inter = _intersectRows(diag[i].rows, diag[j].rows);
+        if (inter.length < minH) continue;
+        if (inter.length === diag[i].rows.length && inter.length === diag[j].rows.length) continue;
+        var a0 = diag[i].colStart, a1 = diag[i].colEnd, b0 = diag[j].colStart, b1 = diag[j].colEnd;
+        var gap = (a1 < b0) ? (b0 - a1 - 1) : (b1 < a0) ? (a0 - b1 - 1) : 0;
+        if (gap > bridge) continue;
+        var u0 = Math.min(a0, b0), u1 = Math.max(a1, b1);
+        var thresh = _qualityThresh(inter.length, _clusterOptsFrom(P));
+        var support = 0;
+        var nFeats = [];
+        for (var uc = u0; uc <= u1; uc++) {
+          var ucs = columnStats(A, inter, uc, spans);
+          if (ucs.covered < minH || ucs.dominant < 0) continue;
+          var inP = (ucs.dominantCount / ucs.covered) * 100;
+          if (inP >= thresh) {
+            support++;
+            nFeats.push({ col: uc, state: ucs.dominant });
+          }
+        }
+        if (support >= minW) _addRect(rects, seen, A, inter, u0, u1, spans, P, 'nested', nFeats);
+      }
+    }
+
+    var covered = {};
+    for (r = 0; r < rects.length; r++) {
+      if (rects[r].kind === 'conserved') continue;
+      for (var rr = 0; rr < rects[r].rows.length; rr++) covered[rects[r].rows[rr]] = true;
+    }
+    var avail = [];
+    for (var ar = 0; ar < allRows.length; ar++) if (!covered[allRows[ar]]) avail.push(allRows[ar]);
+    for (var it = 0; it < maxIter && avail.length >= minH; it++) {
+      var prog = (it + 1) / maxIter;
+      var base = _clusterOptsFrom(P, {
+        returnAll: false,
+        relaxUpperBound: false,
+        minPerfect: Math.max(3, Math.round((P.minPerfect || 5) * (1 - prog * 0.5))),
+        qualitySmall: Math.max(40, (_clusterOptsFrom(P).qualitySmall) - prog * 25),
+        qualityMedium: Math.max(35, (_clusterOptsFrom(P).qualityMedium) - prog * 25),
+        qualityLarge: Math.max(30, (_clusterOptsFrom(P).qualityLarge) - prog * 25)
+      });
+      var leftover = _findBestDiagnosticGroup(A, allRows, avail, 0, nCols - 1, spans, P, base);
+      if (!leftover) {
+        base.relaxUpperBound = true;
+        base.minPerfect = P.minPerfect || 5;
+        leftover = _findBestDiagnosticGroup(A, allRows, avail, 0, nCols - 1, spans, P, base);
+      }
+      if (!leftover) continue;
+      leftover = _pruneDiagnosticGroup(A, leftover, allRows, spans, base);
+      if (!leftover || leftover.rows.length < minH) continue;
+      if (leftover.rows.length === allRows.length) continue;
+      if (leftover.rows.length >= Math.ceil(allRows.length * 0.8)) continue;
+      if (leftover.rows.length >= avail.length && (leftover.good || 0) < (P.minPerfect || 5)) continue;
+      var before = rects.length;
+      _emitGroupRanges(rects, seen, A, leftover, spans, P, 'leftover', allRows);
+      // no rectangle from this group: set its rows aside and keep searching the others (a break here lost them all)
+      var drop = {};
+      for (var d = 0; d < leftover.rows.length; d++) drop[leftover.rows[d]] = true;
+      avail = avail.filter(function (idx) { return !drop[idx]; });
+    }
+
+    rects = rects.filter(function (a) {
+      if (a.rows.length < minH) return false;
+      for (var k = 0; k < rects.length; k++) {
+        var b = rects[k];
+        if (b === a) continue;
+        if (a.colStart === b.colStart && a.colEnd === b.colEnd && _isProperSubset(a.rows, b.rows)) return false;
+      }
+      return true;
+    });
+
+    rects.sort(function (a, b) {
+      if (a.colStart !== b.colStart) return a.colStart - b.colStart;
+      if (b.rows.length !== a.rows.length) return b.rows.length - a.rows.length;
+      return a.rows[0] - b.rows[0];
+    });
+    return rects;
+  }
+
+  function computeBiclusterMask(fastaText, params) {
+    var P = resolveParams(params);
+    var parsed = parseAln(fastaText);
+    var A = parsed.A;
+    var ncols = parsed.ncols;
+    var names = parsed.names;
+    var spans = coverageSpans(A);
+    var allRows = [];
+    for (var i = 0; i < A.length; i++) allRows.push(i);
+
+    var rects = extractSimilarityRectangles(A, allRows, spans, P);
+    var blocks = rects.map(function (leaf) {
+      var sortedRows = leaf.rows;
+      var isAll = sortedRows.length === A.length;
+      if (isAll) {
+        for (var r = 0; r < sortedRows.length; r++) {
+          if (sortedRows[r] !== r) { isAll = false; break; }
+        }
+      }
+      return {
+        rows: isAll ? 'all' : sortedRows,
+        col_start: leaf.colStart,
+        col_end: leaf.colEnd,
+        coherence: leaf.coherence,
+        kind: leaf.kind,
+        supporting_bases: leaf.supporting_bases || ''
+      };
+    });
+
+    return {
+      n_rows: A.length,
+      n_cols: ncols,
+      row_headers: names,
+      blocks: blocks
+    };
+  }
+
+  var api = {
+    parseAln: parseAln,
+    coverageSpans: coverageSpans,
+    columnStats: columnStats,
+    blockCoherence: blockCoherence,
+    bestColumnSplit: bestColumnSplit,
+    bestRowSplit: bestRowSplit,
+    splitAndMerge: splitAndMerge,
+    mergeAdjacentLeaves: mergeAdjacentLeaves,
+    extractSimilarityRectangles: extractSimilarityRectangles,
+    computeBiclusterMask: computeBiclusterMask,
+    DEFAULTS: DEFAULTS
+  };
+
+  if (typeof module !== 'undefined' && module.exports) module.exports = api;
+  if (root) root.BlockBicluster = api;
+})(typeof window !== 'undefined' ? window : this);

@@ -1,0 +1,499 @@
+[script.js lines 24077-24574 of ViewAlign fd8b8e4]
+const MAFFT_ASK_ADJUST = 'msaviewer_mafft_dontAsk_applyAdjustFull';
+const MAFFT_DEF_ADJUST = 'msaviewer_mafft_default_applyAdjustFull';
+const MAFFT_ASK_REORDER = 'msaviewer_mafft_dontAsk_applyReorder';
+const MAFFT_DEF_REORDER = 'msaviewer_mafft_default_applyReorder';
+
+function _mafftPrefBool(key, fallback) {
+    try {
+        const v = localStorage.getItem(key);
+        if (v === null || v === undefined) return fallback;
+        if (v === '1' || v === 'true') return true;
+        if (v === '0' || v === 'false') return false;
+        return fallback;
+    } catch (e) {
+        return fallback;
+    }
+}
+
+function _mafftPrefSet(key, val) {
+    try { localStorage.setItem(key, val ? '1' : '0'); } catch (e) { /* ignore */ }
+}
+
+function _initMafftAskPrefs() {
+    const adj = el('mafftDontAskAdjust');
+    const reo = el('mafftDontAskReorder');
+    if (adj) {
+        adj.checked = _mafftPrefBool(MAFFT_ASK_ADJUST, false);
+        adj.addEventListener('change', () => {
+            _mafftPrefSet(MAFFT_ASK_ADJUST, adj.checked);
+            if (adj.checked && safeLocalGetRaw(MAFFT_DEF_ADJUST) === null) {
+                _mafftPrefSet(MAFFT_DEF_ADJUST, true);
+            }
+        });
+    }
+    if (reo) {
+        reo.checked = _mafftPrefBool(MAFFT_ASK_REORDER, false);
+        reo.addEventListener('change', () => {
+            _mafftPrefSet(MAFFT_ASK_REORDER, reo.checked);
+            if (reo.checked && safeLocalGetRaw(MAFFT_DEF_REORDER) === null) {
+                _mafftPrefSet(MAFFT_DEF_REORDER, false);
+            }
+        });
+    }
+    // Codon-aligner settings are shown only when Sequence type is "Coding sequence"
+    const seqTypeSel = el('mafftSeqType');
+    const toggleCodonOpts = () => {
+        const on = seqTypeSel && seqTypeSel.value === 'codon';
+        for (const id of ['codonAlignHead', 'codonAlignOpts']) {
+            const node = el(id);
+            if (node) node.style.display = on ? '' : 'none';
+        }
+        const fast = _codonEngine() === 'fast';
+        const m = el('codonMacseOpts'), f = el('codonFastOpts');
+        if (m) m.style.display = fast ? 'none' : '';
+        if (f) f.style.display = fast ? '' : 'none';
+    };
+    if (seqTypeSel) {
+        seqTypeSel.addEventListener('change', toggleCodonOpts);
+        el('codonEngine')?.addEventListener('change', toggleCodonOpts);
+        toggleCodonOpts();
+    }
+    el('macsePresetButton')?.addEventListener('click', () => openMacsePreset(false));
+}
+
+// MACSE is a Sequence type of the Alignment menu ("Coding sequence"), easy to miss:
+// the Alignment menu's own button and the Codon bar's both select it with the MACSE
+// engine and show its settings; Realign All / Selected and Add & Align then use it.
+function openMacsePreset(openMenu = true) {
+    const sel = el('mafftSeqType'), eng = el('codonEngine');
+    if (!sel) return;
+    if (state.seqs.length && isProteinAlignment()) {
+        showMessage('Codon alignment needs nucleotide (coding) sequences; this alignment is protein.', 4000);
+        return;
+    }
+    if (sel.value !== 'codon') { sel.value = 'codon'; sel.dispatchEvent(new Event('change', { bubbles: true })); }
+    if (eng && eng.value !== 'macse') { eng.value = 'macse'; eng.dispatchEvent(new Event('change', { bubbles: true })); }
+    if (openMenu) {
+        const section = document.querySelector('.section-header[data-section="alignment"]')?.closest('.menu-section');
+        if (section) openMenuSection(section);
+    }
+    const opts = el('codonAlignOpts');
+    if (opts) {
+        opts.classList.remove('al-flash');
+        void opts.offsetWidth;   // restart the animation
+        opts.classList.add('al-flash');
+    }
+    showMessage('Sequence type: Coding sequence (MACSE v2.07). Realign All, Realign Selected and Add & Align now align codons, frameshift-aware.', 5000);
+}
+
+/**
+ * Yes/No prompt (not inverted confirm). skipPrompt and forced skip the dialog.
+ * defaultYes is the recommended answer used when Don't-ask has no stored value.
+ */
+function _mafftAskYesNo({ message, defaultYes, dontAskKey, defaultKey, skipPrompt, forced }) {
+    if (forced !== undefined && forced !== null) return Promise.resolve(!!forced);
+    if (skipPrompt) return Promise.resolve(!!defaultYes);
+    if (_mafftPrefBool(dontAskKey, false)) {
+        return Promise.resolve(_mafftPrefBool(defaultKey, defaultYes));
+    }
+    if (typeof document === 'undefined') return Promise.resolve(!!defaultYes);
+    return new Promise((resolve) => {
+        const overlay = document.createElement('div');
+        overlay.id = 'mafftAskOverlay';   // a blocking dialog for the key guard (_KEY_BLOCKING_IDS): keys edited behind it (GLM check 2026-11-10, #3)
+        overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.45);z-index:10050;display:flex;align-items:center;justify-content:center;';
+        const box = document.createElement('div');
+        box.style.cssText = 'background:#fff;padding:16px 18px;max-width:440px;border-radius:8px;box-shadow:0 4px 20px rgba(0,0,0,0.3);font-size:13px;line-height:1.45;';
+        const msg = document.createElement('div');
+        msg.style.cssText = 'margin-bottom:12px;white-space:pre-wrap;';
+        msg.textContent = message;
+        const lab = document.createElement('label');
+        lab.style.cssText = 'display:flex;align-items:center;gap:6px;font-size:12px;color:#444;margin-bottom:12px;cursor:pointer;';
+        const dont = document.createElement('input');
+        dont.type = 'checkbox';
+        dont.className = 'mafft-ask-dont';
+        lab.appendChild(dont);
+        lab.appendChild(document.createTextNode(" Don't ask again"));
+        const row = document.createElement('div');
+        row.style.cssText = 'display:flex;justify-content:flex-end;gap:8px;';
+        const noBtn = document.createElement('button');
+        noBtn.type = 'button';
+        noBtn.textContent = 'No';
+        noBtn.style.cssText = 'padding:4px 14px;';
+        const yesBtn = document.createElement('button');
+        yesBtn.type = 'button';
+        yesBtn.textContent = 'Yes';
+        yesBtn.style.cssText = 'padding:4px 14px;background:#4CAF50;color:#fff;border:none;border-radius:4px;cursor:pointer;';
+        row.appendChild(noBtn);
+        row.appendChild(yesBtn);
+        box.appendChild(msg);
+        box.appendChild(lab);
+        box.appendChild(row);
+        overlay.appendChild(box);
+        const finish = (val) => {
+            if (dont.checked) {
+                _mafftPrefSet(dontAskKey, true);
+                _mafftPrefSet(defaultKey, val);
+                const panel = dontAskKey === MAFFT_ASK_ADJUST ? el('mafftDontAskAdjust') : el('mafftDontAskReorder');
+                if (panel) panel.checked = true;
+            }
+            overlay.remove();
+            resolve(val);
+        };
+        yesBtn.onclick = () => finish(true);
+        noBtn.onclick = () => finish(false);
+        document.body.appendChild(overlay);
+        (defaultYes ? yesBtn : noBtn).focus();
+    });
+}
+
+/**
+ * Reverse-complement a nucleotide sequence.
+ */
+function _reverseComplement(seq, rna) {   // rna: the alignment's decision; without it the sequence decides
+    const comp = { A:'T', T:'A', C:'G', G:'C', a:'t', t:'a', c:'g', g:'c',
+                   R:'Y', Y:'R', S:'S', W:'W', K:'M', M:'K', B:'V', V:'B', D:'H', H:'D',
+                   r:'y', y:'r', s:'s', w:'w', k:'m', m:'k', b:'v', v:'b', d:'h', h:'d',
+                   N:'N', n:'n', '-':'-', '.':'.', U:'A', u:'a' };
+    const out = seq.split('').reverse().map(c => comp[c] || c).join('');
+    return (rna === undefined ? (/[Uu]/.test(seq) && !/[Tt]/.test(seq)) : rna) ? out.replace(/T/g, 'U').replace(/t/g, 'u') : out;   // RNA stays RNA
+}
+
+/**
+ * Adjust direction of sequences: detect and reverse-complement sequences
+ * that are in the wrong orientation relative to the majority.
+ * Uses 6-mer frequency voting against the first sequence.
+ * Returns { fasta, flipped } where flipped is a Set of header names that were RC'd.
+ */
+function _adjustDirection(fasta) {
+    const seqs = [];
+    let cur = null;
+    for (const line of fasta.split('\n')) {
+        if (line.startsWith('>')) {
+            if (cur) seqs.push(cur);
+            cur = { header: line.substring(1).trim(), seq: '' };
+        } else if (cur) {
+            cur.seq += line.trim();
+        }
+    }
+    if (cur) seqs.push(cur);
+    if (seqs.length < 2) return { fasta, flipped: new Set() };
+
+    // Build k-mer set from first sequence (reference)
+    const K = 6;
+    const refSeq = seqs[0].seq.toUpperCase().replace(/U/g, 'T').replace(/[^ACGT]/g, '');   // RNA: U reads as T
+    const refKmers = new Set();
+    for (let i = 0; i <= refSeq.length - K; i++) {
+        refKmers.add(refSeq.substring(i, i + K));
+    }
+
+    const flipped = new Set();
+    const rnaAll = alignmentIsRna(seqs.concat(state.seqs || []));   // the rows given and the open alignment decide together
+    const result = [`>${seqs[0].header}\n${seqs[0].seq}`];
+
+    for (let i = 1; i < seqs.length; i++) {
+        const s = seqs[i];
+        const clean = s.seq.toUpperCase().replace(/U/g, 'T').replace(/[^ACGT]/g, '');
+        const rc = _reverseComplement(clean);
+
+        let fwdScore = 0, rcScore = 0;
+        for (let j = 0; j <= clean.length - K; j++) {
+            if (refKmers.has(clean.substring(j, j + K))) fwdScore++;
+            if (refKmers.has(rc.substring(j, j + K))) rcScore++;
+        }
+
+        if (rcScore > fwdScore) {
+            result.push(`>${s.header}\n${_reverseComplement(s.seq, rnaAll)}`);
+            flipped.add(s.header);
+        } else {
+            result.push(`>${s.header}\n${s.seq}`);
+        }
+    }
+
+    return { fasta: result.join('\n'), flipped };
+}
+
+/**
+ * Reorder sequences by guide-tree order using 6-mer distance (like MAFFT --reorder).
+ * Operates on ungapped sequences (pre-alignment), matching MAFFT's approach.
+ * Input: FASTA string (ungapped).
+ * Returns: reordered FASTA string + the ordered headers list.
+ */
+// Core of the guide tree: 6-mer distances plus UPGMA, returning the leaf order used for
+// reordering AND the merge history, which is what makes the tree cuttable into groups.
+// Shared by _reorderByGuideTree and clusterByGuideTree, so the order a user sees and the
+// grouping they get always come from the same tree.
+// seqs: [{ header, seq }]  ->  { order: leafIndices, merges: [{ i, j, d }] }
+function _kmerGuideTree(seqs, k, opts) {
+    const t = KmerTree.guideTree(seqs, k, opts);
+    return { order: t.order, merges: t.merges, k: t.k, dist: t.dist, metric: t.metric, n: t.n };
+}
+
+function _reorderByGuideTree(fasta) {
+    const seqs = [];
+    let cur = null;
+    for (const line of fasta.split('\n')) {
+        if (line.startsWith('>')) {
+            if (cur) seqs.push(cur);
+            cur = { header: line.substring(1).trim(), seq: '', fullLine: line };
+        } else if (cur) {
+            cur.seq += line.trim();
+        }
+    }
+    if (cur) seqs.push(cur);
+    if (seqs.length <= 2) return { fasta, order: seqs.map(s => s.header) };
+
+    const order = _kmerGuideTree(seqs, (typeof _guideTreeK === 'function') ? _guideTreeK() : 6).order;
+
+    // Build reordered FASTA
+    const reordered = order.map(i => `${seqs[i].fullLine}\n${seqs[i].seq}`).join('\n');
+    const orderedHeaders = order.map(i => seqs[i].header);
+
+    return { fasta: reordered, order: orderedHeaders };
+}
+
+// Cut the guide tree into groups (kmer-tree.js). groups: 'auto' or a number of groups wanted, each with
+// at least minSize sequences; sequences in smaller groups are returned as `unassigned`. metric: 'pdist'
+// (alignment columns, independent of k) or 'jaccard' (k-mer counts).
+function cutGuideTree(seqs, groups, k, minSize = 1, metric = 'jaccard', canonical = false, linkage = 'average') {
+    const tree = _kmerGuideTree(seqs, k, { metric, canonical, linkage });
+    const cut = KmerTree.cutTree(tree, groups, minSize);
+    return Object.assign(cut, {
+        cutHeight: cut.cutHeight, nextHeight: cut.plateau ? cut.plateau.to : null,
+        k: tree.k, metric: tree.metric
+    });
+}
+
+function _treeIsBase(char) {
+    return /^[ACGTU]$/i.test(char || '');
+}
+
+// A residue a protein p-distance can compare: the 20 amino acids plus U (selenocysteine)
+// and O (pyrrolysine); not X, the ambiguity codes B/Z/J, stops or gaps. Protein trees
+// used _treeIsBase, so only columns where both residues were A, C, G or T were compared
+// and every other amino-acid difference was ignored.
+function _treeIsAminoAcid(char) {
+    return /^[ACDEFGHIKLMNPQRSTVWYUO]$/i.test(char || '');
+}
+
+// Pairwise distance metrics for phylogenetic trees
+// Returns { p, compared, mismatches, transitions, transversions } for model corrections
+function _alignmentPairMetrics(seqOne, seqTwo, protein = false) {
+    // Purine = A,G; Pyrimidine = C,T (transitions/transversions are only used for nucleotides)
+    const isPurine = c => c === 'A' || c === 'G';
+    const isPyrimidine = c => c === 'C' || c === 'T';
+    const isResidue = protein ? _treeIsAminoAcid : _treeIsBase;
+    const maxLen = Math.max(seqOne.length, seqTwo.length);
+    let compared = 0, mismatches = 0, transitions = 0, transversions = 0;
+    for (let position = 0; position < maxLen; position++) {
+        let b1 = (seqOne[position] || '-').toUpperCase();
+        let b2 = (seqTwo[position] || '-').toUpperCase();
+        if (!protein) { b1 = b1.replace('U', 'T'); b2 = b2.replace('U', 'T'); }   // U is selenocysteine in a protein
+        if (!isResidue(b1) || !isResidue(b2)) continue;
+        compared++;
+        if (b1 !== b2) {
+            mismatches++;
+            if ((isPurine(b1) && isPurine(b2)) || (isPyrimidine(b1) && isPyrimidine(b2))) {
+                transitions++;
+            } else {
+                transversions++;
+            }
+        }
+    }
+    const p = compared > 0 ? mismatches / compared : 0;
+    return { p, compared, mismatches, transitions, transversions };
+}
+
+// Jukes-Cantor (JC69) correction for multiple hits
+// d = -3/4 * ln(1 - 4/3 * p)
+function _jc69Distance(p) {
+    if (p >= 0.75) return Infinity; // saturation
+    if (p <= 0) return 0;
+    return -0.75 * Math.log(1 - (4 / 3) * p);
+}
+
+// Kimura 2-parameter (K80) correction
+// P = transitions/compared, Q = transversions/compared
+// d = -0.5 * ln(1 - 2P - Q) - 0.25 * ln(1 - 2Q)
+function _k80Distance(P, Q) {
+    if (P < 0) P = 0; if (Q < 0) Q = 0;
+    const t1 = 1 - 2 * P - Q;
+    const t2 = 1 - 2 * Q;
+    if (t1 <= 0 || t2 <= 0) return Infinity; // saturation
+    return -0.5 * Math.log(t1) - 0.25 * Math.log(t2);
+}
+
+// Compute pairwise distance using the selected model
+// NaN when the pair shares no aligned base: there is nothing to compare, so no distance.
+// (It used to return 1 for every model, as if the two were completely different.)
+function _modelPairDistance(seqOne, seqTwo, model, protein = false) {
+    const m = _alignmentPairMetrics(seqOne, seqTwo, protein);
+    if (m.compared === 0) return NaN;
+    switch (model) {
+        case 'jc69': return _jc69Distance(m.p);
+        case 'k80':
+            const P = m.transitions / m.compared;
+            const Q = m.transversions / m.compared;
+            return _k80Distance(P, Q);
+        default: return m.p; // 'raw': uncorrected p-distance
+    }
+}
+
+
+function _newickName(name) {
+    const cleaned = String(name || 'seq').replace(/\s+/g, '_');
+    if (/^[A-Za-z0-9_.-]+$/.test(cleaned)) return cleaned;   // ':' starts a branch length in Newick: such a name is quoted
+    return `'${cleaned.replace(/'/g, "''")}'`;
+}
+
+function _branchLength(value) {
+    return Math.max(0, value || 0).toFixed(6).replace(/0+$/, '').replace(/\.$/, '.0');
+}
+
+function _treeNodeToNewick(node, isRoot = false) {
+    if (!node.left && !node.right) {
+        const label = _newickName(node.name);
+        return isRoot ? `${label};` : `${label}:${_branchLength(node.branchLength)}`;
+    }
+    const leftNewick = _treeNodeToNewick(node.left, false);
+    const rightNewick = _treeNodeToNewick(node.right, false);
+    const branch = isRoot ? ';' : `:${_branchLength(node.branchLength)}`;
+    return `(${leftNewick},${rightNewick})${branch}`;
+}
+
+function _treeNodeToText(node, indent = '', isRoot = true) {
+    const branch = isRoot ? '' : `:${_branchLength(node.branchLength)}`;
+    if (!node.left && !node.right) return `${indent}${node.name}${branch}\n`;
+    let text = `${indent}${isRoot ? 'root' : 'node'}${branch}\n`;
+    text += _treeNodeToText(node.left, `${indent}  `, false);
+    text += _treeNodeToText(node.right, `${indent}  `, false);
+    return text;
+}
+
+// Pairwise distances for UPGMA and NJ. Two kinds of pair have no usable distance, and
+// neither can enter the clustering arithmetic (Infinity made branch lengths NaN, drawn as 0):
+// - no shared aligned base (NaN): unknown, set to the largest defined distance;
+// - JC69/K80 saturation (Infinity): known to be very large, set to twice the largest
+//   (the largest alone drew a completely different sequence as a close relative).
+// The pairs are returned so the tree window can say so. Summary numbers use defined
+// distances only.
+function _treeDistanceMatrix(seqObjects, model) {
+    const n = seqObjects.length;
+    // (guarded: dev-tools/tree-audit loads the tree code without the rest of the viewer)
+    const protein = typeof isProteinAlignment === 'function' && isProteinAlignment(seqObjects);
+    const D = Array.from({ length: n }, () => new Array(n).fill(0));
+    const noOverlap = [], saturated = [];
+    let total = 0, pairs = 0, min = Infinity, max = -Infinity;
+    for (let i = 0; i < n; i++) {
+        for (let j = i + 1; j < n; j++) {
+            const d = _modelPairDistance(seqObjects[i].seq, seqObjects[j].seq, model, protein);
+            if (Number.isNaN(d)) noOverlap.push([i, j]);
+            else if (!Number.isFinite(d)) saturated.push([i, j]);
+            else { total += d; pairs++; min = Math.min(min, d); max = Math.max(max, d); }
+            D[i][j] = D[j][i] = d;
+        }
+    }
+    if (n > 1 && pairs === 0) {
+        throw new Error(noOverlap.length
+            ? (protein
+                ? 'no two of these sequences share an aligned amino acid, so no distance can be computed'
+                : 'no two of these sequences share an aligned base (A/C/G/T/U), so no distance can be computed')
+            : 'every pairwise distance is saturated under this model; try p-distance');
+    }
+    // If every defined distance is 0 (all comparable pairs identical), an unknown pair must
+    // not become 0 too: it would be drawn as an identical twin
+    const fill = pairs && max > 0 ? max : 1;
+    const satFill = 2 * fill;
+    for (const [i, j] of noOverlap) D[i][j] = D[j][i] = fill;
+    for (const [i, j] of saturated) D[i][j] = D[j][i] = satFill;
+    return {
+        D,
+        stats: {
+            count: n,
+            averageDistance: pairs ? total / pairs : 0,
+            minDistance: pairs ? min : 0,
+            maxDistance: pairs ? max : 0,
+            noOverlap, saturated,
+            filledWith: (noOverlap.length || saturated.length) ? fill : null,
+            saturatedFill: saturated.length ? satFill : null,
+            names: seqObjects.map((q, k) => q.header || `seq_${k + 1}`)
+        }
+    };
+}
+
+function buildUPGMATreeFromAlignment(seqObjects, model) {
+    model = model || 'raw';
+    const { D: baseDistances, stats: distanceStats } = _treeDistanceMatrix(seqObjects, model);
+
+    const clusters = seqObjects.map((seqObj, index) => ({
+        name: seqObj.header || `seq_${index + 1}`,
+        size: 1,
+        height: 0,
+        branchLength: 0,
+        left: null,
+        right: null
+    }));
+    const distances = baseDistances.map(row => row.slice());
+
+    while (clusters.length > 1) {
+        let closestFirst = 0;
+        let closestSecond = 1;
+        let closestDistance = distances[0][1];
+        for (let firstIndex = 0; firstIndex < clusters.length; firstIndex++) {
+            for (let secondIndex = firstIndex + 1; secondIndex < clusters.length; secondIndex++) {
+                if (distances[firstIndex][secondIndex] < closestDistance) {
+                    closestDistance = distances[firstIndex][secondIndex];
+                    closestFirst = firstIndex;
+                    closestSecond = secondIndex;
+                }
+            }
+        }
+
+        const firstCluster = clusters[closestFirst];
+        const secondCluster = clusters[closestSecond];
+        const mergedHeight = closestDistance / 2;
+        firstCluster.branchLength = Math.max(0, mergedHeight - firstCluster.height);
+        secondCluster.branchLength = Math.max(0, mergedHeight - secondCluster.height);
+
+        const remainingOldIndices = [];
+        const mergedDistances = [];
+        for (let oldIndex = 0; oldIndex < clusters.length; oldIndex++) {
+            if (oldIndex === closestFirst || oldIndex === closestSecond) continue;
+            const weightedDistance = (
+                distances[closestFirst][oldIndex] * firstCluster.size +
+                distances[closestSecond][oldIndex] * secondCluster.size
+            ) / (firstCluster.size + secondCluster.size);
+            remainingOldIndices.push(oldIndex);
+            mergedDistances.push(weightedDistance);
+        }
+
+        for (const removeIndex of [closestSecond, closestFirst]) {
+            clusters.splice(removeIndex, 1);
+            distances.splice(removeIndex, 1);
+            distances.forEach(row => row.splice(removeIndex, 1));
+        }
+
+        const mergedCluster = {
+            name: '',
+            size: firstCluster.size + secondCluster.size,
+            height: mergedHeight,
+            branchLength: 0,
+            left: firstCluster,
+            right: secondCluster
+        };
+
+        distances.forEach((row, remainingIndex) => {
+            row.push(mergedDistances[remainingIndex] ?? 0);
+        });
+        distances.push([...mergedDistances, 0]);
+        clusters.push(mergedCluster);
+    }
+
+    const root = clusters[0];
+    return {
+        newick: _treeNodeToNewick(root, true),
+        text: _treeNodeToText(root).trimEnd(),
+        stats: distanceStats
+    };
+}
+

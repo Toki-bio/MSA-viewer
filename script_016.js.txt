@@ -1,0 +1,467 @@
+[script.js lines 6618-7083 of ViewAlign fd8b8e4]
+    const SCALE_H = CHAR_H; // one row at top, matching Full/Block .scale-ruler-line
+    const HEADER_H = TRACK_H + SCALE_H + (consTop ? CONS_H : 0); // track (if any) + ruler + consensus (if on top): where the rows start
+    let _lastOffX = -1, _lastOffY = -1, _dirty = false, _lastSig = null;
+    function _markDirty() { _dirty = true; }
+
+    // Variable sites only: the content is laid out in SLOTS, one per shown column plus one per
+    // breakpoint marker (the DOM puts a .col-breakpoint cell before the first shown column after
+    // a hidden run). slots[s] = column, or -1 - column for the marker before that column;
+    // slotOf[column] = slot, or -1 when hidden. Without the filter a slot is a column.
+    // Hidden columns (folds) use the same layout: one marker for each run of folded columns, before the
+    // next shown column (-1 - len for a fold at the end); foldBefore[slot] = the folds a marker stands for.
+    const varHide = document.body.classList.contains('var-sites-only') && state._diffColumns && state._varSiteHiddenRanges;
+    const folds = state.hiddenCols && state.hiddenCols.length ? state.hiddenCols : null;
+    let slots = null, slotOf = null, foldBefore = null;
+    if (varHide || folds) {
+        const arr = [];
+        slotOf = new Int32Array(len).fill(-1);
+        const brk = varHide ? state._brkBeforePos : null;
+        if (folds) foldBefore = new Map();
+        let fi = 0, pending = null;
+        for (let p = 0; p < len; p++) {
+            if (folds) {
+                while (fi < folds.length && folds[fi][1] < p) fi++;
+                if (fi < folds.length && folds[fi][0] <= p) {
+                    if (!pending) pending = [];
+                    if (pending[pending.length - 1] !== folds[fi]) pending.push(folds[fi]);
+                    continue;
+                }
+            }
+            if (varHide && !state._diffColumns.has(p)) continue;
+            if (pending || (brk && brk.has(p))) {
+                if (pending) { foldBefore.set(arr.length, pending); pending = null; }
+                arr.push(-1 - p);
+            }
+            slotOf[p] = arr.length;
+            arr.push(p);
+        }
+        if (pending) { foldBefore.set(arr.length, pending); arr.push(-1 - len); }
+        slots = Int32Array.from(arr);
+    }
+    const nSlots = slots ? slots.length : len;
+    const slotPos = s => slots ? slots[s] : s;       // column, or -1 - column for a marker
+    const posSlot = c => slotOf ? (c < len ? slotOf[c] : -1) : c;   // -1 when the column is hidden
+    _canvasState.slots = slots;
+    _canvasState.slotOf = slotOf;
+    _canvasState.foldBefore = foldBefore;
+    _canvasState.nSlots = nSlots;
+    // The ruler text for the whole alignment, indexed by column. generateScale() drops a label
+    // that does not fit the window it is asked for, so a text made per drawn strip would lose
+    // the labels straddling the strip's edge and the frame copy would not equal a full redraw.
+    const scaleTextAll = generateScale(len, _canvasScaleInterval(CHAR_W), 0);
+
+    // What can change the look of a cell (selections live on the overlay and are not here)
+    const contentSig = () => [state.residueCase || 'asis', state.seqs, state.seqs.length, state.deletedHistory.length, state.redoHistory.length,
+        state.conservationDataCache?.data, state.consensusCache?.values, state.trimBoundaries, state.softTrimBoundaries,
+        state._diffColumns, state.tsdMarks, state.tsdPreview, state.dotRegionMarks, state.searchHistory?.length, getEffectiveColorScheme()];
+
+    // Length badge after each row's last column, as in Full/Block (.seq-length): the gapless length
+    // in a grey box. Its width is measured once for the longest number.
+    const BADGE_FONT = 'bold ' + Math.round(fontSizePx * 0.85) + 'px "Courier New", monospace';
+    const BADGE_GAP = 6, BADGE_PAD = 4;
+    const _gaplessLen = (q) => { const g = q.gaplessPositions; return (g && g.length) ? (g[g.length - 1] || 0) : _rowLen(q); };
+    const BADGE_W = (() => {
+        let maxLen = 0;
+        for (let i = 0; i < nSeqs; i++) maxLen = Math.max(maxLen, _gaplessLen(state.seqs[i]));
+        ctx.save(); ctx.font = BADGE_FONT;
+        const tw = ctx.measureText(String(Math.max(maxLen, len))).width;
+        ctx.restore();
+        return Math.ceil(tw + 2 * BADGE_PAD + 2);
+    })();
+    let totalContentW = NAME_W + nSlots * CHAR_W + BADGE_GAP + BADGE_W + 4;
+    _canvasState.badgeW = BADGE_GAP + BADGE_W;   // the length-badge column right of the last slot
+    _canvasState.badgeX = NAME_W + nSlots * CHAR_W + BADGE_GAP;   // content x of the badges (their hover)
+    _canvasState.badgeBoxW = BADGE_W;
+    let totalContentH = HEADER_H +nSeqs * rowPitch + (consInfo && !consTop ? CONS_H : 0) + 4;
+    // where the consensus row is in content coordinates (its hover tooltip): under the ruler, or after the rows
+    _canvasState.consBand = consInfo ? { y: consTop ? TRACK_H + SCALE_H : HEADER_H + nSeqs * rowPitch, h: CONS_H, textOff: consTop ? 0 : CONS_GAP, values: consInfo.values } : null;
+    // Exposed so the persistent horizontal/vertical scrollbars (real DOM
+    // elements, since Canvas mode's own content isn't natively scrollable)
+    // can size their thumbs and mirror pan position.
+    _canvasState.totalContentW = totalContentW;
+    _canvasState.totalContentH = totalContentH;
+
+    // Block layout: bands of bandCols slots, each a whole strip (ruler, consensus, rows) followed by
+    // the DOM's 24 px block gap. Bands differ in height when codon analysis by gene gives them
+    // different translation lane counts (bandLanes, as the DOM Block's per-block lanes: 0 where no
+    // gene is, 2 only where genes overlap), so band b starts at content y bandTop[b] (a prefix sum)
+    // and the band of a content y is found by binary search (bandAt). bandEdgesOf(b): band-relative
+    // y of every line edge of band b (the frame copy widens its exposed strip to these, as it does
+    // to row edges in the strip layout).
+    const BLOCK_GAP = Math.round(24 * dpr) / dpr;
+    const CONS_BOTTOM_H = consInfo && !consTop ? CONS_H : 0;
+    const bodyOf = p => HEADER_H + nSeqs * p + CONS_BOTTOM_H;   // a band's height without the gap, rows of pitch p
+    const _edgeCache = new Map();   // pitch -> sorted band-relative line edges
+    const edgesOfPitch = p => {
+        let r = _edgeCache.get(p);
+        if (!r) {
+            const body = bodyOf(p), e = new Set([0, body, body + BLOCK_GAP]);
+            if (TRACK_H) e.add(TRACK_H);
+            e.add(TRACK_H + SCALE_H);
+            for (let i = 0; i <= nSeqs; i++) e.add(HEADER_H + i * p);
+            r = Float64Array.from([...e].sort((x, y) => x - y));
+            _edgeCache.set(p, r);
+        }
+        return r;
+    };
+    let bandCols = nSlots, nBands = 1, bandScale = [];
+    let bandLanes = Uint8Array.of(aaRowCount), bandPitch = Float64Array.of(basePitch);
+    let bandBody = Float64Array.of(bodyOf(basePitch)), bandTop = Float64Array.of(0, bodyOf(basePitch) + BLOCK_GAP);
+    const bandEdgesOf = b => edgesOfPitch(bandPitch[b]);
+    const bandAt = cy => {   // the band holding content y (clamped to the first / last)
+        let lo = 0, hi = nBands - 1;
+        while (lo < hi) { const mid = (lo + hi + 1) >> 1; if (bandTop[mid] <= cy) lo = mid; else hi = mid - 1; }
+        return lo;
+    };
+    // band-local draw parameters read by drawRegion (defaults = the strip: everything); _bLanes -1: all lanes
+    let _bS0 = 0, _bS1 = nSlots, _bScale = null, _bScaleC0 = 0, _bLast = true, _bLanes = -1, _bRL = null;
+    const bandSlot0 = b => b * bandCols;
+    const bandSlot1 = b => Math.min(nSlots, (b + 1) * bandCols);
+    const bandRight = b => NAME_W + (bandSlot1(b) - bandSlot0(b)) * CHAR_W + (b === nBands - 1 ? BADGE_GAP + BADGE_W + 4 : 0);
+    // The columns a band covers, [c0, c1): its slots' columns, and with hidden columns the hidden runs
+    // its markers stand for (a marker's run belongs to the marker's band)
+    const slotColEnd = s => { const p = slots[s]; return p >= 0 ? p : -2 - p; };   // a marker: the last hidden column before it
+    const bandColRange = b => {
+        if (!slots) return [bandSlot0(b), bandSlot1(b)];
+        return [b === 0 ? 0 : slotColEnd(bandSlot0(b) - 1) + 1, b === nBands - 1 ? len : slotColEnd(bandSlot1(b) - 1) + 1];
+    };
+    // The band's ruler, as the DOM Block makes each block's (generateScale over the block's columns):
+    // a label that does not fit the band is left out, not cut at the band's edge. [text, first column]
+    // Variable sites only: whole labels on their own columns (see _hiddenColRulerLabels), made once for the strip and once per band
+    let _stripRL = null; const bandRL = [];
+    const stripRulerLabels = () => _stripRL || (_stripRL = _hiddenColRulerLabels(slots, 0, nSlots, _canvasScaleInterval(CHAR_W)));
+    const bandRulerLabels = b => bandRL[b] || (bandRL[b] = _hiddenColRulerLabels(slots, bandSlot0(b), bandSlot1(b), _canvasScaleInterval(CHAR_W)));
+    const bandRuler = b => {
+        if (!bandScale[b]) { const [c0, c1] = bandColRange(b); bandScale[b] = [generateScale(Math.max(0, c1 - c0), _canvasScaleInterval(CHAR_W), c0), c0]; }
+        return bandScale[b];
+    };
+    // Translation lanes of band b: by gene those of the genes in its shown columns, else every band the same
+    const byGeneLanes = hasCodon && !!state._codonData.byGene;
+    const laneCountOf = b => {
+        if (!byGeneLanes) return aaRowCount;
+        if (!slots) return _codonLanesForRange(bandSlot0(b), bandSlot1(b));
+        const cl = state._codonData.colLanes;
+        if (!cl) return aaRowCount;
+        let k = 0;
+        for (let s = bandSlot0(b), e = bandSlot1(b); s < e && k < 2; s++) { const p = slots[s]; if (p >= 0 && cl[p] > k) k = cl[p]; }
+        return k;
+    };
+    // Draw band b (drawRegion / drawOverlayStrip read these), and back to the strip
+    const setBand = b => {
+        _bS0 = bandSlot0(b); _bS1 = bandSlot1(b); _bLast = b === nBands - 1;
+        const r = bandRuler(b); _bScale = r[0]; _bScaleC0 = r[1]; _bRL = varHide ? bandRulerLabels(b) : null;
+        rowPitch = bandPitch[b]; _bLanes = bandLanes[b];
+    };
+    const clearBand = () => { _bS0 = 0; _bS1 = nSlots; _bScale = null; _bRL = null; _bScaleC0 = 0; _bLast = true; rowPitch = basePitch; _bLanes = -1; };
+    _canvasState.relayoutMs = 0;
+    // (Re)wrap to the viewport width. True when it changed. A render lays the bands out afresh (it nulls the layout
+    // first and keeps its place with the anchor it captured, applied at its end); a window resize re-wraps the
+    // bands it has and keeps the place here, by the same anchor (the band holding the first column, the first row).
+    // (Before: the old in-band pixel offset was put into the new band; where the bands have other translation lanes
+    // that was another row, or the gap below the band. GLM audit cb34 #14.)
+    function relayout() {
+        if (!blockLayout) return false;
+        const t0 = performance.now();
+        const slider = blockSizeRequested();   // the width asked for; the slider shows the width drawn
+        const avail = (canvas.width / dpr || 800) - NAME_W - BADGE_GAP - BADGE_W - 4 - 12;   // 12: the vertical scrollbar over the right edge
+        const fit = Math.max(10, Math.floor(avail / CHAR_W));
+        _canvasState.blockFitCols = fit;   // what fits the window (the Screen button, setBlockSizeToScreen)
+        const cols = Math.max(1, Math.min(slider, nSlots, fit));
+        _syncBlockSizeDisplay(Math.min(slider, fit));   // the band width (a short alignment's one band is narrower still)
+        if (cols === bandCols && _canvasState.layout) return false;
+        const anchor = _canvasState.layout ? _captureViewAnchor(true) : null;   // where the view is, in the old bands
+        bandCols = cols;
+        nBands = Math.max(1, Math.ceil(nSlots / bandCols));
+        bandScale = [];
+        bandRL.length = 0;   // the whole-label rulers too (Variable sites only): they are cut for the old bands' slots (GLM audit of the colleague fixes, #0)
+        bandLanes = new Uint8Array(nBands);
+        bandPitch = new Float64Array(nBands);
+        bandBody = new Float64Array(nBands);
+        bandTop = new Float64Array(nBands + 1);
+        for (let b = 0; b < nBands; b++) {
+            bandLanes[b] = laneCountOf(b);
+            bandPitch[b] = pitchOf(bandLanes[b]);
+            bandBody[b] = bodyOf(bandPitch[b]);
+            bandTop[b + 1] = bandTop[b] + bandBody[b] + BLOCK_GAP;
+        }
+        totalContentW = 0;   // nothing to scroll sideways: the bands fit the width
+        totalContentH = bandTop[nBands] - BLOCK_GAP + 4;
+        _canvasState.totalContentW = totalContentW;
+        _canvasState.totalContentH = totalContentH;
+        _canvasState.offsetX = 0;
+        // bandH / bandBodyH: band 0's (every band's without codon analysis by gene)
+        _canvasState.layout = { kind: 'block', bandCols, nBands, bandH: bandTop[1] - bandTop[0], bandBodyH: bandBody[0], nSlots,
+            bandTop, bandBody, bandPitch, bandLanes, bandAt };
+        if (anchor) _canvasState.offsetY = _canvasBlockAnchorY(anchor);
+        _canvasState.relayoutMs = performance.now() - t0;
+        window._syncVerticalScrollbar?.();
+        window._syncHorizontalScrollbar?.();
+        return true;
+    }
+
+    // Resize canvas to viewport. The container's height is set from its position (the
+    // controls above it change height: edit toolbar, menus), so recompute both here; cheap
+    // to call when nothing moved.
+    let _lastRect = '';
+    function resize(force) {
+        if ((window.devicePixelRatio || 1) !== dpr) {   // another screen scale: everything is sized for the old one
+            if (!_canvasState._dprRerender) { _canvasState._dprRerender = true; setTimeout(() => { _canvasState._dprRerender = false; if (isCanvasMode()) renderAlignment(); }, 0); }
+            return false;
+        }
+        // Printing Block: the print stylesheet hides the viewer (#printBlock holds the bands); measured hidden, the
+        // canvas fell back to 800 px and re-wrapped the bands at ~79 columns behind the print, then back after it
+        // (_clearPrintBlock lays the view out again for the window as it is then: GLM audit cb5 #4/#5)
+        if (document.body.classList.contains('print-block')) return false;
+        const hCss = _fitAlignmentViewport();
+        // The container's client area, not its border box (2px wider, 1px taller): the canvas
+        // overflowed it, its edge was cut, and a scrollTop/scrollLeft write nudged the alignment.
+        const br = alignmentContainer.getBoundingClientRect();
+        const rect = { width: alignmentContainer.clientWidth, height: alignmentContainer.clientHeight };
+        const key = rect.width + 'x' + rect.height + '@' + br.left + ',' + br.top;
+        if (!force && key === _lastRect) return false;
+        _lastRect = key;
+        // Whole device pixels, or the browser resamples the whole canvas and every letter, name and line is blurred
+        // (at 125% or 150% screen scale it sat at x = 11.25 device px, 1687 px of bitmap stretched over 1687.5):
+        // the bitmap's own size on screen, and a shift of under one device pixel to a whole-pixel corner
+        // Within the client area, the CSS size (bitmap / dpr) must also be one layout can hold exactly
+        // (whole 1/64 px): at 125% a 543px area gives 678 device px = 542.4 CSS px, laid out as
+        // 542.390625, and the bitmap was resampled again. Step down to the nearest size that is.
+        const fitDev = (css) => {
+            const max = Math.floor(css * dpr + 1e-6);
+            for (let b = max; b > 0 && b > max - 64; b--) { const u = b / dpr * 64; if (Math.abs(u - Math.round(u)) < 1e-6) return b; }
+            return max;
+        };
+        const bw = fitDev(rect.width), bh = fitDev(rect.height);
+        canvas.width = bw;
+        canvas.height = bh;
+        canvas.style.width = (bw / dpr) + 'px';
+        canvas.style.height = (bh / dpr) + 'px';
+        const cr = canvas.getBoundingClientRect();
+        const snap = (v, cur) => { const base = v - cur; const d = Math.ceil(base * dpr - 1e-3) / dpr - base; return d < 1e-3 ? 0 : d; };
+        const sl = snap(cr.left, parseFloat(canvas.style.left) || 0), st = snap(cr.top, parseFloat(canvas.style.top) || 0);
+        canvas.style.left = overlay.style.left = sl + 'px';
+        canvas.style.top = overlay.style.top = st + 'px';
+        _canvasState.invalidateInsets?.();
+        ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+        back.width = canvas.width;
+        back.height = canvas.height;
+        overlay.width = canvas.width;
+        overlay.height = canvas.height;
+        overlay.style.width = canvas.style.width;
+        overlay.style.height = canvas.style.height;
+        octx.setTransform(dpr, 0, 0, dpr, 0, 0);
+        relayout();
+        return true;
+    }
+    // The canvas size in CSS px from its bitmap: the CSS width is bitmap / dpr (1971.875 at a 1.6 ratio) and parseInt
+    // of it (1971) left the last ~1.4 device-pixel columns unpainted (owner's slivers right of the length badges)
+    const _cssW = () => (canvas.width / dpr) || 800;
+    const _cssH = () => (canvas.height / dpr) || 600;
+    // Scratch copy of the last frame for the scroll copy in draw(): drawImage composites
+    // (source-over), so copying a canvas onto itself where the regions overlap would blend
+    // antialiased pixels with what was there; copying via a cleared buffer is exact.
+    const back = document.createElement('canvas');
+    const bctx = back.getContext('2d', { alpha: false });
+    let drawRaf = 0, overlayRaf = 0;
+    // A frame queued before a re-render ran this (old) renderer: its clampOffsets held the new view to the old size
+    const _isCurrent = () => _canvasState.canvas === canvas;
+    function scheduleDraw() {
+        if (drawRaf) return;
+        drawRaf = requestAnimationFrame(() => {
+            drawRaf = 0;
+            if (_isCurrent()) draw();
+        });
+    }
+    // Selection-only change: redraw the overlay layer, leave the cells alone
+    function scheduleOverlay() {
+        if (overlayRaf) return;
+        overlayRaf = requestAnimationFrame(() => {
+            overlayRaf = 0;
+            if (drawRaf || !_isCurrent()) return;   // the pending content draw redraws the overlay too
+            drawOverlay(_canvasState.offsetX, _canvasState.offsetY, _cssW(), _cssH());
+        });
+    }
+    _canvasState.scheduleOverlay = scheduleOverlay;
+    // Outside callers ask for a redraw because state changed (selection, search, edit), not
+    // the offset; without marking dirty, draw() skipped them unless the view had moved.
+    _canvasState.scheduleDraw = () => { _markDirty(); scheduleDraw(); };
+    // For callers that only moved the view (a page key): no dirty flag, so the frame copy applies
+    _canvasState.scheduleDrawMoved = () => scheduleDraw();
+    // After printing Block: resize() did nothing while body.print-block was set, so a window resized meanwhile (or a
+    // re-render then) left the canvas and the container at their old sizes until the next resize event
+    _canvasState.relayout = () => { if (_isCurrent() && resize(true)) { _markDirty(); scheduleDraw(); } };
+
+    resize(true);
+    if (_canvasState.resizeHandler) window.removeEventListener('resize', _canvasState.resizeHandler);
+    if (_canvasState.mousemoveHandler) window.removeEventListener('mousemove', _canvasState.mousemoveHandler);
+    if (_canvasState.mouseupHandler) window.removeEventListener('mouseup', _canvasState.mouseupHandler);
+    _canvasState.resizeHandler = () => { if (resize(false)) { _markDirty(); scheduleDraw(); } };
+    _canvasState.mousemoveHandler = (e) => {
+        // Row reorder drag (press on a name, move 4 px): the drop target follows the pointer
+        const rd = _canvasState.rowDrag;
+        // the mouseup was lost (focus left the window mid-drag): end the drag here, drop nothing (as the dot-plot pan)
+        if ((rd || dragging) && e.buttons === 0) { _canvasState.mouseupHandler(null); return; }
+        if (rd) {
+            const dx = e.clientX - rd.startX, dy = e.clientY - rd.startY;
+            if (!rd.started) {
+                if (dx * dx + dy * dy < 16) return;
+                rd.started = true;
+                document.body.classList.add('no-select');
+                canvas.style.cursor = 'grabbing';
+            }
+            const t = _canvasRowDropTarget(e.clientY);
+            if (t && (t.row !== rd.target || t.above !== rd.above)) { rd.target = t.row; rd.above = t.above; scheduleOverlay(); }
+            e.preventDefault();
+            return;
+        }
+        if (!dragging) return;
+        _canvasState.offsetX = dragOx - (e.clientX - dragStartX);
+        _canvasState.offsetY = dragOy - (e.clientY - dragStartY);
+        scheduleDraw();
+    };
+    _canvasState.mouseupHandler = (e) => {
+        const rd = _canvasState.rowDrag;
+        if (rd) {
+            _canvasState.rowDrag = null;
+            document.body.classList.remove('no-select');
+            canvas.style.cursor = 'default';
+            if (rd.started) {
+                const t = e ? _canvasRowDropTarget(e.clientY) : null;
+                // _moveDraggedSequences re-renders; when it declines (drop onto itself) clear the indicator
+                if (!t || !_moveDraggedSequences(rd.from, t.row, t.above)) scheduleOverlay();
+            } else if (e) {
+                _plainNameClick(rd.from, e);
+                scheduleOverlay();
+            }
+            return;
+        }
+        dragging = false;
+        canvas.style.cursor = 'default';
+    };
+    window.addEventListener('resize', _canvasState.resizeHandler);
+    setAlignmentColorSchemeClass();
+
+    // Clamp offsets
+    // The persistent scrollbars are drawn over the canvas (the vertical one along its right edge):
+    // the scroll range has to end where they begin, or the last column / row sits under them.
+    let _insetR = 0, _insetB = 0, _insetsOk = false;
+    _canvasState.invalidateInsets = () => { _insetsOk = false; };
+    // for the scrollbars: their range has to be clampOffsets' (the view less the other bar over it)
+    _canvasState.scrollInsets = () => { scrollbarInsets(); return { r: _insetR, b: _insetB }; };
+    function scrollbarInsets() {
+        if (_insetsOk) return;
+        const cr = canvas.getBoundingClientRect();
+        const cover = (sel, horiz) => {
+            const b = document.querySelector(sel);
+            if (!b || !b.offsetParent) return null;   // not shown (yet)
+            if (getComputedStyle(b).visibility === 'hidden') return 0;   // nothing to scroll: hidden, cells show under it
+            const r = b.getBoundingClientRect();
+            const ox = Math.min(cr.right, r.right) - Math.max(cr.left, r.left), oy = Math.min(cr.bottom, r.bottom) - Math.max(cr.top, r.top);
+            if (ox <= 0 || oy <= 0) return 0;
+            return horiz ? Math.max(0, cr.bottom - r.top) : Math.max(0, cr.right - r.left);
+        };
+        const v = cover('.vertical-scrollbar', false), hz = cover('.horizontal-scrollbar', true);
+        _insetR = v || 0; _insetB = hz || 0;
+        _insetsOk = v !== null;   // measure again until the vertical bar is shown
+    }
+    function clampOffsets() {
+        scrollbarInsets();
+        const w = (_cssW()) - _insetR;
+        const h = (_cssH()) - _insetB;
+        // Whole device pixels: the frame copy in draw() then moves pixels exactly and the
+        // strip it draws next to them lands on the same pixel phase.
+        const q = v => Math.round(v * dpr) / dpr;
+        _canvasState.offsetX = q(Math.max(0, Math.min(_canvasState.offsetX, totalContentW - w)));
+        _canvasState.offsetY = q(Math.max(0, Math.min(_canvasState.offsetY, totalContentH - h)));
+    }
+
+    // Draw. A scroll step moves the pixels already on screen: when only one axis changed, by
+    // less than the viewport, and nothing else is dirty, the previous frame is copied by the
+    // whole device-pixel delta and only the exposed strip is drawn (Jalview's fastPaint and
+    // Glide Data Grid's blitLastFrame do the same). Anything else is a full redraw.
+    // Measured 2026-10-16 at 600 x 600 on a Radeon 780M: a full viewport is ~10,600
+    // drawImage calls (30-58 ms), a 120 px wheel step exposes ~8 rows (~4 ms). The copy
+    // is exact because clampOffsets keeps the offsets on whole device pixels.
+    _canvasState.stats = { full: 0, blit: 0, lastDrawMs: 0, fullMs: [], blitMs: [] };
+    function draw() {
+        clampOffsets();
+        // Skip if offset hasn't changed and not explicitly marked dirty
+        if (!_dirty && _canvasState.offsetX === _lastOffX && _canvasState.offsetY === _lastOffY) return;
+        const t0 = performance.now();
+        const w = _cssW();
+        const h = _cssH();
+        const ox = _canvasState.offsetX;
+        const oy = _canvasState.offsetY;
+        const W = canvas.width, H = canvas.height;
+        const dxDev = Math.round((ox - _lastOffX) * dpr), dyDev = Math.round((oy - _lastOffY) * dpr);
+        // Anything that changes what a cell looks like must force a full redraw even when
+        // the caller forgot to mark the view dirty (safety net for the frame copy).
+        const sig = contentSig();
+        let same = !!_lastSig && _lastSig.length === sig.length;
+        for (let i = 0; same && i < sig.length; i++) if (_lastSig[i] !== sig[i]) same = false;
+        _lastSig = sig;
+        const canBlit = !_dirty && same && _lastOffX >= 0 && ((dxDev === 0) !== (dyDev === 0))
+            && Math.abs(dxDev) < W && Math.abs(dyDev) < H;
+        if (_canvasHoverPt && (ox !== _lastOffX || oy !== _lastOffY)) _canvasRehoverSoon();   // the cells moved under a still pointer
+        _lastOffX = ox; _lastOffY = oy; _dirty = false;
+        // Draws what intersects a device-pixel rectangle of the viewport, nothing else.
+        const drawClipped = (x0, y0, x1, y1) => {
+            if (x1 <= x0 || y1 <= y0) return;
+            ctx.save();
+            ctx.setTransform(1, 0, 0, 1, 0, 0);
+            ctx.beginPath(); ctx.rect(x0, y0, x1 - x0, y1 - y0); ctx.clip();
+            ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+            clearWhite(ctx, 0, 0, w, h);
+            drawArea(ox, oy, w, h, x0 / dpr, y0 / dpr, x1 / dpr, y1 / dpr);
+            ctx.restore();
+        };
+        if (canBlit) {
+            // With sticky names a horizontal step leaves the name column [0, NAME_W) in place.
+            const fixed = (stickyNames && dxDev !== 0) ? Math.ceil(NAME_W * dpr) : 0;
+            const cw = W - fixed - Math.abs(dxDev), ch = H - Math.abs(dyDev);
+            if (cw > 0 && ch > 0) {
+                const sx = fixed + Math.max(0, dxDev), sy = Math.max(0, dyDev);
+                const dx = fixed + Math.max(0, -dxDev), dy = Math.max(0, -dyDev);
+                bctx.setTransform(1, 0, 0, 1, 0, 0);
+                bctx.drawImage(canvas, 0, 0);   // opaque source covering the whole scratch: no clear needed
+                ctx.save();
+                ctx.setTransform(1, 0, 0, 1, 0, 0);
+                ctx.imageSmoothingEnabled = false;
+                ctx.drawImage(back, sx, sy, cw, ch, dx, dy, cw, ch);   // opaque: replaces the pixels, nothing to clear
+                ctx.restore();
+            }
+            // The exposed strip, widened to the nearest row edge (or column edge) so that every
+            // cell is either copied whole or drawn whole: a cell cut by the clip would have
+            // its antialiased edge pixels composited twice (copy, then draw).
+            const rowEdgeDev = (yDev, up) => {   // device y of the row edge at/above (up) or at/below yDev
+                if (blockLayout) {   // the line edges of the band the point is in
+                    const cy = yDev / dpr + oy, b = bandAt(cy), ry = cy - bandTop[b], bandEdges = bandEdgesOf(b);
+                    let e = up ? 0 : bandTop[b + 1] - bandTop[b];
+                    if (up) { for (let i = bandEdges.length - 1; i >= 0; i--) if (bandEdges[i] <= ry + 1e-6) { e = bandEdges[i]; break; } }
+                    else { for (let i = 0; i < bandEdges.length; i++) if (bandEdges[i] >= ry - 1e-6) { e = bandEdges[i]; break; } }
+                    const ed = Math.round((bandTop[b] + e - oy) * dpr);
+                    return up ? Math.max(0, Math.min(ed, yDev)) : Math.min(H, Math.max(ed, yDev));
+                }
+                const k = (yDev / dpr - HEADER_H + oy) / rowPitch;
+                const kk = up ? Math.floor(k + 1e-6) : Math.ceil(k - 1e-6);
+                const e = Math.round((HEADER_H + kk * rowPitch - oy) * dpr);
+                return up ? Math.max(0, Math.min(e, yDev)) : Math.min(H, Math.max(e, yDev));
+            };
+            const colEdgeDev = (xDev, left) => {
+                const k = (xDev / dpr - NAME_W + ox) / CHAR_W;
+                const kk = left ? Math.floor(k + 1e-6) : Math.ceil(k - 1e-6);
+                const e = Math.round((NAME_W + kk * CHAR_W - ox) * dpr);
+                return left ? Math.max(fixed, Math.min(e, xDev)) : Math.min(W, Math.max(e, xDev));
+            };
+            // Scrolling right, the strip takes one more whole cell on its left: a glyph wider than its cell (the
+            // bold codon-track letters in Liberation Mono, Linux, 9 px of ink in an 8 px cell) has ink in the cell
+            // to its left, which a full redraw keeps (that cell is drawn first) but a strip that started at the
+            // glyph's cell edge never drew, so the copy kept a column without it (measured 2026-11-09: one column
+            // at the canvas's right edge, up to 11 units off a full redraw, depending on the wheel steps).
+            // Scrolling left needs nothing: drawRegion draws the cell at the strip's right edge too.
+            if (dxDev > 0) drawClipped(colEdgeDev(W - dxDev - CHAR_W * dpr, true), 0, W, H);
+            else if (dxDev < 0) drawClipped(fixed, 0, colEdgeDev(fixed - dxDev, false), H);
+            else if (dyDev > 0) drawClipped(0, rowEdgeDev(H - dyDev, true), W, H);
+            else drawClipped(0, 0, W, rowEdgeDev(-dyDev, false));
+            // The copied side's canvas edge: Chrome does not draw text whose ink would reach only the

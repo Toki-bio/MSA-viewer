@@ -1,0 +1,423 @@
+[manual.html lines 1541-1962 of ViewAlign fd8b8e4]
+    <tr><td>Synonymous mutations</td><td>Thin green underline - amino acid unchanged relative to the first sequence</td></tr>
+    <tr><td>Synonymous through several changes</td><td>Dashed green underline - the codon differs at two or three bases and still gives the same amino acid; one of those changes alone could change it</td></tr>
+    <tr><td>Non-synonymous mutations</td><td>Thicker red underline - amino acid changed</td></tr>
+  </table>
+  <p>
+    A sequence that starts after the frame start is read from wherever its first base falls in
+    the alignment's codon grid; the bases of a codon it only partly covers get no amino acid.
+    A residue typed in Edit mode is reflected in the translation and the marks when Edit mode ends.
+  </p>
+  <figure style="margin: 12px 0;">
+    <img src="img/codon-example.png" alt="Codon analysis on examples/synthetic/synth_msa.fa, columns 1 to 60, with the translation under each row."
+      style="max-width: 100%; border: 1px solid #ddd; border-radius: 4px;">
+    <figcaption style="font-size: 11px; color: #666; margin-top: 5px;">
+      <code>examples/synthetic/synth_msa.fa</code>, columns 1-60 (the coding part; see <code>examples/synthetic/README.md</code>), conservation shading off, Standard code, frame auto-selected. <code>alpha_syn</code>: CTG&rarr;TTG in codon 3 is synonymous (green underline, still L). <code>alpha_mis</code>: GCA&rarr;GAA in codon 2 is non-synonymous (red underline, A&rarr;E). <code>beta_stop</code>: TAC&rarr;TAA in codon 10 is an in-frame stop. <code>beta_fs</code>: the one-base gap at column 5 (red <code>!</code>) shifts the frame, so every later codon translates differently and new stops appear. <code>beta_del</code>: the three-base gap removes codon 7 and the frame is kept. TAG at columns 58-60 is the normal stop codon. Regenerate with <code>node tools/figures/build_manual_figures.js &amp;&amp; python tools/figures/build_manual_figures.py</code>.
+    </figcaption>
+  </figure>
+
+  <h3 id="di-sticky">5.5 Sticky Names</h3>
+  <p>
+    When <strong>Sticky</strong> (on the Name Len row) is checked, the default, the sequence
+    name column remains fixed on the left while scrolling horizontally. This ensures you always know which sequence you are looking at.
+  </p>
+
+  <h3 id="di-zoom">5.6 Zoom &amp; Reset</h3>
+  <p>
+    The Zoom slider controls font size from <strong>50% to 200%</strong> using a
+    logarithmic scale. Use the <strong>-</strong> and <strong>+</strong> buttons
+    for fine adjustment, or keyboard shortcuts <kbd>Ctrl+-</kbd> and <kbd>Ctrl++</kbd>.
+  </p>
+  <p>
+    When zoom ≠ 100%, the percentage label turns bold blue.
+    <strong>Click the percentage</strong> to instantly reset to 100%.
+  </p>
+
+  <h3 id="di-names">5.7 Name Length</h3>
+  <p>
+    Controls how many characters of each sequence name are displayed. The slider runs from 3
+    to the longest name in the alignment plus 2; a name longer than the setting ends in "…"
+    (hover it for the full name). Dragging updates the names and the column width together;
+    in the number box, a value is applied when you pause typing, and Enter or leaving the box
+    corrects a value outside the range. Check <strong>No limit</strong> to show every name in
+    full; the slider is then disabled, and unticking returns to its value. Presets and
+    snapshots remember both. This only affects display, not the underlying data.
+  </p>
+</section>
+
+<!-- ════════════════════════════════════════ -->
+<section id="consensus-menu">
+  <h2>6. Consensus Menu</h2>
+
+  <h3 id="co-display">6.1 Consensus Display</h3>
+  <p>
+    The consensus line shows the most frequent residue at each column, when it is
+    frequent enough (see below). Toggle it with the <strong>Show consensus</strong> checkbox. Position it at the
+    <strong>Top</strong> or <strong>Bottom</strong> of the alignment via the radio buttons.
+  </p>
+  <p>Keyboard shortcut: <kbd>Ctrl+B</kbd> inserts a consensus of the selected sequences below them (same as <strong>+ Consensus Below</strong>).</p>
+
+  <h3 id="co-thresholds">6.2 Thresholds &amp; Coverage</h3>
+  <table>
+    <tr><th>Parameter</th><th>Meaning</th></tr>
+    <tr><td>Consensus threshold</td><td>The most frequent residue is the consensus call when its count is &gt;= this % of <em>all</em> sequences, gaps included (so a column that is half gaps cannot pass a 60% threshold). Below the threshold the <strong>Fallback</strong> applies.</td></tr>
+    <tr><td>Minimum coverage</td><td>A column must have &gt;= this % of non-gap characters; otherwise the consensus shows a gap (<code>-</code>).</td></tr>
+    <tr><td>Normal / Ambiguous</td><td>When two or more residues tie for most frequent, <strong>Normal</strong> takes a definite residue over <code>N</code>/<code>X</code>, then the alphabetically first. <strong>Ambiguous</strong> gives the IUPAC code of tied nucleotides (A+G gives <code>R</code>).</td></tr>
+    <tr><td>Fallback</td><td>What a column below the threshold shows when it holds at least two different residues: <strong>Gap</strong> gives <code>-</code>; <strong>N</strong> gives <code>N</code> (<code>X</code> for protein); <strong>IUPAC</strong> gives the code of the bases present (A, C, G gives <code>V</code>), or for protein <code>B</code> (D/N), <code>Z</code> (E/Q), <code>J</code> (I/L) or <code>X</code>. A column with one residue type and many gaps shows <code>-</code>.</td></tr>
+  </table>
+  <p>The consensus always counts gaps in the denominator, whatever the shading mode (All / Non-Gap) is set to.
+     <code>N</code> and <code>X</code> are counted like other residues, so a column that is mostly <code>N</code> has consensus <code>N</code>.</p>
+
+  <h3 id="co-group">6.3 Group Consensus</h3>
+  <p>
+    Select the sequences of a group (from the Group explorer, or by hand) and
+    click <strong>+ Consensus Below</strong> (<kbd>Ctrl+B</kbd>) to insert a
+    consensus row into the alignment under the selection. The Group explorer
+    can also copy an ungapped consensus to the clipboard without inserting a
+    row. Useful for extracting a representative of each subfamily.
+  </p>
+
+  <h3 id="an-track">6.4 Annotation track (BED)</h3>
+  <p>
+    The <strong>Annotation</strong> menu (next to Consensus) puts a compact feature track
+    above the alignment: the genes of a mitogenome, exons, repeats, primers. Load a BED
+    file (<strong>Load BED file</strong>), a URL (<strong>Load URL</strong>), or open the
+    viewer with <code>?bed=&lt;url&gt;</code> next to <code>?url=</code>. The track is drawn
+    in Full, Block and Canvas modes; <strong>Show annotation track</strong> hides it without
+    unloading it, <strong>Clear</strong> removes it. It is saved in snapshots.
+  </p>
+  <table>
+    <tr><th>BED column</th><th>Use</th></tr>
+    <tr><td>1 chrom</td><td>The sequence the coordinates refer to: a sequence name of the alignment (the display name, the first word of the header, or a name that contains it, e.g. <code>NC_069019.1</code> for <code>Sbet_NC_069019_DK_BMNT</code>). <code>*</code>, <code>.</code>, <code>alignment</code> or <code>columns</code> means alignment columns</td></tr>
+    <tr><td>2-3 start, end</td><td>0-based, half-open, on the ungapped sequence. They are mapped through that row's gaps at every redraw, so the features follow gap edits</td></tr>
+    <tr><td>4 name</td><td>The label in the box (shown when it fits) and in the tooltip</td></tr>
+    <tr><td>5 score, 6 strand</td><td>Score in the tooltip; <code>+</code>/<code>-</code> draw an arrow head on the box</td></tr>
+    <tr><td>9 itemRgb</td><td><code>R,G,B</code> fill colour. Without it, mitochondrial gene names (ND, COX, ATP, CYTB, tRNA, rRNA, control region) get fixed colours and other names a stable colour from their text</td></tr>
+    <tr><td>13 (extra)</td><td>Free text shown in the tooltip, e.g. the GenBank product</td></tr>
+  </table>
+  <p>
+    Overlapping features go to further lanes (up to six). Hover a feature for its name,
+    description, coordinates on the sequence and the alignment columns; click it to
+    select those columns (Shift adds to the selection), then use the column tools as
+    usual. Features on a name that is not in the alignment are skipped and counted in
+    the menu's status line. The track is not drawn while <em>Variable sites only</em>
+    hides columns (in any view). With Codon analysis on, the CDS features of the
+    track set the reading frame and strand of each gene (<a href="#di-codons">5.4</a>).
+  </p>
+</section>
+
+<!-- ════════════════════════════════════════ -->
+<section id="search-menu">
+  <h2>7. Search Menu</h2>
+
+  <h3 id="se-motif">7.1 Motif Search</h3>
+  <p>
+    Type a sequence motif into the search box and click <strong>Find</strong>
+    (or press <kbd>Ctrl+F</kbd>). <kbd>Ctrl+F</kbd> anywhere on the page outside a text field opens this search box
+    and, when it already holds a motif, runs the search; the browser's own find bar is not used,
+    because in the Canvas and Block views the letters are drawn as pixels it cannot see. Matches are highlighted in the alignment
+    using the selected highlight colour. The total match count and positions
+    are reported.
+  </p>
+  <p>Search is case-insensitive and searches against degapped sequences
+  (gaps are stripped before comparison). <strong>Reverse complement query</strong> replaces the
+  text in the search box with its reverse complement.</p>
+
+  <h3 id="se-regex">7.2 Regex Search</h3>
+  <p>
+    Check the <strong><code>.*</code></strong> checkbox to interpret your search
+    as a JavaScript regular expression. Examples:
+  </p>
+  <ul>
+    <li><code>[AG]CGT</code> - A or G followed by CGT</li>
+    <li><code>ATG.{3}TAA</code> - ATG, any 3 bases, then TAA (in-frame stop search)</li>
+    <li><code>GG[ACGT]{10,}CC</code> - at least 10 bases between GG and CC</li>
+    <li><code>TATA[AT]A</code> - TATAWA (TATA box motif)</li>
+  </ul>
+
+  <h3 id="se-mismatch">7.3 Mismatch Tolerance</h3>
+  <p>
+    The <strong>Mismatches</strong> input (0-10) allows approximate matching.
+    A mismatch budget of 2 means up to 2 character differences are allowed in each match.
+    It applies to literal search only; with regex on, the pattern must match exactly.
+  </p>
+
+  <h3 id="se-colour">7.4 Search Highlight Colour</h3>
+  <p>
+    Use the colour picker to choose the highlight colour for search results.
+    Hovering the colour box opens a palette of 12 colours: click one to use it, or
+    <strong>More…</strong> (or a click on the box itself) for the full colour picker.
+    Multiple searches (with <strong>Find</strong> not <strong>Clear Last</strong>)
+    accumulate highlights. Use <strong>Clear Last</strong> (<kbd>Ctrl+Shift+F</kbd>)
+    to remove the most recent search highlights and <strong>Clear All</strong> (<kbd>Ctrl+Alt+F</kbd>)
+    to remove every search highlight. Each search in the
+    <strong>Active searches</strong> list (and in the Selections panel, §7.6) has a
+    checkbox to hide it without losing it.
+  </p>
+  <p>
+    Highlights are worked out from the sequences each time a row is drawn, so they
+    stay on the matching residues through editing: inserted or deleted gaps, Move and
+    Slide drags, typed residues and undo. A match that an edit breaks loses its
+    highlight, and a match an edit creates gains one. Match counts cover every
+    sequence, including rows scrolled out of view in large alignments.
+  </p>
+  <p>
+    <strong>Presets</strong> keep a set of searches under a name, for example the promoter
+    boxes you look for in every new alignment. Run the searches (motifs, regular expressions,
+    mismatches, both strands, colours), type a name in the Presets row and press
+    <strong>Save active</strong>; choose the name and press <strong>Load</strong> on any
+    alignment to run them all again (they join the active searches; a search already active is
+    run again, not doubled), or <strong>Delete</strong> to remove the set. Presets are kept in
+    the browser, like the colour and clustering presets. A dot-plot collection entry handed to
+    the Search box (&sect;9.7) can be saved in a preset like any other search.
+  </p>
+
+  <h3 id="se-restriction">7.5 Restriction Sites</h3>
+  <p>
+    Click <strong>Restriction Sites</strong> in the Search menu to search common
+    restriction enzyme recognition sites across the loaded alignment.
+  </p>
+  <ul>
+    <li>The popup includes 50 commonly used enzymes, each labelled with its recognition sequence.</li>
+    <li>Use <strong>Manual enzymes/sites</strong> for additional enzymes. Enter comma-separated values such as <code>BspQI:GCTCTTC, GAATTC</code>.</li>
+    <li>IUPAC ambiguity codes are supported in recognition sites, for example <code>GANTC</code>.</li>
+    <li>Both strands are always searched in a nucleotide alignment, whatever <strong>Search both strands</strong> says: an enzyme with a non-palindromic site (BsaI, <code>GGTCTC</code>) is also found where the site lies on the other strand (<code>GAGACC</code>). A protein alignment is searched on the forward strand only, and the result message says so.</li>
+    <li>Results are highlighted in the alignment and reported as unique sites, affected sequences, and raw row matches.</li>
+  </ul>
+
+  <h3 id="se-selections">7.6 Selections Panel</h3>
+  <p>
+    As soon as anything is selected or highlighted, a <strong>Selections</strong> tab
+    appears at the end of the top menu row, with a count. It lists everything in one
+    place: selected <strong>rows</strong>, <strong>columns</strong> and
+    <strong>residues</strong>, each <strong>search</strong>, <strong>TSD marks</strong>,
+    <strong>repeat highlights</strong> and <strong>name colours</strong>. Like the other
+    menus it can be dragged off by its title bar into a floating window.
+  </p>
+  <ul>
+    <li><strong>Checkbox</strong>: switches an item off and back on. An item that is off
+      is kept but neither shown nor used, so Copy, Delete, Realign and the other
+      commands act only on what is on. Switched-off rows and residues follow their
+      sequences if rows are moved or deleted.</li>
+    <li><strong>&rarr;</strong>: goes to the item. Clicking again steps to the next
+      selected row, column range, residue block or search match.</li>
+    <li><strong>x</strong>: removes the item.</li>
+    <li><strong>Clear selection</strong> (or <kbd>Esc</kbd> when no menu, dialog or text
+      field is open) removes the selected rows, columns and residues; highlights stay. While
+      typing in a cell with the Type tool, <kbd>Esc</kbd> first leaves the cell.
+      <strong>Clear all</strong> removes everything in the list. <strong>Hide all</strong>
+      / <strong>Show all</strong> switches every item off or on.</li>
+    <li><strong>Undo</strong> brings back whatever the last removal, Clear or
+      <kbd>Esc</kbd> took away.</li>
+    <li><strong>Marks that meet on one residue all stay visible.</strong> The fill goes, in
+      order, to a search hit, then a TSD mark (colour style), then a repeat highlight, then a
+      group letter (SNP groups), over the shading or colour scheme. The others keep their own
+      text property: TSD marks are always <strong>bold in a second (sans-serif) font</strong>,
+      restriction sites are <em>italic</em>, a covered repeat becomes a line over the letter, a
+      covered group letter keeps its group colour as text colour, and trimmed residues are
+      struck through. Selections (rows, columns, residues, the edit cell) are tints laid over
+      whatever the residue shows. Where one mark covers another's colour, its item here says
+      so, and a search that covers existing marks says so in its message.</li>
+    <li>Name cells: a Colour Names colour fills the cell; a group colour fills it when there is
+      no Colour Names colour, and otherwise shows as a stripe on the left edge.</li>
+    <li>TSD marks and repeat highlights stay on their residues when gaps are inserted or rows
+      are deleted, moved or sorted, and after Undo.</li>
+    <li>Snapshots save the whole list, including which items are off, and loading one
+      gives back exactly that list. Switched-off columns move with inserted or deleted
+      columns; switched-off rows are found again after Undo by sequence name.</li>
+  </ul>
+</section>
+
+<!-- ════════════════════════════════════════ -->
+<section id="edit-menu">
+  <h2>8. Editing</h2>
+  <p>
+    The toolbar's <strong>Edit</strong> button, the Actions menu, keyboard shortcuts and the
+    right-click menu provide sequence editing capabilities with full undo/redo support.
+  </p>
+
+  <h3 id="ed-row">8.1 Row Operations</h3>
+  <table>
+    <tr><th>Action</th><th>Shortcut</th><th>Description</th></tr>
+    <tr><td>Select all</td><td><kbd>Ctrl+A</kbd></td><td>Select or deselect all sequences</td></tr>
+    <tr><td>Copy</td><td><kbd>Ctrl+C</kbd></td><td>Copy the selected bases, or the selected sequences as ungapped FASTA (names are copied from the Group explorer's <em>Copy names</em>, §4.5)</td></tr>
+    <tr><td>Copy sequences</td><td><kbd>Alt+C</kbd></td><td>Copy selected sequences as ungapped FASTA (same as Ctrl+C with no bases selected). Ctrl+Shift+C also works where the browser lets it through; Chrome, Edge and Firefox keep it for their developer tools</td></tr>
+    <tr><td>Delete</td><td><kbd>Ctrl+Del</kbd></td><td>Remove selected sequences (undoable)</td></tr>
+    <tr><td>Duplicate</td><td><kbd>Ctrl+U</kbd></td><td>Duplicate selected sequences (undoable)</td></tr>
+    <tr><td>Reverse complement</td><td><kbd>Ctrl+R</kbd></td><td>Reverse and complement selected DNA sequences</td></tr>
+    <tr><td>Move up</td><td><kbd>Ctrl+↑</kbd></td><td>Move selected rows up by one position</td></tr>
+    <tr><td>Move down</td><td><kbd>Ctrl+↓</kbd></td><td>Move selected rows down by one position</td></tr>
+    <tr><td>Move to top</td><td><kbd>Ctrl+Home</kbd></td><td>Send selected rows to the top</td></tr>
+    <tr><td>Move to bottom</td><td><kbd>Ctrl+End</kbd></td><td>Send selected rows to the bottom</td></tr>
+    <tr><td>Undo</td><td><kbd>Ctrl+Z</kbd></td><td>Undo last editing operation</td></tr>
+    <tr><td>Redo</td><td><kbd>Ctrl+Y</kbd></td><td>Redo last undone operation</td></tr>
+  </table>
+
+  <h3 id="ed-col">8.2 Column Operations</h3>
+  <table>
+    <tr><th>Action</th><th>Shortcut</th><th>Description</th></tr>
+    <tr><td>Copy columns</td><td><kbd>Ctrl+Shift+V</kbd></td><td>Copy selected columns as FASTA block</td></tr>
+    <tr><td>Delete columns</td><td><kbd>Ctrl+Shift+D</kbd></td><td>Remove selected columns from all sequences (undoable)</td></tr>
+    <tr><td>Realign block</td><td><kbd>Ctrl+Shift+R</kbd></td><td>Realign each selected column span with MAFFT and splice back (in-browser WASM). Isolated single columns are skipped; need at least one span of 2+ columns, otherwise the browser's hard-refresh applies. Honours Adjust direction, Reorder, and Reorder only — see §3.2.1</td></tr>
+  </table>
+  <p>
+    <strong>Select columns</strong> by <kbd>Ctrl+Alt+Click</kbd> on any residue.
+    <kbd>Ctrl+Alt</kbd>-drag to select column ranges, and <kbd>Ctrl+Alt</kbd>-click further
+    residues to add disjoint spans. Selected columns appear with a green background.
+    (<kbd>Ctrl+Click</kbd> without Alt selects residues in one row, not columns.)
+  </p>
+
+  <h3 id="ed-editmode">8.3 GeneDoc-Style Edit Mode</h3>
+  <p>
+    Toggle <strong>Edit Mode</strong> with the <strong>Edit</strong> button in the toolbar
+    (next to the undo/redo arrows). When active, these edit tools appear:
+  </p>
+  <ul>
+    <li>
+      <strong>Move NoGaps</strong> - drag residues without keeping intervening gaps.
+      Equivalent to GeneDoc's "Arrange / MoveText".
+    </li>
+    <li>
+      <strong>Slide KeepGaps</strong> - drag a segment while preserving its internal
+      gap pattern. Equivalent to GeneDoc's "Move / SlideText".
+    </li>
+    <li>
+      <strong>Type</strong> - click a cell and type any letter (nucleotide or amino acid; stored in the case you type it; the aa | Aa | AA switch changes only the display)
+      or <code>-</code> / <code>.</code> for a gap. Modifies the cell directly.
+    </li>
+    <li>
+      <strong>Ins Gap Seq</strong> / <strong>Del Gap Seq</strong> - click a position to
+      insert or remove a single gap in that row only. Deleting requires a gap already at
+      that position.
+    </li>
+    <li>
+      <strong>Ins Gap Other</strong> / <strong>Del Gap Other</strong> - same, but applied
+      to every row <em>except</em> the one you clicked.
+    </li>
+    <li>
+      <strong>Ins Gap All</strong> / <strong>Del Gap All</strong> - same, applied to every
+      row including the one you clicked.
+    </li>
+    <li>
+      <strong>Select Column</strong> - click or drag to select columns, then use
+      <strong>Delete Cols</strong> to remove them from every sequence.
+    </li>
+    <li>
+      <strong>Clear Gap Cols</strong> - remove every column that is a gap in all sequences.
+    </li>
+    <li>
+      <strong>R Cons</strong> - recompute conservation shading immediately (useful when
+      <em>Shade while dragging</em>, below, is off).
+    </li>
+    <li>
+      <strong>SeqEdit</strong> - open the full-sequence text editor for the row you last
+      clicked (see §8.5).
+    </li>
+  </ul>
+  <div class="note">
+    <strong>Inserting a gap widens the whole alignment.</strong> The row you inserted into
+    gets the new gap at the exact column you clicked; every other row gets a gap appended
+    at the <em>end</em> instead, so the alignment stays rectangular. This is why an Ins Gap
+    Seq/Other on one row can shift where residues fall in rows you didn't touch - check the
+    result before continuing to edit.
+  </div>
+  <p>
+    A <em>Shade while dragging</em> checkbox updates conservation shading while a
+    Move/Slide drag is in progress; the shading is recomputed when the drag ends in any case.
+    No residue tooltip appears while a sequence is being moved.
+  </p>
+  <p>
+    With a gap tool the pointer is a crosshair with a white halo, visible on black and grey
+    cells, and the cell it would act on is outlined in orange. A double-click with a gap tool
+    does nothing (it used to switch to <strong>Type</strong>).
+  </p>
+  <div class="note">
+    <strong>Note:</strong> All editing operations are undoable. The status bar shows the
+    current alignment length so you can verify changes.
+  </div>
+  <div class="note">
+    <strong>Editing works in Full, Block and Canvas views.</strong> Reads view draws no per-residue
+    cells for the tools to act on, so Edit Mode is unavailable there and says so. In Canvas
+    and Block (both drawn on a canvas) the tools, typing, undo, rename and row drag behave as
+    in Full view, and so do motif search, Highlight diffs, Variable sites only, codon analysis, Show 2D and snapshots.
+  </div>
+
+  <h3 id="ed-move-slide">8.4 Move &amp; Slide Tools</h3>
+  <p>
+    Both tools act on the row you drag in - not on the current selection - and are controlled
+    by dragging within the alignment viewport.
+  </p>
+  <ul>
+    <li>
+      <strong>Move NoGaps</strong> shifts the residues between the one you grabbed and the
+      nearest gap in the direction you drag, closing that gap up. Residues on the far side of
+      the grab point stay where they are, so the edit stays local.
+    </li>
+    <li>
+      <strong>Slide KeepGaps</strong> inserts (dragging right) or removes (dragging left) a
+      single gap at the grab point, so the whole remainder of that row shifts by one column
+      with its internal gaps intact. Dragging left therefore does nothing unless there is a
+      gap immediately to the left of the residue you grabbed - that requirement is what makes
+      a left slide the exact inverse of a right one. If the row has no trailing gap to absorb
+      the insertion, a right slide lengthens the whole alignment by a column.
+    </li>
+  </ul>
+  <figure style="margin: 12px 0;">
+    <img src="img/move-slide-example.png" alt="Three views of the first 30 columns of examples/synthetic/synth_msa.fa: before editing, after a Move NoGaps drag on beta_del, and after a Slide KeepGaps drag on beta_fs."
+      style="max-width: 100%; border: 1px solid #ddd; border-radius: 4px;">
+    <figcaption style="font-size: 11px; color: #666; margin-top: 5px;">
+      Real drags on <code>examples/synthetic/synth_msa.fa</code>. <strong>Move NoGaps</strong>: grabbing column 13 of <code>beta_del</code> and dragging right moves GAGTTC into the three-column gap, which reappears on the left of the moved residues (ATGGCACTGAAAGAGTTC---ATG &rarr; ATGGCACTGAAA---GAGTTCATG). <strong>Slide KeepGaps</strong>: grabbing column 6 of <code>beta_fs</code> and dragging one column left consumes the gap immediately to its left, and the rest of the row shifts left by one (ATGG-ACTG&hellip; &rarr; ATGGACTG&hellip;). Regenerate with <code>node tools/figures/build_manual_figures.js &amp;&amp; python tools/figures/build_manual_figures.py</code>.
+    </figcaption>
+  </figure>
+
+  <h3 id="ed-seqedit">8.5 Sequence Text Editor</h3>
+  <p>
+    Open the full-sequence text editor with <strong>SeqEdit</strong> (Actions → Editing, or the
+    edit tool bar of §8.3) or with <strong>Edit Sequence...</strong> in the right-click menu.
+    This provides a textarea with the raw sequence for the selected row, plus quick transformations:
+  </p>
+  <ul>
+    <li><strong>Degap</strong> - remove all gaps from the sequence</li>
+    <li><strong>Reverse</strong> - reverse the sequence order</li>
+    <li><strong>Complement</strong> - complement the sequence (DNA)</li>
+    <li><strong>Rev Comp</strong> - reverse and complement</li>
+    <li><strong>Uppercase</strong> / <strong>Lowercase</strong> - change case</li>
+    <li><strong>Pad/trim to alignment length</strong> - auto-adjust length on apply</li>
+  </ul>
+
+  <h3 id="ed-undo">8.6 Undo / Redo</h3>
+  <p>
+    Every editing operation - row delete, column delete, duplicate, move, slide,
+    type, insert-gap, degap, trim - is tracked in an undo stack.
+    <kbd>Ctrl+Z</kbd> steps backward; <kbd>Ctrl+Y</kbd> steps forward.
+    The undo history is cleared when a new alignment is loaded.
+  </p>
+  <p>
+    The toolbar carries undo and redo arrows, each with a small caret beside it that opens the
+    history list. Drag entries name the tool, how far the move went and which sequence it was
+    on - for example <em>MoveText 4 col right &middot; NW_004567116.1&hellip;</em> - so a move
+    can be found without stepping through the stack one action at a time. Clicking an entry
+    unwinds everything back to that point.
+  </p>
+
+  <h3 id="ed-degap">8.7 Degap Tool</h3>
+  <p>
+    The <strong>Degap</strong> button in the Edit toolbar removes all gap-only columns
+    from the entire alignment. This is distinct from the SeqEdit degap (which operates
+    on individual sequences). Alignment-wide degap is undoable.
+  </p>
+
+  <h3 id="ed-context">8.8 Right-Click Editing</h3>
+  <p>
+    Right-clicking a sequence name or residue opens a context menu with editing options
+    not available elsewhere:
+  </p>
+  <ul>
+    <li><strong>Rename sequence</strong> - inline edit of the sequence name. Colour mappings are automatically migrated to the new name. Spaces in the typed name are stored as <code>_</code> (the message says so), because a FASTA name ends at the first space.</li>
+    <li><strong>Replace N selected with consensus</strong> - replaces all selected sequences with a single consensus row (available when ≥2 sequences are selected)</li>
+    <li><strong>Add consensus below</strong> - inserts a consensus row after the selected group</li>
+    <li><strong>Re-align against consensus</strong> - realigns a single sequence against the alignment consensus profile using MAFFT (available in the right-click menu under analysis tools)</li>
+    <li><strong>Insert/Remove Single Gap</strong> - right-click a residue to insert or remove a single gap at that position in that row</li>
+  </ul>
+</section>
+

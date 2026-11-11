@@ -1,0 +1,352 @@
+[script.js lines 3265-3615 of ViewAlign fd8b8e4]
+function setConsensusThresholdDefault(value, options = {}) {
+    const clamped = clampConsensusPercent(value);
+    DEFAULTS.consensusThreshold = clamped;
+    const applyNow = options.applyNow !== false;
+    if (applyNow) {
+        setConsensusThresholdUI(clamped, Boolean(options.triggerRender));
+    }
+}
+
+window.setConsensusThresholdDefault = setConsensusThresholdDefault;
+
+function toggleStickyNames() {
+    const sticky = el('stickyNames').checked;
+    document.querySelectorAll('.seq-name').forEach(name => {
+        name.classList.toggle('static', !sticky);
+    });
+    // Forcing a reflow here makes the .static class change take effect
+    // immediately rather than on the next natural paint. Cost scales with
+    // total DOM size, and this runs via setTimeout(0) after EVERY render
+    // (see the call site in renderAlignment) - meaning on a large alignment
+    // (millions of residue spans) it's a genuine multi-second main-thread
+    // block that isn't captured by anything awaiting the render call itself.
+    // Skip the forced-immediate part above that size; the class toggle above
+    // still applies on the next natural paint either way.
+    const _totalRes = state.alignmentIndex?.totalResidues || (state.seqs.length > 0
+        ? state.seqs.length * _maxOf(state.seqs, s => s.seq.length)
+        : 0);
+    if (!(state.alignmentIndex?.isCrazy) && _totalRes <= 80000) {
+        alignmentContainer.offsetHeight; // Force reflow
+    }
+    // DOM mode picks this up via the CSS class toggle above (no .seq-name
+    // elements exist in Canvas mode); Canvas bakes stickyNames into its
+    // render closure instead, so it needs an explicit re-render to take effect. Block draws its names
+    // fixed whatever the box says: no re-render there (a preset, snapshot or linked-view sync calls this
+    // and paid a second full render in Block for nothing; GLM audit cblk #6).
+    if (isCanvasMode() && !isBlockLayout()) debounceRender();
+}
+// Above this many residues no row keeps its table of residue positions (215 MB of 266 MB live at 100,000 x 400):
+// the parsers stop building it, updateSourceInfo counts, and _linkGapless builds it for a row that is asked for.
+const GAPLESS_TABLE_MAX_RESIDUES = 10_000_000;
+function _gaplessCount(sequence) {
+    let n = 0;
+    for (let i = 0; i < sequence.length; i++) { const c = sequence.charCodeAt(i); if (c !== 45 && c !== 46) n++; }
+    return n;
+}
+// A row's residue count without a position table, counted once per row text. Beside the row, not on it: snapshots
+// and undo copy the row's own fields. The canvas needs it for every row on every redraw (the length badge's width):
+// recounting 20 million residues there blocked the page for 565 ms (check 'Audit v284: hidden columns').
+const _rowLenCache = new WeakMap();
+function _rowLen(q) {
+    const e = _rowLenCache.get(q);
+    if (e && e.s === q.seq) return e.n;
+    const n = _gaplessCount(q.seq);
+    _rowLenCache.set(q, { s: q.seq, n });
+    return n;
+}
+function calculateGaplessPositions(sequence) {
+    const positions = [];
+    let gaplessCount = 0;
+    for (let i = 0; i < sequence.length; i++) {
+        const char = sequence[i];
+        if (char !== '-' && char !== '.') {
+            gaplessCount++;
+        }
+        positions.push(gaplessCount);
+    }
+    return positions;
+}
+
+// -- Shared windowed-list scroll/render machinery ----------------------------
+// The unified windowed DOM renderer (used by both Full and Block modes on
+// large alignments) needs three things: (a) suppress the one scroll event a
+// programmatic scrollTop restore fires, so it doesn't re-trigger the render
+// cycle into an infinite loop (confirmed possible under rapid-scroll stress
+// testing); (b) coalesce scroll events into one render per animation frame,
+// keeping "a render is in progress" true for the render's FULL duration rather
+// than just until the rAF fires (confirmed: clearing the flag too early let
+// events pile up faster than renders could complete and hung the tab);
+// (c) remove/rebuild only the DOM between two spacer sentinels rather than
+// the whole container.
+function _removeNodesBetweenSpacers(topSpacer, bottomSpacer) {
+    _unifiedRenderedRowRanges.clear();
+    let node = topSpacer.nextSibling;
+    while (node && node !== bottomSpacer) {
+        const next = node.nextSibling;
+        node.remove();
+        node = next;
+    }
+}
+
+function _createWindowedScrollController(refreshFn, isActiveFn) {
+    let boundContainer = null;
+    let suppressNext = false;
+    let renderInProgress = false;
+    let renderPending = false;
+    return {
+        bind(container) {
+            if (boundContainer === container) return; // already bound
+            boundContainer = container;
+            const triggerWindowedRender = () => {
+                if (renderInProgress) { renderPending = true; return; }
+                renderInProgress = true;
+                requestAnimationFrame(() => {
+                    try {
+                        refreshFn(container);
+                    } finally {
+                        renderInProgress = false;
+                        if (renderPending) {
+                            renderPending = false;
+                            triggerWindowedRender();
+                        }
+                    }
+                });
+            };
+            container.addEventListener('scroll', () => {
+                if (suppressNext) { suppressNext = false; return; }
+                // Re-check conditions live: the listener stays bound to the
+                // container element (which persists across renders) even if
+                // the user later switches mode or loads a smaller file - it
+                // must no-op then, not keep re-rendering into an unrelated view.
+                if (!isActiveFn()) return;
+                triggerWindowedRender();
+            });
+        },
+        // Skips the scroll event of a scrollTop restore only. The restore follows emptying and
+        // refilling the container, and Chrome often sends no event for it: the flag then stayed
+        // set and swallowed the user's next real scroll, so the first scroll or scrollbar drag
+        // after a redraw showed blank space (no refresh) until a second one. Scroll events are
+        // dispatched before the next frame's callbacks, so the flag ends with this frame.
+        suppressNextEvent() {
+            suppressNext = true;
+            requestAnimationFrame(() => { suppressNext = false; });
+        },
+    };
+}
+
+// Column windowing needs the row's rendered content to sit at the correct
+// horizontal offset (colStart columns' worth of blank space before it) while
+// the row's TOTAL declared width still equals what a fully-rendered row
+// would occupy (len * charWidthPx) - otherwise the container's native
+// scrollWidth would only reflect the tiny rendered slice, breaking
+// horizontal scrolling entirely (the same problem the two vertical spacer
+// divs solve for rows, just expressed per-row via padding instead of two
+// extra sibling elements, since each row needs its own independent offset).
+// Width of the persistent scrollbars (.vertical-scrollbar, .horizontal-scrollbar in styles.css).
+// The vertical one lies over the alignment's right edge.
+const PERSISTENT_SCROLLBAR_PX = 8;
+
+// A column-windowed row is exactly its columns wide, and its layout is contained, so nothing in it
+// widens the alignment. Scrolled all the way right, the last column then ended at the container's
+// edge, under the vertical scrollbar, and the length label after it could not be reached at all.
+// The row keeps room for the label (.seq-length: 8px margin, 2x4px padding, 2px border, digits at
+// 0.85em) and the scrollbar.
+function _columnWindowTailPx(charWidthPx) {
+    const digits = String(state.alignmentIndex?.maxLen || state.seqs?.[0]?.seq.length || 0).length;
+    return Math.ceil(18 + digits * charWidthPx + PERSISTENT_SCROLLBAR_PX + 8);
+}
+
+function _applyColumnWindowStyle(dataEl, len, colStart, charWidthPx) {
+    dataEl.style.boxSizing = 'border-box';
+    dataEl.style.width = (len * charWidthPx + _columnWindowTailPx(charWidthPx)) + 'px';
+    dataEl.style.paddingLeft = (colStart * charWidthPx) + 'px';
+}
+
+// Shared column-window calculation for one block. Each block's .seq-data
+// is blockLen*charWidthPx wide and starts at the left edge of the scrollable
+// data area, so scrollLeft maps to block-local column offsets. Adding `start`
+// converts the local offset back to an absolute alignment column.
+// Returns the columns on screen (visStart..visEnd) and the columns to keep
+// rendered (colStart..colEnd = on screen plus bufferCols on each side).
+function _computeBlockColumnWindow(start, end, scrollLeft, visibleDataWidth, charWidthPx, bufferCols = 20) {
+    const blockLen = end - start;
+    if (blockLen * charWidthPx <= visibleDataWidth) {
+        return { colStart: start, colEnd: end - 1, visStart: start, visEnd: end - 1, needsColWindow: false };
+    }
+    // Horizontal scrollLeft is container-global. Clamp it to this block's width
+    // so a pan in an earlier block cannot truncate a vertically focused block.
+    const maxLocalScroll = Math.max(0, blockLen * charWidthPx - visibleDataWidth);
+    const localScrollLeft = Math.min(Math.max(0, scrollLeft), maxLocalScroll);
+    let visStart = start + Math.max(0, Math.floor(localScrollLeft / charWidthPx));
+    let visEnd = start + Math.min(blockLen - 1, Math.ceil((localScrollLeft + visibleDataWidth) / charWidthPx) - 1);
+    visStart = Math.max(start, Math.min(visStart, end - 1));
+    visEnd = Math.max(visStart, Math.min(visEnd, end - 1));
+    const buf = Math.max(0, bufferCols | 0);
+    let colStart = Math.max(start, visStart - buf);
+    let colEnd = Math.min(end - 1, visEnd + buf);
+    if (colStart > colEnd) { colStart = start; colEnd = end - 1; }
+    return { colStart, colEnd, visStart, visEnd, needsColWindow: colStart > start || colEnd < end - 1 };
+}
+
+// -- Scroll smoothness: buffered windows with hysteresis --------------------
+// Measured on a 62 x 16,808 alignment (Chrome trace, 12 scroll steps): every
+// scroll frame used to move the row/column window by a few rows or columns,
+// and each of those small changes cost a layout of the whole rendered block
+// (~20,000 dirty layout objects) plus a repaint - 170 ms per step, 17 of 36
+// frames over 100 ms. So the window is now kept well beyond the viewport and
+// scroll frames inside it change nothing; only when the viewport comes within
+// a guard distance of the window's edge is the window re-centred, and then by
+// patching the existing rows (columns added/removed at the ends, rows added/
+// removed at the ends) rather than replacing the block.
+//
+// Sizes come from a budget of residue spans, so a tall alignment gets a
+// shorter column buffer and a wide one a shorter row buffer.
+//
+// The budget is about 2.5 screens, not 6. Every change of the window (a re-centre of the columns,
+// rows added at an end) costs style, layout and paint of ALL built rows, not just of the changed
+// part: on 1500 x 4,000 (1400 x 900 window) the old window was ~130 rows x 510 columns (63k
+// spans), and each horizontal re-centre took 0.9-1.9 s (up to 4.5 s with real wheel events),
+// each vertical step ~330 ms. Measured with a window of half a screen of rows and a third of a
+// screen of columns on each side (~30k spans): a re-centre ~0.2-0.4 s, vertical steps ~170 ms.
+// The guard is a quarter of the buffer, so a re-centre still comes only every ~3/4 buffer.
+function _unifiedWindowBudget(visibleRows, visibleCols, nSeq, blockLen) {
+    const vc = Math.max(1, Math.min(visibleCols, blockLen));
+    const bufferRows = Math.max(8, Math.ceil(visibleRows / 2));
+    const renderedRows = Math.max(1, Math.min(nSeq, visibleRows + 2 * bufferRows));
+    // A third of a screen of columns each side; more when few rows are built (up to 25,000 spans
+    // in all), never more than two screens
+    const bufferCols = Math.min(2 * vc, Math.max(20, Math.ceil(vc * 0.35), Math.floor((25000 / renderedRows - vc) / 2)));
+    return { bufferRows, bufferCols, guardRows: Math.ceil(bufferRows / 4), guardCols: Math.ceil(bufferCols / 4) };
+}
+
+// Rows per animation frame when a block's row window grows (a block entering
+// the view, or rows added at the ends after a vertical scroll): about 3,000
+// residue spans a frame. Measured on a 62-row x 137-column block: building
+// all 62 rows in one frame cost ~250 ms and the worst frame during
+// continuous scrolling ~600 ms; 21 rows a frame brought that to ~250 ms with
+// the mean frame unchanged (~17 ms).
+function _unifiedRowsPerFrame(windowCols) {
+    return Math.max(2, Math.floor(3000 / Math.max(1, windowCols)));
+}
+
+// Per-block follow-up work, one step per animation frame, independent of
+// scroll events (it finishes whether or not the user keeps scrolling).
+// A job is replaced when the same block gets new work, and dropped when the
+// block leaves the DOM. Keyed by block and kind (only 'rows' = row growth
+// at present; 'cols' is reserved).
+const _unifiedBlockJobs = new Map();
+let _unifiedBlockJobRaf = 0;
+function _scheduleBlockJob(blockIndex, kind, step) {
+    _unifiedBlockJobs.set(blockIndex + ':' + kind, step);
+    if (!_unifiedBlockJobRaf) _unifiedBlockJobRaf = requestAnimationFrame(_runUnifiedBlockJobs);
+}
+function _cancelBlockJob(blockIndex, kind) {
+    if (kind) { _unifiedBlockJobs.delete(blockIndex + ':' + kind); return; }
+    _unifiedBlockJobs.delete(blockIndex + ':cols');
+    _unifiedBlockJobs.delete(blockIndex + ':rows');
+}
+function _cancelAllBlockJobs() { _unifiedBlockJobs.clear(); }
+function _runUnifiedBlockJobs() {
+    _unifiedBlockJobRaf = 0;
+    for (const [b, step] of [..._unifiedBlockJobs]) {
+        let done = true;
+        try { done = step(); } catch (e) { console.error('block job', b, e); }
+        if (done && _unifiedBlockJobs.get(b) === step) _unifiedBlockJobs.delete(b);
+    }
+    if (_unifiedBlockJobs.size) _unifiedBlockJobRaf = requestAnimationFrame(_runUnifiedBlockJobs);
+    _scheduleBlockMaskOverlay();   // rows were added or dropped
+}
+
+// Brings a block's rendered row range to targetS..targetE: rows beyond the
+// target go at once (cheap), rows still missing are added a chunk per frame,
+// starting with mustS..mustE (the rows on screen) in this call. Returns false
+// if the block cannot be patched in place (caller rebuilds it).
+function _growBlockRows(blockDiv, blockIndex, targetS, targetE, mustS, mustE, rowHeightPx, colStart, colEnd, p, isLastBlock, nSeq, colWin) {
+    const cur = _unifiedRenderedRowRanges.get(blockIndex);
+    if (!cur) return false;
+    const K = _unifiedRowsPerFrame(colEnd - colStart + 1);
+    // This frame: drop rows beyond the target, cover the on-screen rows, and
+    // grow by at most K rows per side.
+    const s = Math.max(targetS, Math.min(mustS, cur.rowStart - K));
+    const e = Math.min(targetE, Math.max(mustE, cur.rowEnd + K));
+    if (!_incrementalUpdateBlockRows(blockDiv, blockIndex, s, e, rowHeightPx, colStart, colEnd, p.nameLen, p.stickyNames, p.standard, p.ambiguous, p.blackThresh, p.darkThresh, p.lightThresh, p.enableBlack, p.enableDark, p.enableLight, p.conservationData, isLastBlock, nSeq, colWin)) return false;
+    if (s > targetS || e < targetE) _scheduleBlockRowGrowth(blockDiv, blockIndex, targetS, targetE, rowHeightPx, p, isLastBlock, nSeq, colWin);
+    // Reached in one go: a growth job still queued for an earlier target would
+    // trim the block back to that target's rows (blank viewport after a jump)
+    else _cancelBlockJob(blockIndex, 'rows');
+    return true;
+}
+
+// Adds the rest of a block's row buffer (targetS..targetE) K rows per frame.
+// Stops when the block leaves the DOM or its column window changes (a new
+// job will have been scheduled for the new window).
+function _scheduleBlockRowGrowth(blockDiv, blockIndex, targetS, targetE, rowHeightPx, p, isLastBlock, nSeq, colWin) {
+    const at = _unifiedRenderedRowRanges.get(blockIndex);
+    if (!at) return;
+    const colStart = at.colStart, colEnd = at.colEnd;
+    const K = _unifiedRowsPerFrame(colEnd - colStart + 1);
+    _scheduleBlockJob(blockIndex, 'rows', () => {
+        if (!blockDiv.isConnected) return true;
+        const r = _unifiedRenderedRowRanges.get(blockIndex);
+        if (!r || r.colStart !== colStart || r.colEnd !== colEnd) return true;   // superseded
+        const ns = Math.max(targetS, r.rowStart - K), ne = Math.min(targetE, r.rowEnd + K);
+        if (ns === r.rowStart && ne === r.rowEnd) return true;
+        if (!_incrementalUpdateBlockRows(blockDiv, blockIndex, ns, ne, rowHeightPx, colStart, colEnd, p.nameLen, p.stickyNames, p.standard, p.ambiguous, p.blackThresh, p.darkThresh, p.lightThresh, p.enableBlack, p.enableDark, p.enableLight, p.conservationData, isLastBlock, nSeq, colWin)) return true;
+        return ns <= targetS && ne >= targetE;
+    });
+}
+
+// For a block just built by _buildUnifiedBlock (on-screen rows only): queue
+// its row buffer, as recorded with the block's window.
+function _scheduleBuiltBlockGrowth(blockDiv, blockIndex, start, end, rowHeightPx, charWidthPx, p, nSeq) {
+    const r = _unifiedRenderedRowRanges.get(blockIndex);
+    if (!r || !(r.bufferRows > 0)) return;
+    const targetS = Math.max(0, r.rowStart - r.bufferRows);
+    const targetE = Math.min(Math.max(0, nSeq - 1), r.rowEnd + r.bufferRows);
+    if (targetS === r.rowStart && targetE === r.rowEnd) return;
+    const colWin = (r.colEnd - r.colStart + 1 < end - start) ? { blockLen: end - start, start, charWidthPx } : null;
+    _scheduleBlockRowGrowth(blockDiv, blockIndex, targetS, targetE, rowHeightPx, p, end >= p.len, nSeq, colWin);
+}
+
+// Rows of one block that intersect the viewport (no buffer). The header
+// (ruler + optional top consensus) sits between the block's top and its rows.
+function _unifiedVisibleRows(blockTop, blockHeightPx, headerHeightPx, rowHeightPx, scrollTop, clientHeight, nSeq) {
+    const rowAreaTop = blockTop + headerHeightPx;
+    const h = Math.max(1, rowHeightPx);
+    const visTop = Math.max(scrollTop, rowAreaTop);
+    const visBottom = Math.min(scrollTop + clientHeight, blockTop + blockHeightPx);
+    let s = Math.max(0, Math.floor((visTop - rowAreaTop) / h));
+    let e = Math.min(Math.max(0, nSeq - 1), Math.floor((visBottom - rowAreaTop) / h));
+    if (e < s) {
+        // A block entirely above or below the viewport (the block overscan):
+        // start from its row nearest the viewport; the buffer rows follow a
+        // chunk per frame. Otherwise (header taller than the block, container
+        // height clamped to 0) show a small window from the top rather than nothing.
+        if (blockTop >= scrollTop + clientHeight) { s = 0; e = 0; }
+        else if (blockTop + blockHeightPx <= scrollTop) { s = e = Math.max(0, nSeq - 1); }
+        else { s = 0; e = Math.min(Math.max(0, nSeq - 1), 50); }
+    }
+    return { s, e, visibleRows: Math.max(1, Math.ceil(clientHeight / h)) };
+}
+
+// True when the rendered range still covers the visible range with at least
+// `guard` to spare on each side (or already reaches the hard limit there).
+function _rangeWithinGuard(rendS, rendE, visS, visE, guard, minS, maxE) {
+    return (rendS <= minS || rendS <= visS - guard) && (rendE >= maxE || rendE >= visE + guard);
+}
+
+// One node at a time: Range.deleteContents spent ~1.3 ms a row (2 s of a 30-step horizontal scroll
+// on 1500 x 4,000 in a profile), about 40% more than removing the spans directly.
+function _removeLeadingChildren(el, n) {
+    for (let i = 0; i < n && el.firstChild; i++) el.removeChild(el.firstChild);
+}
+function _removeTrailingChildren(el, n) {
+    for (let i = 0; i < n && el.lastChild; i++) el.removeChild(el.lastChild);
+}
+
+// Moves one data row's rendered column window from oldS..oldE to newS..newE
+// in place: spans that leave are deleted at the ends, spans that enter are
+// inserted at the ends, the padding offset is updated. Column positions on
+// screen do not move (the padding grows by exactly the width removed), so the
+// visible area does not repaint beyond the touched edges. Falls back to a

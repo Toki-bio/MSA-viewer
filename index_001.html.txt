@@ -1,0 +1,269 @@
+[index.html lines 1-268 of ViewAlign fd8b8e4]
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta http-equiv="Content-Type" content="text/html; charset=UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
+    <title>ViewAlign</title>
+    <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' rx='3' fill='%23fff'/%3E%3Crect x='2' y='3' width='5' height='2' fill='%2364c864'/%3E%3Crect x='7' y='3' width='7' height='2' fill='%23f0a030'/%3E%3Crect x='2' y='7' width='8' height='2' fill='%23f06060'/%3E%3Crect x='10' y='7' width='4' height='2' fill='%2364c864'/%3E%3Crect x='2' y='11' width='4' height='2' fill='%236090f0'/%3E%3Crect x='6' y='11' width='8' height='2' fill='%23f0a030'/%3E%3C/svg%3E">
+    <meta name="description" content="ViewAlign: view, edit and analyse multiple sequence alignments in the browser. GeneDoc-style editing, in-browser MAFFT, codon analysis, clustering, trees, SVG and RTF export. No installation.">
+    <meta property="og:title" content="ViewAlign: multiple sequence alignment viewer and editor">
+    <meta property="og:description" content="View, edit and analyse DNA and protein alignments in the browser: GeneDoc-style editing, in-browser MAFFT, codon analysis, clustering, trees. No installation.">
+    <meta property="og:image" content="https://toki-bio.github.io/MSA-viewer/img/interface-layout.png">
+    <meta property="og:type" content="website">
+    <meta property="og:url" content="https://toki-bio.github.io/MSA-viewer/">
+    <link rel="stylesheet" href="styles.css?v=204">
+    <!-- MAFFT WASM alignment (runs locally in browser) -->
+    <script src="disttbfast.js"></script>
+    <script src="mafft-wasm.js"></script>
+</head>
+<body>
+    <div id="controls" role="region" aria-label="Menus">
+        <div class="control-row menu-row" id="menuRow" style="justify-content: flex-start; align-items: center; gap: 2px;">
+            <!-- ACTUAL BUTTONS -->
+            <div class="menu-section side-section" id="input-section">
+                <div class="section-header" data-section="input">
+                        <span>Input</span>
+                        <span class="toggle-icon">v</span>
+                    </div>
+                    <button id="addSeqPlusButton" onclick="event.stopPropagation()" title="Add sequence(s)" style="margin-left:3px;padding:0 4px;font-size:9px;font-weight:bold;height:14px;line-height:12px;cursor:pointer;border:1px solid #bbb;background:#f5f5f5;border-radius:3px;box-sizing:border-box;vertical-align:top;margin-top:2px;">+</button>
+                <div class="control-group" id="input-controls">
+                    <div id="dropZone" data-find="Open a file" style="width: 100%; padding: 20px; min-height: 100px; margin-bottom: 8px;" title="Drop FASTA/MSF/AB1 or click to browse for file">Drop FASTA/MSF/AB1 file here or click to browse
+                        <input type="file" id="fileInput" accept="*" style="display: none;">
+                    </div>
+                    <button id="openGenomeButton" data-find="Open a genome" style="width: 100%; height: 22px; font-size: 11px; margin-bottom: 8px;" title="A whole genome with its reads, read only where you look: select the FASTA, its .fai, the BAM and its .bai together (the BAM and .bai can be left out)">Open genome...</button>
+                    <input type="file" id="genomeFileInput" multiple style="display: none;">
+                    <div style="display: flex; gap: 6px; align-items: start;">
+                        <textarea id="fastaInput" placeholder=">seq1&#13;&#10;ATGCGGCTA..." style="flex: 1; height: 80px; font-size: 12px; padding: 4px;" title="Paste FASTA/MSF text here or drop a file above"></textarea>
+                        <div style="display: flex; flex-direction: column; gap: 4px;">
+                            <button id="loadButton" style="height: 20px; font-size: 10px;" title="Load the pasted or dropped FASTA/MSF data (shortcut: Ctrl+L)">Load</button>
+                            <button id="clearButton" style="height: 24px; font-size: 12px;" title="Clear the sequence input">Clear</button>
+                            <button id="recentButton" style="height: 20px; font-size: 10px; position: relative;" title="Recent files and clipboard pastes" onclick="event.stopPropagation(); _toggleRecentDropdown(this);">Recent</button>
+                        </div>
+                    </div>
+                    <div id="sshLoadRow" style="display: none; margin-top: 4px;">
+                        <div style="display: flex; gap: 4px; align-items: center;">
+                            <div id="sshServerBtnGroup" style="display: flex; flex-direction: column; gap: 0;">
+                                <!-- Populated dynamically from /api/ssh-servers -->
+                            </div>
+                            <input type="text" id="sshPathInput" placeholder="/path/to/file.fas" style="flex: 1; font-size: 11px; padding: 2px 4px; font-family: 'Courier New', monospace; border: 1px solid #ccc; border-radius: 3px;" title="Paste a file path from your Linux server and press Enter">
+                            <button id="sshLoadButton" style="height: 20px; font-size: 10px; white-space: nowrap;" title="Fetch file from server via SSH">Fetch</button>
+                            <button id="checkQueueButton" style="height: 20px; font-size: 10px; white-space: nowrap;" title="Check if file queued from MC">Check Queue</button>
+                        </div>
+                    </div>
+                    <div id="snapshotLoadRow" style="margin-top: 6px; border-top: 1px solid #ddd; padding-top: 6px;">
+                        <div style="font-size: 10px; color: #666; margin-bottom: 3px;">Snapshots</div>
+                        <!-- the two snapshot-folder rows show once the optional server or snapshots/index.json lists files (script.js refreshSnapshotList) -->
+                        <div id="snapshotFolderListRow" style="display: none; gap: 4px; align-items: center;">
+                            <select id="snapshotListSelect" style="flex: 1; font-size: 11px; height: 22px;" title="Select a saved snapshot JSON from snapshots folder">
+                                <option value="">-- snapshots/*.json --</option>
+                            </select>
+                            <button id="snapshotRefreshButton" style="height: 22px; font-size: 10px; white-space: nowrap;" title="Refresh snapshot list">Refresh</button>
+                            <button id="snapshotOpenButton" style="height: 22px; font-size: 10px; white-space: nowrap;" title="Open selected snapshot">Open</button>
+                        </div>
+                        <div id="snapshotFolderPathRow" style="display: none; gap: 4px; align-items: center; margin-top: 4px;">
+                            <input type="text" id="snapshotPathInput" placeholder="snapshots/my_snapshot.json" style="flex: 1; font-size: 11px; padding: 2px 4px; font-family: 'Courier New', monospace; border: 1px solid #ccc; border-radius: 3px;" title="Manual snapshot path for ?snapshotFile mode">
+                            <button id="snapshotPathOpenButton" style="height: 22px; font-size: 10px; white-space: nowrap;" title="Open snapshot by path">Open Path</button>
+                        </div>
+                        <div style="display: flex; gap: 4px; align-items: center; margin-top: 4px;">
+                            <button id="snapshotCreateTopButton" title="Save current state as snapshot" style="height: 22px; font-size: 10px; flex: 1;">Create</button>
+                            <button id="exportSvgTopButton" title="Export viewport as SVG" style="height: 22px; font-size: 10px;">SVG</button>
+                            <button id="exportRtfButton" title="Export as RTF (Word)" style="height: 22px; font-size: 10px;">RTF</button>
+                            <button id="exportSvgFullTopButton" title="Export full alignment as SVG" style="height: 22px; font-size: 10px;">Full SVG</button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <button id="copyAlignToolbarButton" class="edit-toggle-button" title="Copy entire alignment to clipboard (FASTA)" onclick="copyAlignment()" style="font-size:10px;padding:0 5px;margin-left:6px;font-weight:normal;">Copy</button>
+            <button id="saveAlignToolbarButton" class="edit-toggle-button" title="Download alignment as FASTA file" onclick="downloadAlignment()" style="font-size:10px;padding:0 5px;margin-left:2px;font-weight:normal;margin-right:6px;">Save</button>
+            <button id="openBamToolbarButton" class="edit-toggle-button" title="Load a SAM/BAM file as a read pileup against the loaded reference" onclick="handleOpenBamClick()" style="font-size:10px;padding:0 5px;margin-right:6px;font-weight:normal;">SAM/BAM</button>
+            <input type="file" id="bamFileInput" accept=".bam,.sam,.cram,.bai,.vcf,.gz" multiple style="display:none;" onchange="handleBamFile(event)">
+
+            <div class="undo-redo-bar">
+                <button id="undoButton" class="history-btn" title="Undo (Ctrl+Z)" aria-label="Undo">
+                    <svg viewBox="0 0 16 16" width="12" height="12" aria-hidden="true" focusable="false">
+                        <path d="M6.5 12.25H9.5a3.75 3.75 0 0 0 0-7.5H3" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/>
+                        <path d="M5.75 2 2.5 4.75 5.75 7.5" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/>
+                    </svg>
+                </button>
+                <button id="undoDropdownBtn" class="history-btn history-btn-caret" title="Undo history" aria-label="Undo history">
+                    <svg viewBox="0 0 10 10" width="8" height="8" aria-hidden="true" focusable="false">
+                        <path d="M1.75 3.75 5 7l3.25-3.25" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+                    </svg>
+                </button>
+                <button id="redoButton" class="history-btn history-btn-group-start" title="Redo (Ctrl+Y)" aria-label="Redo">
+                    <svg viewBox="0 0 16 16" width="12" height="12" aria-hidden="true" focusable="false">
+                        <path d="M9.5 12.25H6.5a3.75 3.75 0 0 1 0-7.5H13" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/>
+                        <path d="M10.25 2 13.5 4.75 10.25 7.5" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/>
+                    </svg>
+                </button>
+                <button id="redoDropdownBtn" class="history-btn history-btn-caret" title="Redo history" aria-label="Redo history">
+                    <svg viewBox="0 0 10 10" width="8" height="8" aria-hidden="true" focusable="false">
+                        <path d="M1.75 3.75 5 7l3.25-3.25" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+                    </svg>
+                </button>
+            </div>
+
+            <button id="editToggleButton" class="edit-toggle-button" aria-pressed="false" title="Toggle GeneDoc-style sequence editing tools">Edit</button>
+            <button id="degapColumnsButton" class="edit-toggle-button" title="Remove all gap-only columns from the alignment" onclick="removeGapColumns()" style="font-size:10px;padding:0 5px;margin-left:2px;font-weight:normal;margin-right:8px;">Degap</button>
+
+            <div class="menu-section" id="snapshot-section" style="display:none;"></div>
+
+            <div class="standard-menu-group">
+                <div class="menu-section">
+                    <div class="section-header" data-section="shade">
+                        <span>Shade</span>
+                        <span class="toggle-icon">v</span>
+                    </div>
+                    <div class="control-group" id="shade-controls">
+                        <div class="slider-container shade-row">
+                            <div class="shade-controls">
+                                <label class="slider-label shade-label" id="blackLabel" for="blackColorPicker" title="Highly conserved shading: click the swatch to change the colour">Black</label>
+                                <input type="color" id="blackColorPicker" class="shade-swatch" value="#000000" title="Black shading colour">
+                                <button class="reset-button" id="blackReset" title="Reset Black shading to default color">Reset</button>
+                            </div>
+                            <label class="shade-mode-label">
+                                <input type="checkbox" id="enableBlack" checked title="Enable black shading for highly conserved positions">
+                            </label>
+                            <input type="range" id="blackSlider" class="shading-slider" min="50" max="100" value="90" title="Black shading threshold (50-100%)">
+                            <input type="number" id="blackInput" min="50" max="100" value="90" title="Black shading threshold (50-100%)">
+                        </div>
+                        <div class="slider-container shade-row">
+                            <div class="shade-controls">
+                                <label class="slider-label shade-label" id="darkLabel" for="darkColorPicker" title="Moderately conserved shading: click the swatch to change the colour">Dark</label>
+                                <input type="color" id="darkColorPicker" class="shade-swatch" value="#555555" title="Dark shading colour">
+                                <button class="reset-button" id="darkReset" title="Reset Dark shading to default color">Reset</button>
+                            </div>
+                            <label class="shade-mode-label">
+                                <input type="checkbox" id="enableDark" checked title="Enable dark gray shading for moderately conserved positions">
+                            </label>
+                            <input type="range" id="darkSlider" class="shading-slider" min="30" max="90" value="70" title="Dark shading threshold (30-90%)">
+                            <input type="number" id="darkInput" min="30" max="90" value="70" title="Dark shading threshold (30-90%)">
+                        </div>
+                        <div class="slider-container shade-row">
+                            <div class="shade-controls">
+                                <label class="slider-label shade-label" id="lightLabel" for="lightColorPicker" title="Lightly conserved shading: click the swatch to change the colour">Light</label>
+                                <input type="color" id="lightColorPicker" class="shade-swatch" value="#cccccc" title="Light shading colour">
+                                <button class="reset-button" id="lightReset" title="Reset Light shading to default color">Reset</button>
+                            </div>
+                            <label class="shade-mode-label">
+                                <input type="checkbox" id="enableLight" checked title="Enable light gray shading for less conserved positions">
+                            </label>
+                            <input type="range" id="lightSlider" class="shading-slider" min="10" max="80" value="50" title="Light shading threshold (10-80%)">
+                            <input type="number" id="lightInput" min="10" max="80" value="50" title="Light shading threshold (10-80%)">
+                        </div>
+                        <div class="slider-container shade-row">
+                            <div class="shade-controls">
+                                <span class="slider-label">Shade By</span>
+                            </div>
+                            <label class="shade-mode-label">
+                                <input type="radio" name="shadeMode" value="nongap" title="Conservation = agreement among sequences that have a base at this column, ignoring how many are gapped. Can call a column highly conserved even when most sequences are gapped there - use with caution on alignments with a lot of missing data or indels."> Non-Gap
+                            </label>
+                            <label class="shade-mode-label">
+                                <input type="radio" name="shadeMode" value="all" checked title="Conservation = agreement across every sequence in the alignment; a gap counts against conservation, matching standard MSA-viewer behaviour. Recommended default."> All
+                            </label>
+                        </div>
+                    </div>
+                </div>
+                <div class="menu-section">
+                    <div class="section-header" data-section="display">
+                        <span>Display</span>
+                        <span class="toggle-icon">v</span>
+                    </div>
+                    <div class="control-group" id="display-controls" style="max-height: 60vh; overflow-y: auto;">
+                        <div class="slider-container display-slider-row">
+                            <span class="slider-label" title="How many characters of sequence names to show">Name Len</span>
+                            <input type="range" id="nameLengthSlider" class="normal-slider" min="3" max="50" value="50" title="Adjust sequence name display length (3-50 characters)">
+                            <input type="number" id="nameLengthInput" min="3" max="50" value="50" title="Adjust sequence name display length (3-50 characters)">
+                            <label style="font-size:10px;display:flex;align-items:center;gap:2px;white-space:nowrap;" title="Show full sequence names without truncation"><input type="checkbox" id="nameLengthNoLimit"> No limit</label>
+                            <label style="font-size:10px;display:flex;align-items:center;gap:2px;white-space:nowrap;" title="Keep sequence names visible while scrolling the alignment horizontally"><input type="checkbox" id="stickyNames" checked title="Keep sequence names visible while scrolling the alignment horizontally"> Sticky</label>
+                        </div>
+                        <div class="slider-container display-slider-row" style="flex: 1; max-width: 500px;">
+                            <span class="slider-label" title="Zoom controls for alignment display">Zoom</span>
+                            <button id="zoomOutButton" class="zoom-button" title="Zoom out (shortcut: Ctrl+-)">-</button>
+                            <div class="zoom-slider-wrap">
+                                <button type="button" id="zoom100Tick" class="zoom-100-tick" title="Reset zoom to 100%" aria-label="Reset zoom to 100%"></button>
+                                <input type="range" id="zoomSlider" class="normal-slider" min="0" max="100" value="50" title="Zoom level for alignment display (50-200%)">
+                            </div>
+                            <span id="zoomVal" class="zoom-value" title="Click to reset to 100%" style="min-width: 42px; text-align: center; cursor: pointer;" onclick="resetZoom()">100%</span>
+                            <button id="zoomInButton" class="zoom-button" title="Zoom in (shortcut: Ctrl++)">+</button>
+                        </div>
+                        <div class="slider-container display-slider-row" id="blockSizeContainer">
+                            <span class="slider-label" title="Characters per block in block mode">Block Size</span>
+                            <input type="range" id="blockSizeSlider" class="normal-slider" min="40" max="300" value="200" title="Block size in Block mode (40-300 characters)">
+                            <input type="number" id="blockSizeInput" min="40" max="300" value="200" title="Block size in Block mode (40-300 characters)">
+                            <span id="blockSizeSetNote" style="display:none;font-size:10px;color:#b45309;white-space:nowrap;"></span>
+                            <button id="blockSizeScreenBtn" title="Set block size to fit screen width" style="height:20px;font-size:10px;padding:0 5px;white-space:nowrap;">Screen</button>
+                        </div>
+                        <div class="slider-container mode-container" style="flex-direction:column;align-items:flex-start;gap:1px;height:auto;">
+                            <div style="display:flex;align-items:center;gap:4px;">
+                                <span style="font-size:10px;font-weight:bold;width:70px;text-align:right;">Mode</span>
+                                <input type="radio" id="modeSingle" name="mode" value="single" hidden title="Full: hidden view, open with ?view=full"><label for="modeSingle" hidden style="font-size:10px;margin-right:5px;">Full</label><span id="modeFullChip" hidden title="Full view (opened with ?view=full or an old preset); pick Block or Canvas to leave it" style="font-size:10px;padding:0 5px;margin-right:5px;border:1px solid #888;border-radius:8px;background:#fff3c4;color:#333;">Full</span>
+                                <input type="radio" id="modeBlocks" name="mode" value="blocks" checked title="Block: fixed-width wrapped blocks with repeating labels, for publication-style layout"><label for="modeBlocks" style="font-size:10px;margin-right:5px;">Block</label>
+                                <input type="radio" id="modeCanvas" name="mode" value="canvas" title="Canvas: draws only the visible region; the default view; everything works here"><label for="modeCanvas" style="font-size:10px;margin-right:5px;">Canvas</label>
+                                <input type="radio" id="modeReads" name="mode" value="reads" title="Reads: IGV-style read tracks for mapped SAM/BAM data against a reference"><label for="modeReads" style="font-size:10px;">Reads</label>
+                            </div>
+                            <div style="display:flex;flex-wrap:wrap;align-items:center;gap:6px 8px;margin-left:74px;">
+                                <label style="font-size:10px;white-space:nowrap;flex:0 0 auto;" title="Dim fully-conserved columns so columns that differ from the consensus stand out"><input type="checkbox" id="highlightDiffs" title="Dim fully-conserved columns so columns that differ from the consensus stand out"> Highlight diffs</label>
+                                <label style="font-size:10px;white-space:nowrap;flex:0 0 auto;" title="Hide fully-conserved columns entirely, showing only columns that differ"><input type="checkbox" id="varSitesOnly" title="Hide fully-conserved columns entirely, showing only columns that differ"> Variable sites only</label>
+                                <span id="varSitesControls" style="display:none;align-items:center;gap:4px;flex:0 0 auto;">
+                                    <select id="varThresholdMode" style="font-size:10px;height:20px;flex:0 0 auto;" title="Whether the number below is a percentage of all sequences, or an absolute sequence count. Percentage rounds up to a whole sequence count (Math.ceil), which on alignments of more than 100 sequences can jump by more than 1 sequence between adjacent percentages (one percent is then more than one sequence); absolute count has no rounding, so any value from 1 to one less than the sequence count (at most that many can differ) is reachable exactly - including 1, which shows a column the instant even a single sequence differs.">
+                                        <option value="pct">%</option>
+                                        <option value="count" selected>count</option>
+                                    </select>
+                                    <input type="range" id="varSitesThreshold" min="0" max="100" value="1" step="1" style="width:90px;height:14px;flex:0 0 auto;" title="Minimum amount of sequences that must differ for a column to be shown">
+                                    <input type="number" id="varSitesThresholdInput" min="0" max="100" step="1" value="1" style="width:46px;height:20px;font-size:11px;flex:0 0 auto;" title="Type an exact difference threshold">
+                                    <span style="font-size:9px;white-space:nowrap;display:inline-block;min-width:56px;text-align:left;flex:0 0 auto;" id="varSitesThresholdLabel">≥1 seqs</span>
+                                    <span style="position:relative;display:inline-flex;align-items:center;margin-left:4px;flex:0 0 auto;">
+                                        <label id="varSitesBreakpointsLabel" style="font-size:10px;white-space:nowrap;" title="Mark hidden-column boundaries with a vertical ⋮ so collapsed regions stay visible"><input type="checkbox" id="varSitesBreakpoints" checked> Breakpoints</label>
+                                        <button type="button" id="brkStyleBtn" title="Customize breakpoint marker appearance (colour, symbol)" style="font-size:9px;line-height:1;padding:1px 3px;margin-left:2px;border:1px solid #bbb;border-radius:2px;background:#f0f0f0;cursor:pointer;">▾</button>
+                                    </span>
+                                </span>
+                            </div>
+                            <div style="display:flex;flex-wrap:wrap;align-items:center;gap:2px 6px;margin-left:74px;">
+                                <label style="font-size:10px;" title="Colour-code codon positions, flag stop codons and frameshifts, classify substitutions"><input type="checkbox" id="codonAnalysis" title="Colour-code codon positions, flag stop codons and frameshifts, classify substitutions"> Codon analysis</label>
+                                <label style="font-size:10px;white-space:nowrap;" title="Show the translation in place of the nucleotides, one amino-acid line per sequence (blocks without a CDS keep their nucleotides)"><input type="checkbox" id="aaOnly"> AA only</label>
+                                <span style="display:inline-flex;align-items:center;gap:3px;white-space:nowrap;"><label for="codonFrame" style="font-size:10px;color:#555;">Frame</label>
+                                <select id="codonFrame" style="font-size:10px;padding:0 2px;height:18px;" title="Reading frame (also in top bar when codon analysis is on)">
+                                    <option value="auto" selected>Auto</option>
+                                    <option value="genes">Genes (annotation)</option>
+                                    <option value="0">Pos 1</option>
+                                    <option value="1">Pos 2</option>
+                                    <option value="2">Pos 3</option>
+                                    <option value="all">All 3</option>
+                                </select></span>
+                                <span style="display:inline-flex;align-items:center;gap:3px;white-space:nowrap;"><label for="codonCode" style="font-size:10px;color:#555;">Code</label>
+                                <select id="codonCode" style="font-size:10px;padding:0 2px;height:18px;" title="Genetic code table used for translation and stop-codon detection">
+                                    <option value="1">Standard</option>
+                                    <option value="2">Vert Mito</option>
+                                    <option value="3">Yeast Mito</option>
+                                    <option value="4">Mold Mito</option>
+                                    <option value="5">Invert Mito</option>
+                                    <option value="6">Ciliate</option>
+                                    <option value="9">Echino Mito</option>
+                                    <option value="10">Euplotid</option>
+                                    <option value="11">Bacteria</option>
+                                    <option value="12">Alt Yeast</option>
+                                    <option value="13">Ascidian Mito</option>
+                                    <option value="14">Flatworm Mito</option>
+                                    <option value="16">Chlorophyc Mito</option>
+                                    <option value="21">Trematode Mito</option>
+                                    <option value="22">Scenedesmus</option>
+                                </select></span>
+                                <span style="display:inline-flex;align-items:center;gap:3px;white-space:nowrap;"><label for="codonFsRef" style="font-size:10px;color:#555;" title="What a frameshift is judged against">Frameshifts vs</label>
+                                <select id="codonFsRef" style="font-size:10px;padding:0 2px;height:18px;" title="Most rows: the codon position most sequences have at each column. Row 1: the first sequence's own codon position (use when row 1 is a trusted reference and many rows share an indel, e.g. pseudogene copies)">
+                                    <option value="majority" selected>Most rows</option>
+                                    <option value="row1">Row 1</option>
+                                </select></span>
+                            </div>
+                            <div style="display:flex;flex-wrap:wrap;align-items:center;gap:4px 6px;">
+                                <span style="font-size:10px;font-weight:bold;width:70px;text-align:right;">Letters</span>
+                                <label for="residueCase" style="font-size:10px;color:#555;">Case</label>
+                                <select id="residueCase" style="font-size:10px;padding:0 2px;height:18px;" title="Letter case of residues in the display (GeneDoc-style); the sequences themselves are not changed">
+                                    <option value="asis" selected>As in file</option>
+                                    <option value="upper">UPPER</option>
+                                    <option value="lower">lower</option>
+                                </select>

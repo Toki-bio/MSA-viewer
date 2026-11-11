@@ -1,0 +1,377 @@
+[script.js lines 37730-38105 of ViewAlign fd8b8e4]
+function undoTsdMarking() {
+    const backup = state.tsdMarkUndo;
+    if (!backup) {
+        if (state.tsdMarks?.size) {
+            state.tsdMarks = new Map();
+            renderAlignment({ deferConservation: true });
+            showMessage('TSD marks cleared.', 1600);
+            return;
+        }
+        showMessage('No TSD marking to undo.', 1800);
+        return;
+    }
+
+    let caseAlreadyBack = false;
+    if (backup.style === 'lowercase' && backup.lowered) {
+        // upper-case exactly the residues that marking lowercased, wherever they are now (a
+        // restored copy of the old string would undo edits made since, and was keyed by row).
+        // Nothing to change (the main Undo already brought the case back): no empty step of the main Undo.
+        const changes = [];
+        backup.lowered.forEach((cols, row) => {
+            const obj = state.seqs[row];
+            if (!obj) return;
+            const chars = obj.seq.split('');
+            let n = 0;
+            cols.forEach(c => { if (/[a-z]/.test(chars[c] || '')) { chars[c] = chars[c].toUpperCase(); n++; } });
+            if (n) changes.push([row, obj, chars.join('')]);
+        });
+        if (changes.length) {
+            pushUndo('tsd-unmark-lowercase');   // a step of the main Undo like the marking itself
+            changes.forEach(([row, obj, next]) => { state.seqs[row] = { ...obj, seq: next, gaplessPositions: calculateGaplessPositions(next) }; });
+        } else caseAlreadyBack = true;
+    }
+    state.tsdMarks = backup.previousMarks || new Map();
+    state.tsdMarkStyle = backup.previousStyle || 'color';
+    state.tsdMarkColor = backup.previousColor || '#ffd54f';
+    state.tsdMarkUndo = backup.prior || null;
+    renderAlignment({ deferConservation: true });
+    // the marks of the marking before come back even when the case was already back: "nothing to change" was said while
+    // they reappeared (GLM db2 #11)
+    const restored = caseAlreadyBack && (state.tsdMarks?.size || 0) > 0;
+    showMessage(!caseAlreadyBack ? 'TSD marking undone.'
+        : restored ? 'The lower-case TSD marking was already undone (main Undo or an edit); the marking before it is shown again.'
+        : 'The lower-case TSD marking was already undone (main Undo or an edit); nothing to change.', caseAlreadyBack ? 2800 : 1600);
+}
+
+const _RF_COMP = { A: 'T', C: 'G', G: 'C', T: 'A', U: 'A', N: 'N', R: 'Y', Y: 'R', S: 'S', W: 'W',
+    K: 'M', M: 'K', B: 'V', V: 'B', D: 'H', H: 'D' };
+function _revComp(seq) {
+    return [...seq].reverse().map(b => _RF_COMP[b.toUpperCase()] ?? 'N').join('');
+}
+
+/**
+ * Seed length for the direct/inverted search. A copy pair of length L with m = floor(L * maxDiv) mismatches
+ * holds an exact run of at least ceil((L - m) / (m + 1)) bases (pigeonhole: m mismatches cut the L - m matches
+ * into at most m + 1 runs). The smallest such run over every L >= minLen is the longest seed that still hits every
+ * qualifying pair. Seeds are kept between 4 and 10 bases: when the bound is below 4 (short repeats at high
+ * divergence) the guarantee no longer holds and such pairs can be missed; _findRepeats then sets results.seedLimited
+ * and the summary says so. Seeds of 1-3 bases made the search 3-100x slower (5 kb random, Min 6 / 50 %: 57 ms at 4,
+ * 218 ms at 3, 685 ms at 2, 5.6 s at 1). raw: the bound itself, not kept to 4-10.
+ */
+function _repeatSeedLength(minLen, maxDiv, raw = false) {
+    let k = Infinity;
+    for (let L = minLen; L < minLen + 100000; L++) {
+        const m = Math.floor(L * maxDiv + 1e-9);
+        k = Math.min(k, Math.ceil((L - m) / (m + 1)));
+        // (L - Ld) / (Ld + 1) only grows with L: once it reaches k no longer L can lower k
+        if (k <= (raw ? 1 : 4) || (L - L * maxDiv) / (L * maxDiv + 1) >= k) break;
+    }
+    return raw ? k : Math.max(4, Math.min(10, k));
+}
+
+/**
+ * Direct and inverted repeats (2026-10-30: seed-and-extend; the old O(n^2 * L) scan stopped after 500 raw
+ * candidates, so a long sequence was searched only near its start, and it padded copies with mismatches).
+ *
+ * Positions are indices into the ungapped, upper-cased sequence (U read as T for nucleotides). A result is
+ * {posA, posB, length, divergence (string, 1 decimal), seqA, seqB}; for an inverted pair seqB is the reverse
+ * complement of the second copy, so seqA and seqB line up base by base.
+ *
+ * - Seeds: exact k-mers (k from _repeatSeedLength). Direct: two occurrences of a k-mer; inverted: a k-mer and an
+ *   occurrence of its reverse complement further on.
+ * - Extension: both ways from the seed with +1 match / -1 mismatch, stopping when the score falls more than
+ *   REPEAT_XDROP_BASE + 20 * maxDiv below its best, and keeping the best-scoring end on each side, so a copy never starts or ends on a
+ *   mismatch. N (and X in protein) never matches.
+ * - The extended stretch is reported if its divergence is within the limit; otherwise its longest sub-stretches
+ *   within the limit are reported (each bounded by matches).
+ * - Direct copies may not overlap (length <= distance); inverted arms stop where they meet, so a perfect
+ *   palindrome or a hairpin with a 0-1 base loop is reported as its two arms, split at the centre.
+ * - A seed already inside an extension on the same diagonal is skipped, so each repeat is found once and the
+ *   cost stays near linear for ordinary sequences. Low-complexity sequence can exhaust REPEAT_WORK_LIMIT; the
+ *   search then stops and says where (results.searchedTo).
+ * - The returned array holds at most `cap` results, longest first (then least divergent); results.total is the
+ *   number found before the cap.
+ */
+const REPEAT_XDROP_BASE = 6;
+const REPEAT_WORK_LIMIT = 250000000;
+// The search runs as a generator so the Repeat Finder can run it in slices that give the browser back its tab (progress,
+// Pause, Cancel; owner's decision 2026-10-31). It yields a fraction done (0..1) every so often; _findRepeats runs it
+// to the end at once, so both give the same results. opts.stop: an object whose .now set to true stops the search at
+// its next yield and returns what was found so far (results.stoppedByUser). opts.workLimit: a test hook (measuring
+// REPEAT_WORK_LIMIT), else REPEAT_WORK_LIMIT.
+const REPEAT_YIELD_WORK = 400000;    // work units between yields (about 1-2 ms)
+function _drainRepeatSteps(gen) {
+    let r = gen.next();
+    while (!r.done) r = gen.next();
+    return r.value;
+}
+function _findRepeats(seq, minLen, maxDivPct, type, opts = {}) {
+    return _drainRepeatSteps(_findRepeatsSteps(seq, minLen, maxDivPct, type, opts));
+}
+function* _findRepeatsSteps(seq, minLen, maxDivPct, type, opts = {}) {
+    const protein = !!opts.protein;
+    const stop = opts.stop || null;
+    const workLimit = opts.workLimit || REPEAT_WORK_LIMIT;
+    const cap = opts.cap || 100;
+    const seqU = protein ? seq.toUpperCase() : seq.toUpperCase().replace(/U/g, 'T');
+    const n = seqU.length;
+    const none = () => { const r = []; r.total = 0; return r; };
+    // Tandem: minLen is the length of the whole array (one array, not two copies)
+    if (type === 'tandem') return yield* _findTandemRepeatsSteps(seqU, minLen, maxDivPct, { protein, cap, stop });
+    if (n < minLen * 2) return none();
+
+    // reverse complement has no meaning for amino acids
+    if (type === 'inverted' && protein) return none();
+
+    const maxDiv = maxDivPct / 100;
+    const inverted = type === 'inverted';
+    // residue codes; -1 = never matches (N and other ambiguity codes; X, gaps and stops in protein)
+    const code = new Int32Array(n);
+    const NUC = { A: 0, C: 1, G: 2, T: 3 };
+    for (let i = 0; i < n; i++) {
+        const c = seqU[i];
+        if (protein) code[i] = (c >= 'A' && c <= 'Z' && c !== 'X' && c !== 'B' && c !== 'Z' && c !== 'J') ? c.charCodeAt(0) : -1;
+        else code[i] = c in NUC ? NUC[c] : -1;
+    }
+    // direct: same residue; inverted: complementary bases (A0-T3, C1-G2)
+    const same = (i, j) => code[i] >= 0 && code[i] === code[j];
+    const comp = (i, j) => code[i] >= 0 && code[j] >= 0 && code[i] === 3 - code[j];
+
+    const k = Math.min(_repeatSeedLength(minLen, maxDiv), minLen);
+    // k-mer keys (-1 where the k-mer holds a residue that never matches)
+    const keys = new Int32Array(n).fill(-1);
+    const rcKeys = inverted ? new Int32Array(n).fill(-1) : null;
+    let head, keyMap = null;
+    if (protein) {
+        keyMap = new Map();
+        let run = 0;
+        for (let i = 0; i < n; i++) {
+            run = code[i] >= 0 ? run + 1 : 0;
+            if (run >= k) {
+                const s = seqU.substring(i - k + 1, i + 1);
+                let id = keyMap.get(s);
+                if (id === undefined) { id = keyMap.size; keyMap.set(s, id); }
+                keys[i - k + 1] = id;
+            }
+        }
+        head = new Int32Array(keyMap.size).fill(-1);
+    } else {
+        const mask = (1 << (2 * k)) - 1;
+        let fw = 0, rc = 0, run = 0;
+        for (let i = 0; i < n; i++) {
+            const c = code[i];
+            if (c < 0) { run = 0; fw = 0; rc = 0; continue; }
+            fw = ((fw << 2) | c) & mask;
+            rc = (rc >>> 2) | ((3 - c) << (2 * (k - 1)));
+            run++;
+            if (run >= k) { keys[i - k + 1] = fw; if (rcKeys) rcKeys[i - k + 1] = rc; }
+        }
+        head = new Int32Array(1 << (2 * k)).fill(-1);
+    }
+    const next = new Int32Array(n).fill(-1);
+
+    const candidates = [];
+    // pickOps: the work of pick, counted for the yields only (not for REPEAT_WORK_LIMIT, so where a search stops is as
+    // before): 1,600 picks of ~300-bp stretches with ~50 % mismatches (an (AT)n block against poly-A and (CAG)n) ran
+    // 1.1 s between two yields
+    let pickOps = 0;
+    // Report the longest sub-stretches within the divergence limit of an extended stretch: offsets lo..hi along
+    // the diagonal, match(t) tells whether offset t pairs. maxLen bounds a direct copy (no overlap).
+    // The mismatches of the stretch are listed once and every part of it is searched with them (a stretch cut into many
+    // adjacent pairs listed them again for each pair: 25 kb of (CA)n took 19 s).
+    const pick = (lo0, hi0, match, maxLen, emit) => {
+        let lo = lo0, hi = hi0;
+        while (lo <= hi && !match(lo)) lo++;
+        while (hi >= lo && !match(hi)) hi--;
+        if (hi - lo + 1 < minLen) return;
+        const mis = [];
+        for (let t = lo; t <= hi; t++) if (!match(t)) mis.push(t);
+        pickOps += hi - lo + 1;
+        const nm = mis.length;
+        const okMm = (mm, len) => mm <= Math.floor(len * maxDiv + 1e-9);
+        const firstAtOrAfter = (v) => {   // index of the first mismatch at or after offset v
+            let a = 0, b = nm;
+            while (a < b) { const m = (a + b) >> 1; if (mis[m] < v) a = m + 1; else b = m; }
+            return a;
+        };
+        const mmIn = (s, e) => firstAtOrAfter(e + 1) - firstAtOrAfter(s);   // mismatches in [s, e]
+        const part = (lo, hi) => {
+            for (;;) {
+                while (lo <= hi && !match(lo)) lo++;
+                while (hi >= lo && !match(hi)) hi--;
+                if (hi - lo + 1 < minLen) return;
+                const q0 = firstAtOrAfter(lo), q1 = firstAtOrAfter(hi + 1);   // the mismatches inside: mis[q0 .. q1 - 1]
+                if (hi - lo + 1 <= maxLen && okMm(q1 - q0, hi - lo + 1)) { emit(lo, hi - lo + 1, q1 - q0); return; }
+                // windows start right after a mismatch (or at lo) and end right before one (or at hi), never on a mismatch.
+                // A stretch longer than maxLen (a direct run of copies) is cut from its left: the best window starting
+                // within its first maxLen offsets, then the same from the end of that window (searching every start of a
+                // long stretch for every cut took 1.2 s in one step on 25 kb of mixed low-complexity sequence).
+                const tiling = hi - lo + 1 > maxLen;
+                const sMax = tiling ? lo + maxLen - 1 : hi;
+                let best = null;
+                for (let q = q0 - 1; q < q1; q++) {
+                    const s = q < q0 ? lo : mis[q] + 1;
+                    if (s > sMax) break;
+                    if (s > hi || !match(s)) continue;
+                    const limit = Math.min(hi, s + maxLen - 1);
+                    // longest end first: the first window within the limit is this start's best
+                    const ends = [];
+                    if (limit === hi) ends.push(hi);
+                    else { let e = limit; while (e > s && !match(e)) e--; ends.push(e); }
+                    // the mismatches at s + 1 .. limit, last first (the others give no end inside the window)
+                    for (let r = firstAtOrAfter(limit + 1) - 1; r >= q0 && mis[r] >= s + 1; r--) { const e = mis[r] - 1; if (e < limit && e >= s && match(e)) ends.push(e); }
+                    pickOps += ends.length + 4;
+                    for (const e of ends) {
+                        const len = e - s + 1;
+                        if (len < minLen) break;
+                        if (best && len < best.len) break;
+                        const mm = mmIn(s, e);
+                        if (okMm(mm, len)) {
+                            if (!best || len > best.len || (len === best.len && mm < best.mm)) best = { s, len, mm };
+                            break;
+                        }
+                    }
+                }
+                if (!best) {
+                    if (!tiling) return;
+                    lo = sMax + 1;   // no window starts in this part: go on past it
+                    continue;
+                }
+                emit(best.s, best.len, best.mm);
+                part(lo, best.s - 1);
+                // Adjacent copy pairs are listed (owner's decision 2026-10-31). A stretch longer than the distance d
+                // between its two copies is a run of 3 or more copies d apart: it is cut into consecutive pairs no longer
+                // than d, so copy 1 / copy 2, copy 2 / copy 3, ... are each a row (until v310 the rest after the first cut
+                // was dropped as "the same tandem run", so copy 2 / copy 3 was never listed; GLM d305 #9). Pairs further
+                // apart come from their own distance: copy 1 / copy 3 is the stretch at 2d.
+                lo = best.s + best.len;
+            }
+        };
+        part(lo, hi);
+    };
+
+    // furthest extension already made on each diagonal: direct = B position reached on diagonal (x - p);
+    // inverted = lowest A position reached on anti-diagonal (p + j)
+    // X-drop: a cluster of mismatches that drops the score this far below its best ends the extension
+    const xdrop = Math.round(REPEAT_XDROP_BASE + 20 * maxDiv);
+    const covered = inverted ? new Int32Array(2 * n).fill(n) : new Int32Array(n).fill(-1);
+    let work = 0, searchedTo = n, stoppedByUser = false;
+    let yieldAt = REPEAT_YIELD_WORK, tick = 0;
+    outer:
+    for (let x = 0; x + k <= n; x++) {
+        // a yield every REPEAT_YIELD_WORK work units, or every 4096 positions (ordinary sequence does little work each)
+        if (++tick >= 4096) {
+            tick = 0;
+            yield x / n;
+            if (stop && stop.now) { searchedTo = x; stoppedByUser = true; break outer; }
+        }
+        const qKey = inverted ? rcKeys[x] : keys[x];
+        if (qKey >= 0) {
+            for (let p = head[qKey]; p >= 0; p = next[p]) {
+                if (++work > workLimit) { searchedTo = x; break outer; }
+                if (work + pickOps >= yieldAt) {
+                    yieldAt = work + pickOps + REPEAT_YIELD_WORK;
+                    tick = 0;
+                    yield x / n;
+                    if (stop && stop.now) { searchedTo = x; stoppedByUser = true; break outer; }
+                }
+                if (!inverted) {
+                    const d = x - p;
+                    if (d < minLen || x <= covered[d]) continue;
+                    // offsets t along the diagonal: A at p + t, B at x + t
+                    const m = (t) => same(p + t, x + t);
+                    let sc = k, best = k, hiT = k - 1, t = k;
+                    for (; x + t < n; t++) {
+                        const c = code[p + t];
+                        sc += (c >= 0 && c === code[x + t]) ? 1 : -1;
+                        if (sc > best) { best = sc; hiT = t; } else if (best - sc > xdrop) break;
+                    }
+                    work += t;
+                    let loT = 0; sc = 0; best = 0;
+                    for (t = -1; p + t >= 0; t--) {
+                        const c = code[p + t];
+                        sc += (c >= 0 && c === code[x + t]) ? 1 : -1;
+                        if (sc > best) { best = sc; loT = t; } else if (best - sc > xdrop) break;
+                    }
+                    work -= t;
+                    covered[d] = x + hiT;
+                    pick(loT, hiT, m, d, (s, len, mm) => candidates.push({ posA: p + s, posB: x + s, length: len, mm }));
+                } else {
+                    // A runs forward from p, B backward from j = x + k - 1 (its plus-strand end)
+                    if (p + k > x) continue;
+                    const j = x + k - 1, ad = p + j;
+                    if (p >= covered[ad]) continue;
+                    const m = (t) => comp(p + t, j - t);
+                    let sc = k, best = k, hiT = k - 1, t = k;
+                    for (; p + t < j - t; t++) {   // inward until the arms meet
+                        const a = code[p + t], b = code[j - t];
+                        sc += (a >= 0 && b >= 0 && a + b === 3) ? 1 : -1;
+                        if (sc > best) { best = sc; hiT = t; } else if (best - sc > xdrop) break;
+                    }
+                    work += t;
+                    let loT = 0; sc = 0; best = 0;
+                    for (t = -1; p + t >= 0 && j - t < n; t--) {
+                        const a = code[p + t], b = code[j - t];
+                        sc += (a >= 0 && b >= 0 && a + b === 3) ? 1 : -1;
+                        if (sc > best) { best = sc; loT = t; } else if (best - sc > xdrop) break;
+                    }
+                    work -= t;
+                    covered[ad] = p + loT;
+                    pick(loT, hiT, m, Infinity, (s, len, mm) => candidates.push({ posA: p + s, posB: j - s - len + 1, length: len, mm }));
+                }
+            }
+        }
+        const key = keys[x];
+        if (key >= 0) { next[x] = head[key]; head[key] = x; }
+    }
+
+    // Longest first, then least divergent; drop shifted copies of a pair already listed: both copies overlap the listed
+    // pair's copies by >= 70 % of the SHORTER of the two pairs' length (a short pair nested in a long one is dropped).
+    // Direct: only when the two pairs also line up the same bases, i.e. their copy distances differ by at most 60 % of
+    // the shorter length (two equal pairs shifted within the 70 % rule differ by at most that). In 4 copies d apart,
+    // copy 2 / copy 3 lies inside copies 1-2 / copies 3-4 (distance 2d) but pairs other bases: it is listed (2026-10-31).
+    candidates.sort((a, b) => (b.length - a.length) || (a.mm / a.length - b.mm / b.length) || (a.posA - b.posA));
+    const BIN = 64, bins = new Map();
+    const maxKept = candidates.length ? candidates[0].length : 0;
+    const overlap = (a1, a2, b1, b2) => Math.max(0, Math.min(a2, b2) - Math.max(a1, b1) + 1);
+    const kept = [];
+    let cmp = 0, cmpYield = 300000;   // comparisons between yields (a 25 kb microsatellite lists ~90,000 pairs)
+    for (const c of candidates) {
+        if (cmp >= cmpYield) { cmpYield = cmp + 300000; yield 1; }
+        const cA2 = c.posA + c.length - 1, cB2 = c.posB + c.length - 1;
+        let dup = false;
+        for (let b = Math.floor((c.posA - maxKept) / BIN); b <= Math.floor(cA2 / BIN) && !dup; b++) {
+            const list = bins.get(b);
+            cmp++;
+            if (!list) continue;
+            cmp += list.length;
+            for (const r of list) {
+                const denom = Math.max(1, Math.min(c.length, r.length));
+                if (!inverted && Math.abs((c.posB - c.posA) - (r.posB - r.posA)) > 0.6 * denom) continue;
+                if (overlap(c.posA, cA2, r.posA, r.posA + r.length - 1) / denom >= 0.7
+                    && overlap(c.posB, cB2, r.posB, r.posB + r.length - 1) / denom >= 0.7) { dup = true; break; }
+            }
+        }
+        if (dup) continue;
+        kept.push(c);
+        const b = Math.floor(c.posA / BIN);
+        if (!bins.has(b)) bins.set(b, []);
+        bins.get(b).push(c);
+    }
+    const results = kept.slice(0, cap).map(c => ({
+        posA: c.posA,
+        posB: c.posB,
+        length: c.length,
+        divergence: (c.mm / c.length * 100).toFixed(1),
+        seqA: seqU.substring(c.posA, c.posA + c.length),
+        seqB: inverted ? _revComp(seqU.substring(c.posB, c.posB + c.length)) : seqU.substring(c.posB, c.posB + c.length),
+    }));
+    results.total = kept.length;
+    if (searchedTo < n) results.searchedTo = searchedTo;
+    if (stoppedByUser) results.stoppedByUser = true;
+    // copies sharing no exact run of k bases are not seeded (the seed is never below 4)
+    if (_repeatSeedLength(minLen, maxDiv, true) < k) results.seedLimited = k;
+    return results;
+}
+

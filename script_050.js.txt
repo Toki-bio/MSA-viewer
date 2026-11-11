@@ -1,0 +1,469 @@
+[script.js lines 21186-21653 of ViewAlign fd8b8e4]
+let _selectionsPanelPending = false;
+
+function _resetSelectionStash() {
+    state.selectionStash = { rows: null, cols: null, nucs: null, tsd: null, repeats: null, names: null };
+    _selectionsUndo = null;
+}
+
+function _nucCount(map) {
+    let n = 0;
+    map?.forEach(set => { n += set.size; });
+    return n;
+}
+
+// "3-7, 12, 40-41" (1-based, as the ruler shows them)
+// row -> Set(columns); `over` adds to a copy of `base`, neither is modified
+function _mergeTsdMaps(base, over) {
+    const out = new Map();
+    [base, over].forEach(m => m?.forEach((set, row) => {
+        const cur = out.get(row) || new Set();
+        set.forEach(p => cur.add(p));
+        out.set(row, cur);
+    }));
+    return out;
+}
+
+function _formatColumnRanges(cols, maxParts = 4) {
+    const sorted = [...new Set([...cols].map(Number))].filter(Number.isInteger).sort((a, b) => a - b);
+    const parts = [];
+    for (let i = 0; i < sorted.length;) {
+        let j = i;
+        while (j + 1 < sorted.length && sorted[j + 1] === sorted[j] + 1) j++;
+        parts.push(sorted[i] === sorted[j] ? String(sorted[i] + 1) : `${sorted[i] + 1}-${sorted[j] + 1}`);
+        i = j + 1;
+    }
+    return parts.length > maxParts ? parts.slice(0, maxParts).join(', ') + `, ... (${parts.length} ranges)` : parts.join(', ');
+}
+
+function _rowNames(rows, max = 3) {
+    const list = [...rows].sort((a, b) => a - b).map(i => state.seqs[i]?.header).filter(Boolean);
+    return list.length > max ? list.slice(0, max).join(', ') + ', ...' : list.join(', ');
+}
+
+// Stashed rows are sequence objects; these convert to and from current row indices.
+function _rowsToObjs(rows) { return new Set([...rows].map(i => state.seqs[i]).filter(Boolean)); }
+// Undo/redo and column deletion replace state.seqs with copies, so a kept object may no
+// longer be in it. Such an object is found again by name (the first unclaimed row with
+// that header), which is what the user sees as "the same sequence".
+function _seqObjResolver() {
+    const byName = new Map();
+    state.seqs.forEach((q, i) => {
+        if (!byName.has(q.header)) byName.set(q.header, []);
+        byName.get(q.header).push(i);
+    });
+    const taken = new Set();
+    return o => {
+        let i = state.seqs.indexOf(o);
+        if (i < 0 || taken.has(i)) i = (byName.get(o?.header) || []).find(k => !taken.has(k)) ?? -1;
+        if (i >= 0) taken.add(i);
+        return i;
+    };
+}
+function _objsToRows(objs) {
+    const out = new Set();
+    const find = _seqObjResolver();
+    objs?.forEach(o => { const i = find(o); if (i >= 0) out.add(i); });
+    return out;
+}
+function _nucsToObjs(map) {
+    const out = new Map();
+    map?.forEach((set, row) => { const o = state.seqs[row]; if (o) out.set(o, new Set(set)); });
+    return out;
+}
+function _objsToNucs(map) {
+    const out = new Map();
+    const find = _seqObjResolver();
+    map?.forEach((set, o) => { const i = find(o); if (i >= 0) out.set(i, new Set(set)); });
+    return out;
+}
+
+
+function collectSelectionItems() {
+    const st = state.selectionStash;
+    const items = [];
+    const cov = overlayCoverage();
+    const rowsLive = state.selectedRows.size, rowsHidden = st.rows?.size || 0;
+    if (rowsLive || rowsHidden) {
+        const on = rowsLive > 0;
+        items.push({ key: 'rows', kind: 'Rows', on, icon: 'rows',
+            count: on ? rowsLive : rowsHidden,
+            detail: (on ? _rowNames(state.selectedRows) : _rowNames(_objsToRows(st.rows))) + (on && rowsHidden ? ` (+${rowsHidden} off)` : ''),
+            canGo: true });
+    }
+    const colsLive = state.selectedColumns.size, colsHidden = st.cols?.size || 0;
+    if (colsLive || colsHidden) {
+        const on = colsLive > 0;
+        items.push({ key: 'cols', kind: 'Columns', on, icon: 'cols',
+            count: on ? colsLive : colsHidden,
+            detail: _formatColumnRanges(on ? state.selectedColumns : st.cols) + (on && colsHidden ? ` (+${colsHidden} off)` : ''),
+            canGo: true });
+    }
+    const nucLive = _nucCount(state.selectedNucs), nucHidden = _nucCount(st.nucs);
+    if (nucLive || nucHidden) {
+        const on = nucLive > 0;
+        const rows = on ? state.selectedNucs.size : st.nucs.size;   // same count whether keyed by index or object
+        items.push({ key: 'nucs', kind: 'Residues', on, icon: 'nucs',
+            count: on ? nucLive : nucHidden,
+            detail: `in ${rows} row${rows === 1 ? '' : 's'}` + (on && nucHidden ? ` (+${nucHidden} off)` : ''),
+            canGo: true });
+    }
+    (state.searchHistory || []).forEach(entry => {
+        items.push({ key: 'search:' + entry.className, kind: 'Search', on: entry.enabled !== false,
+            color: entry.color, count: entry.matchCount || 0,
+            detail: `${entry.label || entry.searchValue}` + (entry.sequencesWithMatches ? ` in ${entry.sequencesWithMatches} seq` : ''),
+            canGo: (entry.matchCount || 0) > 0, entry });
+    });
+    const tsdLive = state.tsdMarks?.size || 0, tsdHidden = st.tsd?.size || 0;
+    if (tsdLive || tsdHidden) {
+        const n = tsdLive || tsdHidden;
+        items.push({ key: 'tsd', kind: 'TSD marks', on: tsdLive > 0, color: state.tsdMarkColor || '#ffd54f',
+            count: n, detail: `in ${n} sequence${n === 1 ? '' : 's'}` + (tsdLive && tsdHidden ? ` (+${tsdHidden} off)` : ''),
+            note: cov.tsd ? `colour under a search at ${cov.tsd}; shown bold, second font` : '' });
+    }
+    const repLive = state.repeatHighlights?.size || 0, repHidden = st.repeats?.size || 0;
+    if (repLive || repHidden) {
+        const first = (repLive ? state.repeatHighlights : st.repeats).values().next().value;
+        items.push({ key: 'repeats', kind: 'Repeat highlights', on: repLive > 0, color: first?.color,
+            count: repLive || repHidden, detail: repLive && repHidden ? `(+${repHidden} off)` : '',
+            note: cov.repeat ? `tint under other marks at ${cov.repeat}; shown as an overline` : '' });
+    }
+    const namesLive = colourState?.mappings?.size || 0, namesHidden = st.names?.size || 0;
+    if (namesLive || namesHidden) {
+        const first = (namesLive ? colourState.mappings : st.names).values().next().value;
+        items.push({ key: 'names', kind: 'Name colours', on: namesLive > 0, color: first,
+            count: namesLive || namesHidden, detail: `${namesLive || namesHidden} sequence${(namesLive || namesHidden) === 1 ? '' : 's'}`
+                + (namesLive && namesHidden ? ` (+${namesHidden} off)` : '') });
+    }
+    return items;
+}
+
+// ---- snapshot of everything the panel manages (for Undo and Clear all) ----
+function _captureSelections() {
+    const st = state.selectionStash;
+    return {
+        // rows and residues by sequence object, so Undo still means the same sequences
+        // after rows are moved or deleted in between
+        rows: _rowsToObjs(state.selectedRows), cols: new Set(state.selectedColumns), nucs: _nucsToObjs(state.selectedNucs),
+        searches: (state.searchHistory || []).map(e => ({ ...e })),
+        tsd: state.tsdMarks.clone(),
+        repeats: new Map(state.repeatHighlights || []),
+        names: new Map(colourState?.mappings || []),
+        stash: {
+            rows: st.rows ? new Set(st.rows) : null, cols: st.cols ? new Set(st.cols) : null,
+            nucs: st.nucs ? new Map([...st.nucs].map(([o, s]) => [o, new Set(s)])) : null,
+            tsd: st.tsd ? ResidueMarks.fromRowCols(st.tsd) : null, repeats: st.repeats ? new Map(st.repeats) : null,
+            names: st.names ? new Map(st.names) : null
+        }
+    };
+}
+
+function _restoreSelections(b) {
+    state.selectedRows = _objsToRows(b.rows);
+    state.selectedColumns = new Set(b.cols);
+    state.selectedNucs = _objsToNucs(b.nucs);
+    (state.searchHistory || []).forEach(_removeSearchStyle);
+    state.searchHistory = b.searches.map(e => ({ ...e }));
+    state.tsdMarks = b.tsd;
+    state.repeatHighlights = b.repeats;
+    colourState.mappings.clear();
+    b.names.forEach((c, n) => colourState.mappings.set(n, c));
+    state.selectionStash = b.stash;
+    bumpSearchLayer();
+    renderAlignment({ deferConservation: true });
+    applyColourToSeqNames(colourState.mappings);
+    updateActiveSearchesPanel();
+}
+
+function _rememberForUndo(label) {
+    _selectionsUndo = { label, bundle: _captureSelections() };
+}
+
+function undoSelectionsRemoval() {
+    const u = _selectionsUndo;
+    if (!u) return;
+    _selectionsUndo = null;
+    _restoreSelections(u.bundle);
+    showMessage(`Restored: ${u.label}`, 1800);
+}
+
+// ---- per-kind on/off and remove ----
+function _refreshRowColNucDom() {
+    updateRowSelections();
+    updateColumnSelections();
+    scheduleNucSelectionRefresh();
+    if (isCanvasMode()) _canvasState.scheduleDraw?.();
+}
+
+function setSelectionItemOn(key, on) {
+    const st = state.selectionStash;
+    if (key.startsWith('search:')) {
+        const entry = state.searchHistory.find(e => 'search:' + e.className === key);
+        if (entry) setSearchEnabled(entry, on);
+        return;
+    }
+    if (key === 'rows') {
+        if (on) { _objsToRows(st.rows).forEach(i => state.selectedRows.add(i)); st.rows = null; }
+        else { st.rows = new Set([...(st.rows || []), ..._rowsToObjs(state.selectedRows)]); state.selectedRows.clear(); }
+        _refreshRowColNucDom();
+    } else if (key === 'cols') {
+        if (on) { st.cols?.forEach(c => state.selectedColumns.add(c)); st.cols = null; }
+        else { st.cols = new Set([...(st.cols || []), ...state.selectedColumns]); state.selectedColumns.clear(); }
+        _refreshRowColNucDom();
+    } else if (key === 'nucs') {
+        if (on) {
+            _objsToNucs(st.nucs).forEach((set, row) => {
+                const cur = state.selectedNucs.get(row) || new Set();
+                set.forEach(p => cur.add(p));
+                state.selectedNucs.set(row, cur);
+            });
+            st.nucs = null;
+        } else {
+            const merged = new Map([...(st.nucs || [])].map(([o, s]) => [o, new Set(s)]));
+            _nucsToObjs(state.selectedNucs).forEach((set, o) => {
+                const cur = merged.get(o) || new Set();
+                set.forEach(p => cur.add(p));
+                merged.set(o, cur);
+            });
+            st.nucs = merged;
+            state.selectedNucs.clear();
+            state.pendingNucStart = null;
+        }
+        _refreshRowColNucDom();
+    } else if (key === 'tsd') {
+        // Merge both ways, like rows: marks made while the item was off are kept
+        const merged = _mergeTsdMaps(on ? st.tsd : state.tsdMarks, on ? state.tsdMarks : st.tsd);
+        if (on) { state.tsdMarks = merged; st.tsd = null; }
+        else { st.tsd = ResidueMarks.fromRowCols(merged); state.tsdMarks = new Map(); }
+        renderAlignment({ deferConservation: true });
+    } else if (key === 'repeats') {
+        // Map by repeat id; the newer (live) entry wins a clash
+        if (on) {
+            state.repeatHighlights = new Map([...(st.repeats || []), ...(state.repeatHighlights || [])]);
+            st.repeats = null;
+            renderAlignment({ deferConservation: true });
+        } else {
+            st.repeats = new Map([...(st.repeats || []), ...(state.repeatHighlights || [])]);
+            if (state.repeatHighlights) _clearRepeatHighlights();
+        }
+    } else if (key === 'names') {
+        // By name; a colour given while the item was off wins over the stashed one
+        if (on) { st.names?.forEach((c, n) => { if (!colourState.mappings.has(n)) colourState.mappings.set(n, c); }); st.names = null; }
+        else { st.names = new Map([...(st.names || []), ...colourState.mappings]); colourState.mappings.clear(); }
+        applyColourToSeqNames(colourState.mappings);
+    }
+    scheduleSelectionsPanelRefresh();
+}
+
+function _removeSelectionItemNoUndo(key) {
+    const st = state.selectionStash;
+    if (key.startsWith('search:')) {
+        const entry = state.searchHistory.find(e => 'search:' + e.className === key);
+        if (entry) removeSearch(entry);
+        return;
+    }
+    if (key === 'rows') { state.selectedRows.clear(); st.rows = null; state.lastSelectedIndex = null; }
+    else if (key === 'cols') { state.selectedColumns.clear(); st.cols = null; }
+    else if (key === 'nucs') { state.selectedNucs.clear(); state.pendingNucStart = null; st.nucs = null; }
+    else if (key === 'tsd') { state.tsdMarks = new Map(); st.tsd = null; state.tsdMarkUndo = null; renderAlignment({ deferConservation: true }); }
+    else if (key === 'repeats') { _clearRepeatHighlights(); st.repeats = null; }
+    else if (key === 'names') { colourState.mappings.clear(); st.names = null; applyColourToSeqNames(colourState.mappings); }
+    if (key === 'rows' || key === 'cols' || key === 'nucs') _refreshRowColNucDom();
+}
+
+function removeSelectionItem(key, label) {
+    _rememberForUndo(label || key);
+    _removeSelectionItemNoUndo(key);
+    scheduleSelectionsPanelRefresh();
+}
+
+// Rows, columns and residues: what Esc and "Clear selection" remove. Highlights stay.
+function clearActiveSelection(quiet) {
+    const had = state.selectedRows.size || state.selectedColumns.size || state.selectedNucs.size || state.pendingNucStart;
+    if (!had) return false;
+    _rememberForUndo('selection');
+    state.selectedRows.clear();
+    state.selectedColumns.clear();
+    state.selectedNucs.clear();
+    state.pendingNucStart = null;
+    state.lastSelectedIndex = null;
+    _refreshRowColNucDom();
+    scheduleSelectionsPanelRefresh();
+    if (!quiet) showMessage('Selection cleared (Undo in Selections)', 1600);
+    return true;
+}
+
+function clearAllSelections() {
+    const items = collectSelectionItems();
+    if (!items.length) return;
+    _rememberForUndo('all selections and highlights');
+    const st = state.selectionStash;
+    state.selectedRows.clear(); state.selectedColumns.clear(); state.selectedNucs.clear();
+    state.pendingNucStart = null; state.lastSelectedIndex = null;
+    const hadRender = (state.tsdMarks?.size || 0) > 0;
+    state.tsdMarks = new Map(); state.tsdMarkUndo = null;
+    if (state.repeatHighlights?.size) _clearRepeatHighlights();
+    colourState.mappings.clear();
+    Object.keys(st).forEach(k => { st[k] = null; });
+    clearAllSearches(true);
+    applyColourToSeqNames(colourState.mappings);
+    if (hadRender) renderAlignment({ deferConservation: true });
+    else _refreshRowColNucDom();
+    scheduleSelectionsPanelRefresh();
+    showMessage('Cleared all selections and highlights', 1600);
+}
+
+function setAllSelectionsOn(on) {
+    collectSelectionItems().forEach(it => { if (it.on !== on) setSelectionItemOn(it.key, on); });
+}
+
+// ---- "go to": bring the item into view; repeated clicks step through it ----
+function _gotoSelectionItem(item) {
+    if (item.key === 'rows') {
+        const rows = [...state.selectedRows].sort((a, b) => a - b);
+        if (!rows.length) return;
+        const i = (item._cursor = ((_gotoCursor.rows ?? -1) + 1) % rows.length);
+        _gotoCursor.rows = i;
+        _showRowInAlignment(rows[i], null);
+    } else if (item.key === 'cols') {
+        const cols = [...state.selectedColumns].sort((a, b) => a - b);
+        if (!cols.length) return;
+        // step by contiguous range
+        const starts = cols.filter((c, k) => k === 0 || cols[k - 1] !== c - 1);
+        const i = ((_gotoCursor.cols ?? -1) + 1) % starts.length;
+        _gotoCursor.cols = i;
+        _scrollToColumn(starts[i]);
+    } else if (item.key === 'nucs') {
+        const rows = [...state.selectedNucs.keys()].filter(r => r >= 0).sort((a, b) => a - b);
+        if (!rows.length) return;
+        const i = ((_gotoCursor.nucs ?? -1) + 1) % rows.length;
+        _gotoCursor.nucs = i;
+        _showRowInAlignment(rows[i], _minOf(state.selectedNucs.get(rows[i])));
+    } else if (item.entry) {
+        _gotoNextSearchHit(item.entry);
+    }
+}
+const _gotoCursor = {};
+
+function _gotoNextSearchHit(entry) {
+    const n = state.seqs.length;
+    if (!n) return;
+    const cur = entry._cursor || { row: 0, col: -1 };
+    for (let k = 0; k <= n; k++) {
+        const row = (cur.row + k) % n;
+        const { cols, text } = _degapForSearch(state.seqs[row].seq);
+        const matches = _searchMatchesInDegapped(text, entry) || [];
+        const starts = matches.map(m => cols[m.idx]).filter(c => c !== undefined).sort((a, b) => a - b);
+        const next = starts.find(c => (k === 0 ? c > cur.col : true));
+        if (next !== undefined) {
+            entry._cursor = { row, col: next };
+            if (entry.enabled === false) setSearchEnabled(entry, true);
+            _showRowInAlignment(row, next);
+            return;
+        }
+    }
+}
+
+// ---- the panel ----
+function scheduleSelectionsPanelRefresh() {
+    if (_selectionsPanelPending) return;
+    _selectionsPanelPending = true;
+    requestAnimationFrame(() => {
+        _selectionsPanelPending = false;
+        refreshSelectionsPanel();
+    });
+}
+
+function _selectionIconHtml(item) {
+    if (item.color) return `<span class="sel-swatch" style="background:${_escapeHtml(item.color)}"></span>`;
+    const glyph = { rows: '&#9776;', cols: '&#10074;&#10074;', nucs: '&#9638;' }[item.icon] || '&#9679;';
+    return `<span class="sel-icon sel-icon-${item.icon || 'other'}">${glyph}</span>`;
+}
+
+function refreshSelectionsPanel() {
+    const section = el('selections-menu-section');
+    const list = el('selectionsList');
+    if (!section || !list) return;
+    const items = collectSelectionItems();
+    const group = el('selections-controls');
+    const detached = group?.classList.contains('detached');
+    const onCount = items.filter(i => i.on).length;
+    // The tab appears as soon as there is anything to list (and stays while detached)
+    section.classList.toggle('sel-menu-off', !items.length && !detached && !_selectionsUndo);
+    const badge = el('selectionsBadge');
+    if (badge) {
+        badge.textContent = items.length ? (onCount === items.length ? String(items.length) : `${onCount}/${items.length}`) : '';
+        badge.title = items.length ? `${onCount} shown of ${items.length}` : '';
+    }
+    el('selectionsClearBtn')?.toggleAttribute('disabled', !items.length);
+    el('selectionsClearSelBtn')?.toggleAttribute('disabled', !(state.selectedRows.size || state.selectedColumns.size || state.selectedNucs.size));
+    const allOn = items.length && items.every(i => i.on);
+    const toggleAll = el('selectionsToggleAllBtn');
+    if (toggleAll) {
+        toggleAll.textContent = allOn ? 'Hide all' : 'Show all';
+        toggleAll.toggleAttribute('disabled', !items.length);
+    }
+    const undo = el('selectionsUndoBtn');
+    if (undo) {
+        undo.hidden = !_selectionsUndo;
+        undo.title = _selectionsUndo ? `Bring back: ${_selectionsUndo.label}` : '';
+    }
+
+    list.innerHTML = '';
+    if (!items.length) {
+        const empty = document.createElement('div');
+        empty.className = 'sel-empty';
+        empty.textContent = 'Nothing selected or highlighted.';
+        list.appendChild(empty);
+        return;
+    }
+    items.forEach(item => {
+        const row = document.createElement('div');
+        row.className = 'sel-item' + (item.on ? '' : ' is-off');
+        row.dataset.key = item.key;
+        const cb = document.createElement('input');
+        cb.type = 'checkbox';
+        cb.checked = item.on;
+        cb.title = item.on ? 'Switch off (kept, not shown or used)' : 'Switch back on';
+        cb.addEventListener('change', () => setSelectionItemOn(item.key, cb.checked));
+        const icon = document.createElement('span');
+        icon.className = 'sel-icon-wrap';
+        icon.innerHTML = _selectionIconHtml(item);
+        const text = document.createElement('span');
+        text.className = 'sel-text';
+        const kind = document.createElement('span');
+        kind.className = 'sel-kind';
+        kind.textContent = item.kind;
+        const count = document.createElement('span');
+        count.className = 'sel-count';
+        count.textContent = String(item.count);
+        const detail = document.createElement('span');
+        detail.className = 'sel-detail';
+        detail.textContent = item.detail || '';
+        text.append(kind, count, detail);
+        text.title = `${item.kind}: ${item.count}${item.detail ? ' - ' + item.detail : ''}${item.note ? '\n' + item.note : ''}`;
+        if (item.note) {
+            const note = document.createElement('span');
+            note.className = 'sel-note';
+            note.textContent = item.note;
+            text.appendChild(note);
+        }
+        row.append(cb, icon, text);
+        if (item.canGo) {
+            const go = document.createElement('button');
+            go.className = 'sel-go';
+            go.innerHTML = '&#8594;';
+            go.title = item.entry ? 'Go to the next match' : 'Go to it (click again for the next one)';
+            go.addEventListener('click', () => _gotoSelectionItem(item));
+            row.appendChild(go);
+        }
+        const rm = document.createElement('button');
+        rm.className = 'sel-remove';
+        rm.textContent = 'x';
+        rm.title = 'Remove (Undo brings it back)';
+        rm.addEventListener('click', () => removeSelectionItem(item.key, item.kind.toLowerCase()));
+        row.appendChild(rm);
+        list.appendChild(row);
+    });
+}
+

@@ -1,0 +1,238 @@
+[script.js lines 39613-39850 of ViewAlign fd8b8e4]
+// Direct-DOM highlight removal (fast, no full renderAlignment)
+function _repeatInfoFromRow(tr) {
+    // the anchored result (sequence + residue ranges) if the search made one: the row and
+    // columns in the table are from when it ran
+    const ri = parseInt(String(tr.dataset.repeatId || '').split('-').pop(), 10);
+    const res = _lastRepeatResults?.[ri];
+    if (res?._info?.anchor && String(tr.dataset.repeatId).startsWith((_lastRepeatView?.mode || '') + '-')) {
+        return { segs: res._info.segs.map(x => x.slice()), row: res._info.row, color: tr.dataset.color, anchor: res._info.anchor };
+    }
+    const segs = (tr.dataset.segs || `${tr.dataset.start}-${tr.dataset.end}`).split(';')
+        .map(x => x.split('-').map(Number)).filter(a => a.length === 2 && a.every(Number.isFinite));
+    const row = tr.dataset.row === '' || tr.dataset.row == null ? null : parseInt(tr.dataset.row, 10);
+    return { segs, row: Number.isInteger(row) ? row : null, color: tr.dataset.color };
+}
+// Kept for the callers that paint one highlight: the layer is derived, so any change is a
+// resync of every drawn row from state.repeatHighlights
+function _paintRepeatHighlight(info, on) {
+    bumpRepeatLayer();
+    syncRepeatPaint();
+}
+function _removeRepeatHighlight(row) {
+    const rid = row.dataset.repeatId;
+    const hl = state.repeatHighlights;
+    if (hl.has(rid)) {
+        const info = hl.get(rid);
+        hl.delete(rid);
+        _paintRepeatHighlight(info, false);   // resync: survivors sharing those columns stay
+    }
+    row.dataset.active = '';
+    row.style.background = '';
+}
+
+function _toggleRepeatHighlight(row) {
+    const rid = row.dataset.repeatId;
+    const hl = state.repeatHighlights;
+    if (hl.has(rid)) {
+        _removeRepeatHighlight(row);
+        return;
+    }
+    const info = _repeatInfoFromRow(row);
+    hl.set(rid, info);
+    _paintRepeatHighlight(info, true);
+    if (info.row !== null) { const v = _repeatView(info); if (v.row >= 0) _showRowInAlignment(v.row, v.segs[0]?.[0]); }
+    else requestAnimationFrame(() => _scrollToColumn(info.segs[0]?.[0] ?? 0));
+    row.dataset.active = '1';
+    row.style.background = info.color + '55';
+}
+
+// B2: open or close a microsatellite group row: its pairs are listed under it (20 at a time) and its arrays highlighted
+function _toggleRepeatGroup(tr) {
+    const v = _lastRepeatView;
+    const id = parseInt(tr.dataset.group, 10);
+    if (!v || !Number.isInteger(id)) return;
+    if (!v.expanded) v.expanded = new Map();
+    const rid = tr.dataset.repeatId, hl = state.repeatHighlights;
+    if (v.expanded.has(id)) {
+        v.expanded.delete(id);
+        if (hl.has(rid)) { hl.delete(rid); _paintRepeatHighlight(null, false); }
+    } else {
+        v.expanded.set(id, 20);
+        const info = _repeatInfoFromRow(tr);
+        _anchorRepeat(info);
+        hl.set(rid, info);
+        _paintRepeatHighlight(info, true);
+        if (info.row !== null) { const w = _repeatView(info); if (w.row >= 0) _showRowInAlignment(w.row, w.segs[0]?.[0]); }
+    }
+    const el = document.getElementById('repeatResults');
+    if (el) _renderRepeatResultsHTML(el, _lastRepeatResults, v.mode, v.name || '', v.totalLen, v);
+}
+function _moreRepeatGroup(id) {
+    const v = _lastRepeatView;
+    if (!v?.expanded?.has(id)) return;
+    v.expanded.set(id, v.expanded.get(id) + 20);
+    const el = document.getElementById('repeatResults');
+    if (el) _renderRepeatResultsHTML(el, _lastRepeatResults, v.mode, v.name || '', v.totalLen, v);
+}
+
+function _applyLineHighlights(dataSpan) {
+    const line = dataSpan.parentElement;
+    if (!line || line.classList.contains('consensus-line')) return;
+    const row = parseInt(line.dataset.seqIndex, 10);
+    if (!(row >= 0)) return;
+    const cols = _repeatColsForRow(row);
+    if (!cols.size) return;
+    for (const span of dataSpan.children) {
+        const p = span.dataset.pos;
+        if (p !== undefined && cols.has(+p)) _setSpanRepeatPaint(span, cols.get(+p));
+    }
+}
+
+function _clearRepeatHighlights() {
+    // Fast path: clear all highlight backgrounds directly from DOM
+    state.repeatHighlights.clear();
+    bumpRepeatLayer();
+    // The residue overlay owns the spans' look: resync it (removing only the background left
+    // the overlay's text colour and decoration behind, and would drop marks sharing the cell)
+    syncResidueOverlays();
+    // Refresh results table
+    const el = document.getElementById('repeatResults');
+    if (el && _lastRepeatResults.length) {
+        const v = _lastRepeatView || { mode: document.querySelector('input[name="repeatMode"]:checked')?.value || 'tandem' };
+        _renderRepeatResultsHTML(el, _lastRepeatResults, v.mode, v.name || '', v.totalLen, v);
+    }
+}
+
+function _scrollToColumn(colIndex) {
+    if (isCanvasMode() || _foldDomInfo()) _foldRevealCol(colIndex);
+    const container = document.getElementById('alignmentContainer');
+    if (!container) return;
+    // Block view (Canvas Block): go to the band that holds the column (offsetX is always 0 there)
+    if (isBlockLayout() && _canvasBlockReveal(null, colIndex)) return;
+    // Canvas mode: pan the canvas instead of scrolling the container
+    if (document.getElementById('modeCanvas')?.checked) {
+        const m = _canvasState.metrics;
+        if (m?.charW) {
+            const slotI = _canvasColToSlotNear(colIndex);
+            _canvasState.offsetX = Math.max(0, (slotI >= 0 ? slotI : colIndex) * m.charW - 120);
+            _canvasState.scheduleDraw?.();
+        }
+        return;
+    }
+    // Measure actual character width from a rendered span
+    const sampleSpan = container.querySelector('.seq-data > span[data-pos]');
+    let charW = 7.8; // fallback for 13px Courier New
+    if (sampleSpan) { charW = sampleSpan.getBoundingClientRect().width || charW; }
+    container.scrollLeft = Math.max(0, colIndex * charW - 120);
+}
+
+function _initRepeatFinderEvents() {
+    const minLenInput = document.getElementById('repeatMinLen');
+    // a typed value is kept across mode changes (v307); an emptied field is not a typed value (GLM m307 #11)
+    if (minLenInput) minLenInput.addEventListener('input', () => { if (minLenInput.value.trim() === '') delete minLenInput.dataset.userSet; else minLenInput.dataset.userSet = '1'; });
+    const clearBtn = document.getElementById('repeatClearHighlightsBtn');
+    if (clearBtn) clearBtn.addEventListener('click', _clearRepeatHighlights);
+    const closeBtn = document.getElementById('repeatFinderCloseBtn');
+    if (closeBtn) closeBtn.addEventListener('click', () => {
+        // the repeat highlights stay (they are listed in the Selections panel, and Clear highlights removes them):
+        // closing the window to look at them took them away. The faint TSD preview belongs to the open window.
+        _hideTsdPreviewWithWindow();
+        _abortRepeatJob('The search was cancelled when the window closed.');   // nothing of it is painted later
+        const modal = document.getElementById('repeatFinderModal');
+        if (modal) modal.style.display = 'none';
+    });
+    const runBtn = document.getElementById('repeatRunBtn');
+    if (runBtn) runBtn.addEventListener('click', runRepeatAnalysis);
+        // Trim mode toggle: show/hide Clear Soft button
+    document.querySelectorAll('input[name="trimMode"]').forEach(radio => {
+        radio.addEventListener('change', () => {
+            const clearBtn = document.getElementById('clearSoftTrimButton');
+            const isSoft = radio.value === 'soft';
+            if (clearBtn) {
+                clearBtn.style.display = (isSoft && state.softTrimBoundaries) ? '' : 'none';
+            }
+        });
+    });
+
+    document.querySelectorAll('input[name="repeatMode"]').forEach(radio => {
+        // another mode abandons a running search: its table would come up under the new mode
+        radio.addEventListener('change', () => { _abortRepeatJob('The search was cancelled: the mode was changed. Press Find to search.'); });
+        radio.addEventListener('change', _syncRepeatFinderModeUI);
+    });
+    document.querySelectorAll('input[name="tsdMode"]').forEach(radio => {
+        radio.addEventListener('change', _syncTsdModeSubUI);
+        radio.addEventListener('change', () => { if (radio.value === 'manual' && radio.checked) _prefillTsdManualFromAuto(); });
+    });
+    document.querySelectorAll('input[name="repeatScope"]').forEach(radio => {
+        radio.addEventListener('change', _syncRepeatFinderModeUI);
+    });
+    const tsdCopyBtn = document.getElementById('tsdCopyBtn');
+    if (tsdCopyBtn) tsdCopyBtn.addEventListener('click', _copyTsdTable);
+    const tsdFillBtn = document.getElementById('tsdFillFromSelectionBtn');
+    if (tsdFillBtn) tsdFillBtn.addEventListener('click', _fillTsdRegionsFromSelection);
+    const tsdMarkBtn = document.getElementById('tsdMarkBtn');
+    if (tsdMarkBtn) tsdMarkBtn.addEventListener('click', applyTsdMarking);
+    const tsdUndoBtn = document.getElementById('tsdUndoMarkBtn');
+    if (tsdUndoBtn) tsdUndoBtn.addEventListener('click', undoTsdMarking);
+    const tsdMarkStyle = document.getElementById('tsdMarkStyle');
+    if (tsdMarkStyle) tsdMarkStyle.addEventListener('change', _syncTsdModeSubUI);
+    ['tsdUpStart', 'tsdUpEnd', 'tsdDownStart', 'tsdDownEnd'].forEach(id => {
+        const input = document.getElementById(id);
+        if (input) input.addEventListener('change', () => { input.dataset.userSet = '1'; });
+    });
+    _syncRepeatFinderModeUI();
+}
+
+// Search highlight colour: hovering the colour box opens a small palette (a native colour
+// dialog cannot open without a click); a click on the box still opens the full picker.
+const SEARCH_HOVER_COLOURS = ['#FFFF00', '#FFA500', '#FF6B6B', '#FF69B4', '#BB8FCE', '#45B7D1',
+    '#4ECDC4', '#7CFC00', '#98D8C8', '#F8B88B', '#A0A0A0', '#00BFFF'];
+function _initSearchColourHover() {
+    const input = document.getElementById('searchColor');
+    if (!input || input.dataset.hoverPalette) return;
+    input.dataset.hoverPalette = '1';
+    const pop = document.createElement('div');
+    pop.id = 'searchColourPop';
+    pop.className = 'search-colour-pop';
+    pop.hidden = true;
+    for (const c of SEARCH_HOVER_COLOURS) {
+        const b = document.createElement('button');
+        b.type = 'button'; b.className = 'search-colour-chip'; b.style.background = c; b.title = c; b.dataset.colour = c;
+        b.addEventListener('click', () => {
+            input.value = c;
+            input.dispatchEvent(new Event('input', { bubbles: true }));
+            input.dispatchEvent(new Event('change', { bubbles: true }));
+            hide(0);
+        });
+        pop.appendChild(b);
+    }
+    const more = document.createElement('button');
+    more.type = 'button'; more.className = 'search-colour-more'; more.textContent = 'More…';
+    more.title = 'Open the full colour picker';
+    more.addEventListener('click', () => { hide(0); input.click(); });
+    pop.appendChild(more);
+    document.body.appendChild(pop);
+    let timer = null;
+    const mark = () => pop.querySelectorAll('.search-colour-chip').forEach(b =>
+        b.classList.toggle('current', b.dataset.colour.toLowerCase() === input.value.toLowerCase()));
+    const show = () => {
+        clearTimeout(timer);
+        if (!pop.hidden) return;
+        const r = input.getBoundingClientRect();
+        pop.hidden = false; mark();
+        const w = pop.offsetWidth;
+        pop.style.left = Math.max(4, Math.min(window.innerWidth - w - 4, r.left)) + 'px';
+        pop.style.top = (r.bottom + 2) + 'px';
+    };
+    function hide(delay = 250) { clearTimeout(timer); timer = setTimeout(() => { pop.hidden = true; }, delay); }
+    input.addEventListener('mouseenter', show);
+    input.addEventListener('mouseleave', () => hide());
+    pop.addEventListener('mouseenter', () => clearTimeout(timer));
+    pop.addEventListener('mouseleave', () => hide());
+    input.addEventListener('click', () => hide(0));
+    input.addEventListener('focus', show);
+    input.addEventListener('blur', () => hide());
+    document.addEventListener('keydown', e => { if (e.key === 'Escape' && !pop.hidden) hide(0); });
+}
+document.addEventListener('DOMContentLoaded', _initSearchColourHover);

@@ -1,0 +1,441 @@
+[script.js lines 17302-17741 of ViewAlign fd8b8e4]
+    if (e.altKey && !e.ctrlKey && !e.metaKey && !e.shiftKey && e.code === 'KeyT') {
+        openSelectedInNewTab();
+        e.preventDefault();
+    }
+    // Alt+J: copy the consensus of the selected rows; Alt+C: copy the selection (as Copy Sel).
+    // Chrome, Edge and Firefox keep Ctrl+Shift+J / Ctrl+Shift+C for their developer tools, so
+    // those never reached the page; they still work as aliases where a browser passes them.
+    if (e.altKey && !e.ctrlKey && !e.metaKey && !e.shiftKey && (e.code === 'KeyJ' || e.code === 'KeyC')) {
+        if (e.code === 'KeyJ') copySelectedConsensus();
+        else copySelected();
+        e.preventDefault();
+    }
+    // Hidden columns: Alt+H hides the selected columns, Alt+Shift+H hides all but them, Alt+U shows all again
+    if (e.altKey && !e.ctrlKey && !e.metaKey && (e.code === 'KeyH' || (e.code === 'KeyU' && !e.shiftKey)) && !_isTextEntry(document.activeElement)) {
+        if (e.code === 'KeyU') revealAllColumns();
+        else if (e.shiftKey) hideUnselectedColumns();
+        else hideSelectedColumns();
+        e.preventDefault();
+    }
+
+    // Page navigation. Canvas pans its own offset; a windowed view scrolls the container; a small
+    // alignment scrolls the page, so the key is left to the browser (it used to scroll the
+    // container, which does not scroll there, and was cancelled: PageDown did nothing).
+    if ((e.key === 'PageUp' || e.key === 'PageDown') && !e.ctrlKey && !e.metaKey && !e.altKey && !_isTextEntry(document.activeElement)) {
+        const container = alignmentContainer;
+        const direction = e.key === 'PageUp' ? -1 : 1;
+        if (isCanvasMode() && _canvasState.canvas) {
+            _canvasState.offsetY += direction * (parseFloat(_canvasState.canvas.style.height) || container.clientHeight) * 0.8;
+            (_canvasState.scheduleDrawMoved || _canvasState.scheduleDraw)?.();
+            _canvasState.onOffsetChange?.();
+            e.preventDefault();
+        } else if (container.scrollHeight > container.clientHeight + 1 && /auto|scroll/.test(getComputedStyle(container).overflowY)) {
+            container.scrollTop += direction * container.clientHeight * 0.8;
+            e.preventDefault();
+        }
+    }
+}
+function handleKeyUp(e) {
+    if (!e.ctrlKey && !e.metaKey) {
+        state.ctrlPressed = false;
+    }
+    if (!e.altKey) {
+        state.altPressed = false;
+    }
+}
+
+window.addEventListener('blur', () => {
+    state.ctrlPressed = false;
+    state.altPressed = false;
+});
+// ACTION FUNCTIONS
+function reverseComplementSelected() {
+    if (state.selectedRows.size === 0) {
+        showMessage("Select sequences (click a name; Ctrl+click adds) to RevComp.", 3000);
+        return;
+    }
+    reverseComplementSequences(Array.from(state.selectedRows));
+}
+
+// One-click reverse complement of the whole alignment, no selection needed first.
+function reverseComplementAll() {
+    if (state.seqs.length === 0) {
+        showMessage("No alignment loaded.", 3000);
+        return;
+    }
+    reverseComplementSequences(state.seqs.map((_, i) => i));
+}
+
+// -- Sort functions --
+function sortByName() {
+    pushUndo('sort-name');
+    const indices = state.seqs.map((s, i) => ({ idx: i, name: s.header.toLowerCase() }));
+    indices.sort((a, b) => a.name.localeCompare(b.name));
+    state.seqs = indices.map(e => state.seqs[e.idx]);
+    state.lastAction = 'sort';
+    renderWithNotice('Sorting by name…').then(() => showMessage('Sorted by name', 2000));
+}
+function sortByLength() {
+    pushUndo('sort-length');
+    const indices = state.seqs.map((s, i) => ({ idx: i, len: s.seq.replace(/[-.]/g, '').length }));
+    indices.sort((a, b) => b.len - a.len);
+    state.seqs = indices.map(e => state.seqs[e.idx]);
+    state.lastAction = 'sort';
+    renderWithNotice('Sorting by length…').then(() => showMessage('Sorted by length (descending)', 2000));
+}
+function sortBySimilarity() {
+    if (state.seqs.length < 2) return;
+    pushUndo('sort-similarity');
+    const ref = state.seqs[0].seq;
+    // U is T in a nucleotide alignment: an RNA copy of the first row was ranked as different at every U (audit L21)
+    const uIsT = !isProteinAlignment();
+    const letter = c => { c = c.toUpperCase(); return uIsT && c === 'U' ? 'T' : c; };
+    const scored = state.seqs.map((s, i) => {
+        let match = 0, total = 0;
+        for (let p = 0; p < ref.length; p++) {
+            const a = letter(ref[p]), b = letter(s.seq[p] || '-');   // soft-masked (lowercase) copies count as identical
+            if (a !== '-' && a !== '.' && b !== '-' && b !== '.') { total++; if (a === b) match++; }
+        }
+        return { idx: i, score: total > 0 ? match / total : 0 };
+    });
+    scored.sort((a, b) => b.score - a.score);
+    state.seqs = scored.map(e => state.seqs[e.idx]);
+    state.lastAction = 'sort';
+    renderWithNotice('Sorting by similarity…').then(() => showMessage('Sorted by similarity to first sequence', 2000));
+}
+
+// -- Save / Load sequence order --
+function exportOrder() {
+    if (!state.seqs.length) { showMessage('No sequences loaded', 2000); return; }
+    const order = state.seqs.map(s => s.header);
+    const json = JSON.stringify({ version: 1, exported: new Date().toISOString(), count: order.length, order }, null, 2);
+    const blob = new Blob([json], { type: 'application/json' });
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = _sanitizeSnapshotFileBaseName('msa_order') + '.json';
+    a.click();
+    URL.revokeObjectURL(a.href);
+    showMessage('Order exported (' + order.length + ' sequences)', 2000);
+}
+
+function importOrder() {
+    const input = document.createElement('input');
+    input.type = 'file';
+    input.accept = '.json';
+    input.onchange = () => {
+        const file = input.files[0];
+        if (!file) return;
+        const reader = new FileReader();
+        reader.onload = () => {
+            try {
+                const data = JSON.parse(reader.result);
+                if (!data.order || !Array.isArray(data.order)) throw new Error('Invalid order file');
+                const orderMap = new Map(data.order.map((h, i) => [h, i]));
+                const currentHeaders = new Set(state.seqs.map(s => s.header));
+                // Keep only headers present in the current alignment
+                const reordered = [];
+                const unmatched = [];
+                for (const s of state.seqs) {
+                    if (orderMap.has(s.header)) reordered.push(s);
+                    else unmatched.push(s);
+                }
+                reordered.sort((a, b) => orderMap.get(a.header) - orderMap.get(b.header));
+                const extra = data.order.filter(h => !currentHeaders.has(h));
+                pushUndo('import-order');
+                state.seqs = [...reordered, ...unmatched];
+                state.lastAction = 'sort';
+                renderAlignment();
+                let msg = 'Order loaded (' + reordered.length + ' matched';
+                if (unmatched.length) msg += ', ' + unmatched.length + ' not in the order file (kept after the listed ones)';
+                if (extra.length) msg += ', ' + extra.length + ' missing';
+                msg += ')';
+                showMessage(msg, 2500);
+            } catch (e) {
+                showMessage('Invalid order file: ' + e.message, 4000);
+            }
+        };
+        reader.readAsText(file);
+    };
+    input.click();
+}
+
+function deleteSelected() {
+    if (state.selectedRows.size === 0) {
+        showMessage("No sequences selected for deletion.", 3000);
+        return;
+    }
+    // the selection, not the alignment size: deleting every selected row must leave one
+    if (state.selectedRows.size >= state.seqs.length) {
+        showMessage(state.seqs.length === 1 ? "Cannot delete the last sequence." : "Cannot delete every sequence: at least one row must stay (load another file to replace them).", 4000);
+        return;
+    }
+    if (confirm(`Delete ${state.selectedRows.size} sequence(s)?`)) {
+        pushUndo('delete');
+        const indicesToDelete = Array.from(state.selectedRows).sort((a,b)=>b-a);
+        for (const index of indicesToDelete) {
+            if (index < state.seqs.length) {
+                state.seqs.splice(index, 1);
+            }
+        }
+        state.selectedRows.clear();
+        state.lastSelectedIndex = null;
+        state.lastAction = 'delete';
+        renderAlignment();
+        showMessage("Sequences deleted!", 2000);
+    }
+}
+/**
+ * Push current state onto undo stack. Call BEFORE mutating state.
+ */
+// The group order an undo entry recorded, if it holds the same groups (a new clustering since is left alone)
+function _restoreGroupOrder(order) {
+    const cur = state.clusterResults?.clusters;
+    if (!order || !cur || order.length !== cur.length || !order.every(c => cur.includes(c))) return;
+    if (order.every((c, i) => c === cur[i])) return;
+    cur.splice(0, cur.length, ...order);   // in place: the column-state snapshots are tied to this array
+    if (typeof renderGroupExplorer === 'function') renderGroupExplorer();
+}
+
+// An edit that turned out to change nothing: take back the undo entry it pushed and give back the
+// redo steps the push cleared (a no-op used to add an empty Undo step and lose Redo)
+function _dropNoOpUndo(redoBefore) {
+    if (typeof _skipNextNoOpDrop !== 'undefined' && _skipNextNoOpDrop) { _skipNextNoOpDrop = false; return; }   // that step is no longer the last one (see _mafftAlignWithUi)
+    state.deletedHistory.pop();
+    state.redoHistory = redoBefore || [];
+}
+
+// Name colours after Undo or Redo replaced the rows. `saved` is the colour set stored with the step,
+// `namesBefore` the row names just before the rows were replaced. Only names that the step brings back
+// get their stored colour, and names that it takes away lose theirs (a rename: the colour goes back to
+// the old name). Names present before and after keep the colour they have now: the whole stored set
+// used to be put back, which wiped every colour given after the undone step (audit U4).
+function _restoreNameColours(saved, namesBefore, countsBefore) {
+    if (!saved || !colourState?.mappings) return;
+    const namesNow = new Set(state.seqs.map(q => q.header));
+    for (const n of namesBefore) if (!namesNow.has(n)) colourState.mappings.delete(n);
+    for (const n of namesNow) if (!namesBefore.has(n) && saved.has(n)) colourState.mappings.set(n, saved.get(n));
+    // A name that is there before and after, but on another number of rows: a row was renamed onto it (or
+    // back off it), and the rename moved that row's colour onto the name. The name gets the colour it had
+    // in the restored state; else the other row with that name kept the renamed row's colour (GLM check Q17).
+    if (countsBefore) {
+        const countsNow = new Map();
+        for (const q of state.seqs) countsNow.set(q.header, (countsNow.get(q.header) || 0) + 1);
+        for (const [n, c] of countsNow) {
+            if (!countsBefore.has(n) || countsBefore.get(n) === c) continue;
+            if (saved.has(n)) colourState.mappings.set(n, saved.get(n)); else colourState.mappings.delete(n);
+        }
+    }
+}
+
+function pushUndo(type) {
+    _paneEditNote?.();
+    _noteRowSelectionForReorder();
+    _scheduleSearchRecount();
+    if (typeof _statsInvalidate === 'function') _statsInvalidate(false);   // the open statistics window is now stale
+    state.deletedHistory.push({
+        type: type,
+        // name colours are keyed by name: a step that renames (RevComp's rc_ prefix, Rename) left the
+        // colour under the new name after Undo
+        colours: colourState?.mappings ? new Map(colourState.mappings) : null,
+        groupOrder: state.clusterResults?.clusters ? state.clusterResults.clusters.slice() : null,   // moving a group reorders these
+        seqs: _undoSnapshotSeqs(),
+        selectedRows: new Set(state.selectedRows),
+        selectedColumns: new Set(state.selectedColumns)
+    });
+    // Clear redo stack whenever a new action is performed
+    state.redoHistory = [];
+    _trimUndoHistory();
+}
+
+// An undo entry keeps each sequence's own fields but not gaplessPositions, which is derived
+// and was most of the cost: JSON-cloning it took ~380 ms and ~57 MB per edit at 1500 x
+// 4000. Strings are immutable, so a snapshot shares them with the live rows.
+function _undoSnapshotSeqs() {
+    return state.seqs.map(s => {
+        const { gaplessPositions, ...rest } = s;
+        return rest;
+    });
+}
+
+function _undoRestoreSeqs(seqs) {
+    return seqs.map(s => ({ ...s, gaplessPositions: calculateGaplessPositions(s.seq) }));
+}
+
+// Oldest entries go first once the history holds more than UNDO_HISTORY_MAX steps or more
+// residues than UNDO_HISTORY_RESIDUES (counted as if no row were shared, so an upper bound).
+// The newest entry is always kept.
+const UNDO_HISTORY_MAX = 200;
+const UNDO_HISTORY_RESIDUES = 150e6;
+function _trimUndoHistory() {
+    const h = state.deletedHistory;
+    let total = 0;
+    for (let i = h.length - 1; i >= 0; i--) {
+        const e = h[i];
+        if (e._size === undefined) {
+            e._size = e.seqs ? e.seqs.reduce((n, q) => n + q.seq.length, 0)
+                : (e.beforeSeq?.length || 0) + (e.afterSeq?.length || 0);
+        }
+        total += e._size;
+        if (i < h.length - 1 && (total > UNDO_HISTORY_RESIDUES || h.length - i > UNDO_HISTORY_MAX)) {
+            h.splice(0, i + 1);
+            return;
+        }
+    }
+}
+
+// beforeWidth/afterWidth: an edit that runs past the end of the alignment widens every
+// row via normalizeAlignmentLengths(), so a patch that records only the edited row cannot
+// undo it — the other rows keep their padding and the alignment never shrinks back.
+function pushUndoRowPatch(type, rowIndex, beforeSeq, afterSeq, beforeWidth, afterWidth, label) {
+    _paneEditNote?.();
+    _scheduleSearchRecount();
+    if (!state.seqs[rowIndex] || beforeSeq === afterSeq) return;
+    state.deletedHistory.push({
+        type,
+        label,
+        patchType: 'row-seq',
+        rowIndex,
+        beforeSeq,
+        afterSeq,
+        beforeWidth,
+        afterWidth,
+        selectedRows: new Set(state.selectedRows),
+        selectedColumns: new Set(state.selectedColumns)
+    });
+    state.redoHistory = [];
+    _trimUndoHistory();
+}
+
+// Restore the alignment to a known column count. Only all-gap trailing columns are
+// removed, so this can never destroy a residue; if anything real sits past the target,
+// it declines and leaves the width alone.
+function trimAlignmentWidthTo(target) {
+    if (!Number.isInteger(target) || target <= 0) return false;
+    const current = state.seqs.reduce((m, s) => Math.max(m, s.seq.length), 0);
+    // Every row must actually BE `target` long, not just "the longest one already is" - a
+    // caller that already set one row to its new (longer) length before calling this (e.g.
+    // redo of a row-patch edit) would otherwise short-circuit here with other rows still
+    // short, leaving the alignment non-rectangular.
+    if (current === target && state.seqs.every(s => s.seq.length === target)) return true;
+    if (current <= target) {
+        state.seqs.forEach(s => { if (s.seq.length < target) s.seq = s.seq.padEnd(target, GENEDOC_FILLER); });
+        return true;
+    }
+    // Refuse unless every column past the target is a gap. Asking "is there a letter out
+    // there" missed '*' - a stop codon is content, and truncating it is data loss.
+    const hasContentPastTarget = state.seqs.some(s => {
+        const tail = s.seq.slice(target);
+        for (let i = 0; i < tail.length; i++) {
+            if (isGeneDocResidueChar(tail[i])) return true;
+        }
+        return false;
+    });
+    if (hasContentPastTarget) return false;
+    state.seqs.forEach(s => { if (s.seq.length > target) s.seq = s.seq.slice(0, target); });
+    return true;
+}
+
+function applyRowSeqPatch(entry, useAfter, skipDom = false) {
+    const rowIndex = entry?.rowIndex;
+    if (!Number.isInteger(rowIndex) || !state.seqs[rowIndex]) return false;
+    const nextSeq = useAfter ? entry.afterSeq : entry.beforeSeq;
+    if (typeof nextSeq !== 'string') return false;
+
+    const previousSeq = state.seqs[rowIndex].seq;
+    const widthBefore = state.seqs.reduce((m, s) => Math.max(m, s.seq.length), 0);
+
+    state.seqs[rowIndex] = {
+        ...state.seqs[rowIndex],
+        seq: nextSeq,
+        gaplessPositions: calculateGaplessPositions(nextSeq)
+    };
+    state.selectedRows = entry.selectedRows || new Set();
+    state.selectedColumns = entry.selectedColumns || new Set();
+    state.selectedNucs.clear();
+    // Put the alignment back to the width it had on this side of the edit, otherwise
+    // padding added to every other row survives the undo.
+    if (!trimAlignmentWidthTo(useAfter ? entry.afterWidth : entry.beforeWidth)) {
+        normalizeAlignmentLengths();
+    }
+    refreshAllGaplessPositions();
+    if (skipDom) return true;   // several steps in a row: the caller redraws once at the end
+
+    // One row changed, so only its columns need repainting (shading in them depends on the
+    // column composition, hence across all rows). Rebuilding every span costs ~1.4 s at 97k
+    // residues. Requires unchanged column geometry, so the existing spans still line up.
+    const widthAfter = state.seqs.reduce((m, s) => Math.max(m, s.seq.length), 0);
+    if (widthAfter === widthBefore && canReshadeInPlace()) {
+        const cols = new Set();
+        for (let p = 0; p < widthAfter; p++) {
+            if (previousSeq[p] !== nextSeq[p]) cols.add(p);
+        }
+        if (cols.size) {
+            reshadeChangedColumnsInPlace(cols);
+            // That repaints the span-cached rows only. Rows the windowed Block renderer
+            // rebuilt during an edit session can be on screen without a cache entry; their
+            // cells kept the old letter after undo/redo.
+            if (!state.spanCache?.get(rowIndex)?.size) {
+                const config = getSequenceRenderConfig();
+                const consData = (state.conservationDataCache && state.conservationDataCache.data) || {};
+                cols.forEach(pos => forEachRowSpanAtPosition(rowIndex, pos,
+                    span => repaintResidueSpan(span, rowIndex, pos, nextSeq[pos] || GENEDOC_FILLER, config, consData)));
+            }
+            if (typeof updateRowSelections === 'function') updateRowSelections();
+            if (typeof updateColumnSelections === 'function') updateColumnSelections();
+            if (typeof updateSourceInfo === 'function') updateSourceInfo();
+            return true;
+        }
+    }
+    renderAlignment();
+    return true;
+}
+
+// quiet: one of several steps taken from the history list; no redraw or message
+function undoDelete(quiet) {
+    quiet = quiet === true;   // also called as a click handler, with the event as argument
+    _rowSelAtPush = null;     // undo restores the selection that belongs to the restored order
+    _scheduleSearchRecount();
+    if (state.deletedHistory.length === 0) {
+        if (!quiet) showMessage("Nothing to undo.", 3000);
+        return;
+    }
+    const last = state.deletedHistory.pop();
+    if (last.patchType === 'row-seq') {
+        state.redoHistory.push(last);
+        if (applyRowSeqPatch(last, false, quiet)) {
+            state.lastAction = null;
+            if (!quiet) showMessage(`Undo: ${undoEntryLabel(last)}`, 2000);
+        }
+        return;
+    }
+    // Save current state to redo stack before restoring; it keeps the undone action's
+    // name, so the Redo list says what redo will bring back (was 'redo-snapshot').
+    const redoEntry = {
+        type: last.type,
+        label: last.label,
+        seqs: _undoSnapshotSeqs(),
+        colours: colourState?.mappings ? new Map(colourState.mappings) : null,
+        groupOrder: state.clusterResults?.clusters ? state.clusterResults.clusters.slice() : null,
+        selectedRows: new Set(state.selectedRows),
+        selectedColumns: new Set(state.selectedColumns)
+    };
+    if (last.colStateBefore) redoEntry.colStateAfter = _snapshotColumnState();
+    state.redoHistory.push(redoEntry);
+    const namesBeforeUndo = new Set(state.seqs.map(q => q.header));
+    const nameCountsBeforeUndo = new Map(); for (const q of state.seqs) nameCountsBeforeUndo.set(q.header, (nameCountsBeforeUndo.get(q.header) || 0) + 1);
+    state.seqs = _undoRestoreSeqs(last.seqs);
+    if (typeof _statsInvalidate === 'function') _statsInvalidate(false);
+    _restoreNameColours(last.colours, namesBeforeUndo, nameCountsBeforeUndo);
+    _restoreGroupOrder(last.groupOrder);
+    if (last.colStateBefore) _restoreColumnState(last.colStateBefore);
+    state.selectedRows = last.selectedRows || new Set();
+    state.selectedColumns = last.selectedColumns || new Set();
+    state.selectedNucs.clear();
+    state.lastAction = null;
+    _paneEditNote?.();   // mirror panes follow Undo too
+    if (quiet) return;
+    renderAlignment();
+    showMessage(`Undo: ${undoEntryLabel(last)}`, 2000);
+}
+

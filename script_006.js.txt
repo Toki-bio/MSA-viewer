@@ -1,0 +1,501 @@
+[script.js lines 2264-2763 of ViewAlign fd8b8e4]
+function _finishRowReorderDrag(e) {
+    if (!_rowReorderDrag) return;
+    const drag = _rowReorderDrag;
+    _rowReorderDrag = null;
+    document.body.classList.remove('no-select');
+    document.body.classList.remove('row-reorder-active');
+    if (!drag.started) {
+        _clearDragInsertPreview();
+        _clearDragSources();
+        _draggedSeqIndex = -1;
+        _plainNameClick(drag.draggedIndex, e);
+        return;
+    }
+    const nearest = _findNearestSequenceLine(e.clientY);
+    if (nearest) {
+        const targetIndex = parseInt(nearest.line.dataset.seqIndex);
+        if (!isNaN(targetIndex)) {
+            _moveDraggedSequences(drag.draggedIndex, targetIndex, nearest.insertAbove);
+        }
+    }
+    _clearDragInsertPreview();
+    _clearDragSources();
+    _draggedSeqIndex = -1;
+}
+
+function handleDragStart(e) {
+    try {
+        e.preventDefault();
+        if (!e || !e.dataTransfer) return;
+        const nameEl = e.target?.closest('.seq-name');
+        if (!nameEl) return;
+        const seqIndex = nameEl.dataset.seqIndex;
+        if (seqIndex === undefined || seqIndex === null) return;
+        _draggedSeqIndex = parseInt(seqIndex);
+        e.dataTransfer.setData('text/plain', String(seqIndex));
+        e.dataTransfer.effectAllowed = 'move';
+        e.dataTransfer.setDragImage(_getDragImageEl(), 0, 0);
+        // Highlight dragged sequence(s)
+        _highlightDragSources();
+    } catch (err) {
+        console.warn('dragstart error', err);
+    }
+}
+
+function _highlightDragSources() {
+    // Determine which sequences are being dragged
+    const indices = (state.selectedRows.size > 1 && state.selectedRows.has(_draggedSeqIndex))
+        ? state.selectedRows
+        : new Set([_draggedSeqIndex]);
+    document.querySelectorAll('.seq-name').forEach(el => {
+        const idx = parseInt(el.dataset.seqIndex);
+        if (!isNaN(idx) && indices.has(idx)) {
+            el.classList.add('drag-source');
+        }
+    });
+}
+
+function _clearDragSources() {
+    document.querySelectorAll('.seq-name.drag-source').forEach(el => {
+        el.classList.remove('drag-source');
+    });
+}
+
+function handleDragEnd(e) {
+    try {
+        _clearDragInsertPreview();
+        _clearDragSources();
+        _draggedSeqIndex = -1;
+        _dragPreviewInsertAbove = true;
+        document.body.classList.remove('row-reorder-active');
+    } catch (err) {
+        console.warn('dragend error', err);
+    }
+}
+
+function _showDragInsertPreview(e, container) {
+    // Find the closest seq-line to the cursor
+    const lines = container.querySelectorAll('.seq-line[data-seq-index]:not(.consensus-line)');
+    if (!lines.length) return;
+
+    let bestLine = null;
+    let bestDist = Infinity;
+    let insertAbove = true;
+
+    for (const line of lines) {
+        const rect = line.getBoundingClientRect();
+        const midY = rect.top + rect.height / 2;
+        const dist = Math.abs(e.clientY - midY);
+        if (dist < bestDist) {
+            bestDist = dist;
+            bestLine = line;
+            insertAbove = e.clientY < midY;
+        }
+    }
+    if (!bestLine) return;
+
+    // Skip consensus lines and scale lines
+    if (bestLine.classList.contains('consensus-line') || bestLine.classList.contains('scale-ruler-line')) return;
+
+    const nameEl = bestLine.querySelector('.seq-name');
+    if (!nameEl) return;
+
+    const cls = insertAbove ? 'drag-insert-above' : 'drag-insert-below';
+    // Skip if same element + same side
+    if (_dragPreviewEl === nameEl && _dragPreviewClass === cls) return;
+    // Clear previous
+    _clearDragInsertPreview();
+    // Apply a robust in-element indicator only in the names column
+    const indicator = _getDragIndicatorEl();
+    indicator.style.top = insertAbove ? '0' : 'auto';
+    indicator.style.bottom = insertAbove ? 'auto' : '0';
+    nameEl.appendChild(indicator);
+    _dragPreviewEl = nameEl;
+    _dragPreviewClass = cls;
+    _dragPreviewInsertAbove = insertAbove;
+}
+
+function _clearDragInsertPreview() {
+    if (_dragPreviewEl) {
+        _dragPreviewEl = null;
+        _dragPreviewClass = '';
+    }
+    const indicator = document.getElementById('drag-name-indicator');
+    if (indicator) indicator.remove();
+}
+
+window.handleDrop = function(e) {
+    e.preventDefault();
+    e.stopPropagation();
+
+    // Capture preview state before clearing
+    const insertAbove = _dragPreviewInsertAbove;
+    const previewNameEl = _dragPreviewEl;
+    _clearDragInsertPreview();
+    _clearDragSources();
+
+    try {
+        const draggedIndex = _draggedSeqIndex;
+        _draggedSeqIndex = -1;
+        if (draggedIndex < 0) return;
+
+        // Find target line from last preview or nearest line
+        let targetLine = previewNameEl
+            ? previewNameEl.closest('.seq-line')
+            : e.target?.closest('.seq-line');
+
+        // If dropped on a non-seq area, find the nearest seq-line
+        if (!targetLine || targetLine.classList.contains('consensus-line') || targetLine.classList.contains('scale-ruler-line')) {
+            const container = document.getElementById('alignmentContainer');
+            if (!container) return;
+            const lines = container.querySelectorAll('.seq-line[data-seq-index]:not(.consensus-line)');
+            let bestLine = null;
+            let bestDist = Infinity;
+            for (const line of lines) {
+                const rect = line.getBoundingClientRect();
+                const midY = rect.top + rect.height / 2;
+                const dist = Math.abs(e.clientY - midY);
+                if (dist < bestDist) { bestDist = dist; bestLine = line; }
+            }
+            targetLine = bestLine;
+        }
+        if (!targetLine) return;
+
+        const targetIndexStr = targetLine.dataset.seqIndex;
+        if (!targetIndexStr) return;
+
+        let targetIndex = parseInt(targetIndexStr);
+        if (isNaN(targetIndex)) return;
+
+        _moveDraggedSequences(draggedIndex, targetIndex, insertAbove);
+    } catch (err) {
+        console.warn('drop error', err);
+    }
+};
+// DOM ELEMENTS
+const el = id => document.getElementById(id);
+
+// ---- Busy indicator ------------------------------------------------------------------
+// A long synchronous task holds the main thread, so the browser cannot repaint until it
+// finishes. Setting a status message immediately before such a task therefore shows the
+// user nothing at all - the page goes straight from frozen to done. Everything below
+// exists to yield one frame first, so the indicator is actually on screen while the work
+// runs, and the viewer never looks like it has hung.
+
+function _busyOverlay() {
+    let box = document.getElementById('busyOverlay');
+    if (!box) {
+        box = document.createElement('div');
+        box.id = 'busyOverlay';
+        box.hidden = true;
+        box.innerHTML =
+            '<div id="busyPanel">' +
+              '<div id="busySpinner"></div>' +
+              '<div style="flex:1 1 auto;"><div id="busyLabel"></div><div id="busyDetail"></div></div>' +
+              '<button type="button" id="busyStop" class="tree-tool" hidden>Stop</button>' +
+            '</div>';
+        document.body.appendChild(box);
+    }
+    return box;
+}
+
+// onStop: supply it only for work that can actually be interrupted, so a Stop button is
+// never offered for something that will ignore it.
+function showBusy(label, detail, onStop) {
+    const box = _busyOverlay();
+    const l = document.getElementById('busyLabel');
+    const d = document.getElementById('busyDetail');
+    const stop = document.getElementById('busyStop');
+    if (l) l.textContent = label || 'Working...';
+    if (d) { d.textContent = detail || ''; d.hidden = !detail; }
+    if (stop) {
+        stop.hidden = !onStop;
+        stop.onclick = onStop ? () => {
+            stop.disabled = true;
+            stop.textContent = 'Stopping...';
+            onStop();
+        } : null;
+        if (onStop) { stop.disabled = false; stop.textContent = 'Stop'; }
+    }
+    box.hidden = false;
+    document.body.style.cursor = 'progress';
+}
+
+function updateBusy(detail) {
+    const d = document.getElementById('busyDetail');
+    if (d) { d.textContent = detail || ''; d.hidden = !detail; }
+}
+
+function hideBusy() {
+    const box = document.getElementById('busyOverlay');
+    if (box) box.hidden = true;
+    document.body.style.cursor = '';
+}
+
+// Hand the browser a frame so anything just written to the DOM is painted. Without this
+// the indicator is invisible for exactly as long as the work takes.
+function yieldToPaint() {
+    return new Promise(resolve => requestAnimationFrame(() => setTimeout(resolve, 0)));
+}
+
+// Wrap a blocking operation so the user sees that it started. `work` may be sync or async;
+// it receives an updater for its own progress detail.
+async function runWithProgress(label, work, detail, onStop) {
+    showBusy(label, detail, onStop);
+    await yieldToPaint();
+    try {
+        return await work(updateBusy);
+    } finally {
+        hideBusy();
+    }
+}
+
+// Rough guard for operations whose cost grows faster than the alignment does, so the user
+// can decline rather than discover a multi-minute freeze by living through it.
+function confirmIfLarge(operation, residues, threshold, estimate) {
+    if (residues <= threshold) return true;
+    return window.confirm(
+        `${operation} on this alignment (${residues.toLocaleString()} residues) ${estimate}.\n\n` +
+        `The viewer cannot be used until it finishes. Continue?`);
+}
+
+const dropZone = el('dropZone');
+const fastaInput = el('fastaInput');
+// Inputs above this size stay in memory, not in the paste box: Chrome keeps textarea text as a text node plus a
+// <br> per line, so a 100,000-row FASTA cost 1.2 million DOM nodes and 2 s in the value setter. Every writer goes
+// through _setInputText, and parseAndRender is the only reader: a direct `.value =` fires no input event, so it would
+// leave the old file in _bigInputText and the next Load would open that instead.
+const BIG_INPUT_CHARS = 2_000_000;
+const _inputPlaceholder = fastaInput ? fastaInput.placeholder : '';
+let _bigInputText = null;
+function _setInputText(text) {
+    if (text && text.length > BIG_INPUT_CHARS) {
+        _bigInputText = text;
+        fastaInput.value = '';
+        fastaInput.placeholder = `${(text.length / 1e6).toFixed(1)} MB loaded (not shown here, to keep the page fast). Paste new text to replace it.`;
+    } else {
+        _bigInputText = null;
+        fastaInput.value = text == null ? '' : text;
+        fastaInput.placeholder = _inputPlaceholder;
+    }
+}
+const alignmentContainer = el('alignmentContainer');
+const tooltip = el('tooltip');
+const statusMessage = el('statusMessage');
+const minimizeBar = el('minimizeBar');
+const infoModal = el('infoModal');
+// Wire consensus fallback select to trigger re-render
+const consensusFallbackSelect = el('consensusFallback');
+if (consensusFallbackSelect) {
+    consensusFallbackSelect.addEventListener('change', () => {
+        debounceRender();
+    });
+}
+// Quick sanity check: ensure essential elements exist to avoid silent failures
+if (!fastaInput || !alignmentContainer || !statusMessage) {
+    console.error('Essential DOM elements missing:', {
+        fastaInput: !!fastaInput,
+        alignmentContainer: !!alignmentContainer,
+        statusMessage: !!statusMessage
+    });
+    if (statusMessage) {
+        statusMessage.textContent = 'Error: missing essential UI elements. Check console for details.';
+        statusMessage.style.display = 'block';
+    }
+}
+// UTILITY FUNCTIONS
+// A note from an aligner (e.g. the codon aligner's frameshift summary) that should ride along with the caller's
+// own completion message instead of being overwritten by it. Consumed by the next showMessage call.
+let _pendingAlignNote = null;
+// The Canvas auto-switch note: shown at once, and appended to the next status message for a
+// few seconds so the load path's own "File loaded" message does not hide it.
+let _canvasSwitchNote = null, _canvasSwitchNoteUntil = 0;
+// One hide timer: an earlier message's timer used to hide a newer message early
+let _statusMessageTimer = null;
+function showMessage(msg, duration = 2000) {
+    if (_pendingAlignNote) {
+        msg = msg + ' ' + _pendingAlignNote;
+        _pendingAlignNote = null;
+        if (duration > 0) duration = Math.max(duration, 6000);
+    }
+    if (_canvasSwitchNote) {
+        if (performance.now() < _canvasSwitchNoteUntil && !msg.includes(_canvasSwitchNote)) {
+            msg = msg + ' ' + _canvasSwitchNote;
+            if (duration > 0) duration = Math.max(duration, 10000);
+        }
+        _canvasSwitchNote = null;
+    }
+    statusMessage.textContent = msg;
+    statusMessage.style.display = 'block';
+    clearTimeout(_statusMessageTimer);
+    _statusMessageTimer = duration > 0 ? setTimeout(() => { statusMessage.style.display = 'none'; }, duration) : null;
+}
+
+const EXCLUSIVE_MODAL_IDS = [
+    'infoModal',
+    'colourInspectorModal',
+    'clusteringModal',
+    'seqEditModal',
+    'addSeqModal',
+    'dotPlotModal',
+    'repeatFinderModal',
+    'treeBuilderModal'
+    // statsModal is not here: it is a non-blocking window that can stay docked beside the alignment
+];
+
+// Makes a fixed-position modal draggable (by its header), resizable (by a
+// handle in its bottom-right corner), and minimizable (collapses to just
+// the header bar). Generic and reusable - only wired up to
+// `clusteringModal` today, since that's the one whose results can run long
+// enough to want moving out of the way, resizing to see more at once, or
+// minimizing while working elsewhere without losing the results. Wiring up
+// another modal later is just another call to this function.
+// Registry so calling this again for the same modalId (e.g. a dialog that's
+// torn down and rebuilt fresh on every search, unlike clusteringModal which
+// persists) cleans up the PREVIOUS call's document-level mousemove/mouseup
+// listeners first — otherwise each call adds a new pair that's never
+// removed, since the old modal/header elements are gone but the listener
+// closures still reference them, leaking one pair of document listeners per
+// call over a session.
+const _modalDragResizeCleanup = {};
+function makeModalDraggableResizable(modalId, headerId, contentId) {
+    if (_modalDragResizeCleanup[modalId]) { _modalDragResizeCleanup[modalId](); delete _modalDragResizeCleanup[modalId]; }
+
+    const modal = document.getElementById(modalId);
+    const header = document.getElementById(headerId);
+    if (!modal || !header) return;
+
+    // First drag/resize needs to convert from the modal's initial centered
+    // positioning (position:fixed + top/left:50% + transform) to explicit
+    // top/left/width/height, or the browser's own centering math would
+    // fight with manual dragging on every subsequent render.
+    function pinCurrentPosition() {
+        const rect = modal.getBoundingClientRect();
+        modal.style.transform = 'none';
+        modal.style.left = rect.left + 'px';
+        modal.style.top = rect.top + 'px';
+        modal.style.width = rect.width + 'px';
+        modal.style.margin = '0';
+    }
+
+    let dragging = false, dragStartX = 0, dragStartY = 0, modalStartX = 0, modalStartY = 0;
+    const onHeaderMousedown = (e) => {
+        if (e.target.closest('button')) return;
+        if (modal.classList.contains('ge-docked')) return;
+        pinCurrentPosition();
+        dragging = true;
+        dragStartX = e.clientX;
+        dragStartY = e.clientY;
+        const rect = modal.getBoundingClientRect();
+        modalStartX = rect.left;
+        modalStartY = rect.top;
+        modal.classList.add('win-dragging');   // semi-transparent while it moves
+        e.preventDefault();
+    };
+    const onDragMousemove = (e) => {
+        if (!dragging) return;
+        const dx = e.clientX - dragStartX;
+        const dy = e.clientY - dragStartY;
+        // Keep at least a sliver of the header on-screen so a dragged-off
+        // modal is never unreachable.
+        const newLeft = Math.min(Math.max(modalStartX + dx, -modal.offsetWidth + 60), window.innerWidth - 60);
+        const newTop = Math.min(Math.max(modalStartY + dy, 0), window.innerHeight - 30);
+        modal.style.left = newLeft + 'px';
+        modal.style.top = newTop + 'px';
+    };
+    const onDragMouseup = () => { dragging = false; modal.classList.remove('win-dragging'); };
+    header.addEventListener('mousedown', onHeaderMousedown);
+    document.addEventListener('mousemove', onDragMousemove);
+    document.addEventListener('mouseup', onDragMouseup);
+
+    // Resize handle, bottom-right corner
+    const handle = document.createElement('div');
+    handle.title = 'Drag to resize';
+    handle.style.cssText = 'position:absolute;right:0;bottom:0;width:14px;height:14px;cursor:nwse-resize;'
+        + 'background:linear-gradient(135deg,transparent 0%,transparent 50%,#999 50%,#999 60%,transparent 60%,transparent 70%,#999 70%,#999 80%,transparent 80%);';
+    // Pin immediately, before any drag/resize — some callers (e.g. the BLAST
+    // results dialog) center via a flexbox parent rather than fixed
+    // top/left/transform, so switching to position:fixed without first
+    // capturing the current on-screen rect as explicit pixels would snap
+    // the modal to the browser's default (0,0) the instant this runs.
+    modal.style.position = 'fixed';
+    pinCurrentPosition();
+    modal.appendChild(handle);
+
+    let resizing = false, resizeStartX = 0, resizeStartY = 0, startW = 0, startH = 0;
+    const onHandleMousedown = (e) => {
+        if (modal.classList.contains('ge-docked')) return;
+        pinCurrentPosition();
+        const rect = modal.getBoundingClientRect();
+        modal.style.height = rect.height + 'px';
+        modal.style.maxHeight = 'none';
+        modal.style.maxWidth = 'none'; // the original inline max-width:700px would otherwise cap width growth
+        resizing = true;
+        resizeStartX = e.clientX;
+        resizeStartY = e.clientY;
+        startW = rect.width;
+        startH = rect.height;
+        e.preventDefault();
+        e.stopPropagation();
+    };
+    const onResizeMousemove = (e) => {
+        if (!resizing) return;
+        const newW = Math.max(320, startW + (e.clientX - resizeStartX));
+        const newH = Math.max(120, startH + (e.clientY - resizeStartY));
+        modal.style.width = newW + 'px';
+        modal.style.height = newH + 'px';
+    };
+    const onResizeMouseup = () => { resizing = false; };
+    handle.addEventListener('mousedown', onHandleMousedown);
+    document.addEventListener('mousemove', onResizeMousemove);
+    document.addEventListener('mouseup', onResizeMouseup);
+
+    _modalDragResizeCleanup[modalId] = () => {
+        document.removeEventListener('mousemove', onDragMousemove);
+        document.removeEventListener('mouseup', onDragMouseup);
+        document.removeEventListener('mousemove', onResizeMousemove);
+        document.removeEventListener('mouseup', onResizeMouseup);
+    };
+
+    // Minimize button - collapses to just the header bar
+    const minBtn = document.createElement('button');
+    minBtn.type = 'button';
+    minBtn.title = 'Minimize';
+    minBtn.textContent = '\u2013';
+    const btnWrap = header.querySelector('.ge-window-btns');
+    const closeBtn = header.querySelector('button');
+    if (btnWrap) {
+        minBtn.className = 'ge-win-btn';
+        const close = btnWrap.querySelector('button');
+        btnWrap.insertBefore(minBtn, close || null);
+    } else {
+        minBtn.style.cssText = 'background:none;border:none;font-size:16px;cursor:pointer;padding:0 6px;font-weight:bold;line-height:1;height:22px;width:22px;';
+        if (closeBtn) header.insertBefore(minBtn, closeBtn); else header.appendChild(minBtn);
+    }
+
+    let minimized = false;
+    let preMinimizeHeight = null;
+    minBtn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        const content = document.getElementById(contentId);
+        const extras = modal.querySelectorAll('.ge-toolbar, .ge-summary');
+        minimized = !minimized;
+        if (minimized) {
+            pinCurrentPosition();
+            preMinimizeHeight = modal.style.height || modal.getBoundingClientRect().height + 'px';
+            if (content) content.style.display = 'none';
+            extras.forEach(n => { n.style.display = 'none'; });
+            handle.style.display = 'none';
+            modal.style.height = 'auto';
+            modal.style.maxHeight = 'none';
+        } else {
+            if (content) content.style.display = '';
+            extras.forEach(n => { n.style.display = ''; });
+            handle.style.display = '';
+            if (preMinimizeHeight) modal.style.height = preMinimizeHeight;
+        }
+        minBtn.title = minimized ? 'Restore' : 'Minimize';
+    });
+}
+

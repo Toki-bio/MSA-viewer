@@ -1,0 +1,507 @@
+[script.js lines 4454-4959 of ViewAlign fd8b8e4]
+const _unifiedScrollController = _createWindowedScrollController(
+    (container) => _refreshUnifiedWindowOnScroll(container),
+    () => (document.getElementById('modeSingle')?.checked || isDomBlock()) && !!state._needsWindowedDom
+);
+function _setupUnifiedScrollListener(container) {
+    _unifiedScrollController.bind(container);
+}
+
+// RNA is decided from the WHOLE alignment: any U and no T anywhere. Decided row by row, a row with no U (a short one, or
+// only A, C, G) of an RNA alignment came back with T (colleague check 2026-11-07).
+function alignmentIsRna(seqs) {
+    let u = false;
+    for (const q of (seqs || state.seqs || [])) {
+        const t = q.seq || '';
+        if (/[Tt]/.test(t)) return false;
+        if (!u && /[Uu]/.test(t)) u = true;
+    }
+    return u;
+}
+// reverseComplement for rows of the open alignment: the RNA decision is made once
+function _rcForAlignment() { const rna = alignmentIsRna(); return (t) => _reverseComplement(t, rna); }
+
+function reverseComplement(seq, rna) {
+    // RNA stays RNA (A pairs with U when the sequence has U and no T); gap,
+    // stop and missing-data symbols (~ * ? X) are kept as they are.
+    // rna (true/false) is the alignment's decision, given for rows; without it the sequence itself decides (a motif, a site).
+    const isRna = rna === undefined ? (/[Uu]/.test(seq) && !/[Tt]/.test(seq)) : !!rna;
+    const complement = { 'A': isRna ? 'U' : 'T','T':'A','C':'G','G':'C','N':'N','-':'-','.':'.','~':'~', 'U':'A','R':'Y','Y':'R','M':'K','K':'M','S':'S','W':'W','H':'D','B':'V','V':'B','D':'H',
+                         '*':'*','?':'?','X':'X' };
+    return seq.split('').reverse().map(b => {
+        const rc = complement[b.toUpperCase()];
+        if (!rc) return /[a-z]/.test(b) ? 'n' : 'N';
+        return /[a-z]/.test(b) ? rc.toLowerCase() : rc;
+    }).join('');
+}
+
+function rgbToHsl(r, g, b) {
+    r /= 255; g /= 255; b /= 255;
+    const max = Math.max(r, g, b), min = Math.min(r, g, b);
+    let h, s, l = (max + min) / 2;
+    if (max === min) {
+        h = s = 0;
+    } else {
+        const d = max - min;
+        s = l > 0.5 ? d / (2 - max - min) : d / (max + min);
+        switch (max) {
+            case r: h = (g - b) / d + (g < b ? 6 : 0); break;
+            case g: h = (b - r) / d + 2; break;
+            case b: h = (r - g) / d + 4; break;
+        }
+        h /= 6;
+    }
+    return { h: h * 360, s: s * 100, l: l * 100 };
+}
+
+function hslToHex(h, s, l) {
+    h /= 360; s /= 100; l /= 100;
+    const hue2rgb = (p, q, t) => {
+        if (t < 0) t += 1;
+        if (t > 1) t -= 1;
+        if (t < 1/6) return p + (q - p) * 6 * t;
+        if (t < 1/2) return q;
+        if (t < 2/3) return p + (q - p) * (2/3 - t) * 6;
+        return p;
+    };
+    let r, g, b;
+    if (s === 0) {
+        r = g = b = l;
+    } else {
+        const q = l < 0.5 ? l * (1 + s) : l + s - l * s;
+        const p = 2 * l - q;
+        r = hue2rgb(p, q, h + 1/3);
+        g = hue2rgb(p, q, h);
+        b = hue2rgb(p, q, h - 1/3);
+    }
+    const toHex = (v) => Math.round(v * 255).toString(16).padStart(2, '0');
+    return `#${toHex(r)}${toHex(g)}${toHex(b)}`;
+}
+
+function getComplementaryColor(hex) {
+    const rgb = hexToRgb(hex);
+    if (!rgb) return '#00FFFF';
+    const hsl = rgbToHsl(rgb.r, rgb.g, rgb.b);
+    const compHue = (hsl.h + 180) % 360;
+    return hslToHex(compHue, Math.min(hsl.s + 10, 90), Math.min(hsl.l + 5, 85));
+}
+// IUPAC ambiguity code resolver for a set of standard bases
+// Input: Array or Set containing any of A,C,G,T,U (U is treated as T)
+// Output: Single IUPAC character representing the set, or 'N' if not resolvable
+function iupacFromBases(bases) {
+    if (!bases || (Array.isArray(bases) && bases.length === 0)) return 'N';
+    const set = new Set();
+    for (const b of bases) {
+        if (!b) continue;
+        const up = String(b).toUpperCase();
+        if (up === 'U') set.add('T');
+        else if (['A','C','G','T'].includes(up)) set.add(up);
+    }
+    if (set.size === 0) return 'N';
+    if (set.size === 1) return [...set][0];
+    const key = [...set].sort().join('');
+    switch (key) {
+        case 'AG': return 'R';
+        case 'CT': return 'Y';
+        case 'AC': return 'M';
+        case 'GT': return 'K';
+        case 'CG': return 'S';
+        case 'AT': return 'W';
+        case 'ACT': return 'H';
+        case 'CGT': return 'B';
+        case 'AGT': return 'D';
+        case 'ACG': return 'V';
+        case 'ACGT': return 'N';
+        default: return 'N';
+    }
+}
+// Map an IUPAC code back to the set of standard bases it represents
+function iupacToBases(code) {
+    const c = String(code || '').toUpperCase();
+    switch (c) {
+        case 'A': return ['A'];
+        case 'C': return ['C'];
+        case 'G': return ['G'];
+        case 'T':
+        case 'U': return ['T'];
+        case 'R': return ['A','G'];
+        case 'Y': return ['C','T'];
+        case 'M': return ['A','C'];
+        case 'K': return ['G','T'];
+        case 'S': return ['C','G'];
+        case 'W': return ['A','T'];
+        case 'H': return ['A','C','T'];
+        case 'B': return ['C','G','T'];
+        case 'D': return ['A','G','T'];
+        case 'V': return ['A','C','G'];
+        case 'N': return ['A','C','G','T'];
+        default: return [];
+    }
+}
+
+// Unified consensus calculator used for:
+//  - Displayed consensus (via renderAlignment when showConsensus true)
+//  - Group consensus insertion / replacement
+//  - Copy Selected Consensus
+// Options derive from current UI controls so all paths stay identical.
+// Returns full length consensus string (with gaps retained); caller can strip gaps if needed.
+// The consensus settings as one string: a cached consensus is only valid for the settings it was computed with
+function _consensusOptsKey() { return JSON.stringify(_getConsensusOptions()); }
+function _getConsensusOptions() {
+    return {
+        threshold: clampConsensusPercent(el('consensusThreshold').value) / 100,
+        coverageMin: clampMinCoverage(el('consensusMinCoverage')?.value) / 100,
+        consType: _checkedRadioValue('consensusType', 'normal'),
+        fallbackMode: (document.getElementById('consensusFallback')?.value) || 'gap',
+        isProtein: isProteinAlignment(),
+        isRna: _alignmentIsRnaCached(),   // an RNA alignment gets its consensus in U (audit 2026-11-10, H8)
+    };
+}
+// alignmentIsRna() reads every row; the consensus options are asked for on every redraw. Every edit makes an
+// undo step, so the answer is kept until the rows array or the history changes.
+let _rnaCache = null;
+function _alignmentIsRnaCached() {
+    const c = _rnaCache, seqs = state.seqs;
+    const u = state.deletedHistory ? state.deletedHistory.length : 0, r = state.redoHistory ? state.redoHistory.length : 0;
+    // the top entries too: with the history full (200 steps) an edit keeps both lengths, and the consensus stayed in U
+    // after T was typed over every U (GLM check 2026-11-10, #10). Every push, undo and redo puts a new entry on top.
+    const ut = u ? state.deletedHistory[u - 1] : null, rt = r ? state.redoHistory[r - 1] : null;
+    if (c && c.seqs === seqs && c.n === (seqs ? seqs.length : 0) && c.u === u && c.r === r && c.ut === ut && c.rt === rt) return c.v;
+    const v = !isProteinAlignment() && alignmentIsRna();
+    _rnaCache = { seqs, n: seqs ? seqs.length : 0, u, r, ut, rt, v };
+    return v;
+}
+
+// Protein ambiguity codes for a below-threshold column: B = D/N, Z = E/Q,
+// J = I/L; anything else is X.
+function _proteinAmbiguityCode(residues) {
+    const key = Array.from(new Set(residues)).sort().join('');
+    if (key === 'DN') return 'B';
+    if (key === 'EQ') return 'Z';
+    if (key === 'IL') return 'J';
+    return 'X';
+}
+
+// Consensus character for one column.
+//  - The most frequent residue wins when its count / all rows (gaps included)
+//    reaches the threshold. Ties go to a definite residue over N/X, then
+//    alphabetically; in 'ambiguous' mode a tie between nucleotides gives
+//    their IUPAC code.
+//  - Below the threshold the fallback applies: 'gap' gives '-', 'n' gives N
+//    (X for protein) and 'iupac' gives the IUPAC code of the bases present
+//    (B/Z/J or X for protein), when at least two different residues occur.
+// PERF: typed-array column counting. Builds the same `counts` object (same keys, same
+// first-seen order) as the original loop, then hands over to the unchanged decision logic.
+const _colCountBuf = new Int32Array(128);
+function _computeConsensusCharForColumn(seqArray, pos, opts) {
+    const isProtein = !!opts.isProtein;
+    const buf = _colCountBuf; buf.fill(0);
+    const order = [];
+    let rows = 0, nonGap = 0;
+    for (const s of seqArray) {
+        rows++;
+        let c = s.charCodeAt(pos);
+        if (c !== c) continue;                       // past the end: gap
+        if (c >= 128) return _computeConsensusCharForColumn_orig(seqArray, pos, opts);
+        if (c >= 97 && c <= 122) c -= 32;
+        if (c === 45 || c === 46 || c === 126) continue;   // - . ~
+        if (!isProtein && c === 85) c = 84;          // U -> T
+        nonGap++;
+        if (buf[c]++ === 0) order.push(c);
+    }
+    const counts = {};
+    for (const c of order) counts[String.fromCharCode(c)] = buf[c];
+    return _consensusDecide(counts, rows, nonGap, opts);
+}
+
+function _computeConsensusCharForColumn_orig(seqArray, pos, opts) {
+    const { threshold, coverageMin, consType, fallbackMode } = opts;
+    const isProtein = !!opts.isProtein;
+    let rows = 0;
+    let nonGap = 0;
+    const counts = {};
+    for (const s of seqArray) {
+        rows++;
+        let b = (s[pos] || '-').toUpperCase();
+        if (b === '-' || b === '.' || b === '~') continue;
+        if (!isProtein && b === 'U') b = 'T';
+        nonGap++;
+        counts[b] = (counts[b] || 0) + 1;
+    }
+    return _consensusDecide(counts, rows, nonGap, opts);
+}
+
+// U is counted as T (one base); an RNA alignment gets it back as U. It used to come out as T: the shown and
+// copied consensus was DNA, and an inserted consensus row made the whole alignment count as DNA for RevComp.
+function _consensusDecide(counts, rows, nonGap, opts) {
+    const ch = _consensusDecideDna(counts, rows, nonGap, opts);
+    return opts.isRna && ch === 'T' ? 'U' : ch;
+}
+function _consensusDecideDna(counts, rows, nonGap, opts) {
+    const { threshold, coverageMin, consType, fallbackMode } = opts;
+    const isProtein = !!opts.isProtein;
+    if (nonGap === 0) return '-';
+    if (nonGap / rows < coverageMin) return '-';
+    let maxCount = 0;
+    for (const b in counts) if (counts[b] > maxCount) maxCount = counts[b];
+    const unknown = isProtein ? 'X' : 'N';
+    const top = Object.keys(counts).filter(b => counts[b] === maxCount).sort();
+    if (maxCount / rows >= threshold) {
+        if (top.length === 1) return top[0];
+        if (consType === 'ambiguous' && !isProtein) {
+            const std = top.filter(b => 'ACGT'.includes(b));
+            if (std.length >= 2) return iupacFromBases(std);
+        }
+        const definite = top.filter(b => b !== unknown && b !== '*');
+        return (definite.length ? definite : top)[0];
+    }
+    const present = Object.keys(counts).filter(b => b !== unknown && b !== '*');
+    if (present.length < 2) return '-';
+    if (isProtein) {
+        if (fallbackMode === 'iupac') return _proteinAmbiguityCode(present);
+        if (fallbackMode === 'n') return 'X';
+        return '-';
+    }
+    // Union of what every code in the column stands for (A + R = A/G = R)
+    const std = [...new Set(present.flatMap(b => iupacToBases(b)).filter(b => 'ACGT'.includes(b)))];
+    if (fallbackMode === 'iupac' && std.length >= 2) return iupacFromBases(std);
+    if (fallbackMode === 'n') return 'N';
+    return '-';
+}
+
+function computeConsensusForSequences(seqArray) {
+    if (!seqArray || seqArray.length === 0) return '';
+    const len = _maxOf(seqArray, s => s.length);
+    const opts = _getConsensusOptions();
+    let out = '';
+    for (let pos = 0; pos < len; pos++) {
+        out += _computeConsensusCharForColumn(seqArray, pos, opts);
+    }
+    return out;
+}
+
+// Timesliced twin of computeConsensusForSequences, for the Canvas-mode
+// deferred path where consensus isn't displayed but is still computed lazily
+// for features like "Copy Consensus". Never blocks the main thread for more
+// than ~8ms per slice, regardless of alignment size.
+function computeConsensusForSequencesChunked(seqArray, onDone, token) {
+    if (!seqArray || seqArray.length === 0) { onDone(''); return; }
+    const len = _maxOf(seqArray, s => s.length);
+    const opts = _getConsensusOptions();
+    const chars = new Array(len);
+    let pos = 0;
+    function step() {
+        if (token && token.cancelled) return;
+        const t0 = performance.now();
+        while (pos < len && (performance.now() - t0) < 8) {
+            chars[pos] = _computeConsensusCharForColumn(seqArray, pos, opts);
+            pos++;
+        }
+        if (pos < len) {
+            setTimeout(step, 0);
+        } else {
+            onDone(chars.join(''));
+        }
+    }
+    step();
+}
+// PARSING FUNCTIONS
+
+// SAM/BAM detection - detects @HD/@SQ headers or tab-separated CIGAR lines
+function _isSamInput(text) {
+    const lines = text.split(/\r?\n/).filter(l => l.trim());
+    if (lines.length < 2) return false;
+    const headerLines = lines.filter(l => l.startsWith('@'));
+    if (headerLines.length > 0) {
+        if (headerLines.some(l => l.startsWith('@HD') || l.startsWith('@SQ') || l.startsWith('@PG') || l.startsWith('@RG') || l.startsWith('@CO') || l.startsWith('@PG'))) {
+            return true;
+        }
+        // Fall through to CIGAR check for unrecognised headers
+    }
+    const nonHeader = lines.filter(l => !l.startsWith('@'));
+    if (nonHeader.length === 0) return false;
+    // Headerless SAM: every sampled line has the 11 mandatory tab-separated
+    // fields with a numeric FLAG and POS and a CIGAR ('*' for unmapped
+    // reads), and at least one read is mapped with a real CIGAR
+    const sample = nonHeader.slice(0, 20).map(l => l.split('\t'));
+    const samLike = f => f.length >= 11 && /^\d+$/.test(f[1]) && /^\d+$/.test(f[3]) && /^(\*|(\d+[MIDNSHP=X])+)$/.test(f[5] || '');
+    return sample.every(samLike) && sample.some(f => f[5] !== '*');
+}
+
+// CIGAR reference span (M/D/N/= operations)
+function _cigarRefSpan(cigar) {
+    let span = 0;
+    const ops = cigar.match(/\d+[MIDNSHP=X]/g) || [];
+    for (const op of ops) {
+        const len = parseInt(op);
+        if ('MDN=X'.includes(op[op.length - 1])) span += len;
+    }
+    return span;
+}
+/**
+ * Parse GenBank flatfile format.
+ * Extracts: LOCUS name, DEFINITION, ACCESSION, ORGANISM,
+ * FEATURES (source, CDS, gene annotations with positions).
+ * Sequence from ORIGIN block.
+ */
+function parseGenBank(text) {
+    // A flatfile may hold several records, each ending in '//'
+    const out = [], skipped = [];
+    for (const record of text.split(/^\/\/[^\S\n]*$/m)) {
+        if (!/^LOCUS\s/m.test(record)) continue;
+        const one = _parseGenBankRecord(record);
+        if (one) out.push(...one);
+        else skipped.push((record.match(/^LOCUS\s+(\S+)/m) || [])[1] || '?');
+    }
+    // records with no sequence (e.g. CONTIG records without ORIGIN) cannot be rows; the loader says so
+    // instead of dropping them silently
+    out.skipped = skipped;
+    return out.length ? out : null;
+}
+
+function _parseGenBankRecord(text) {
+    const lines = text.split(/\r?\n/);
+    let locus = '', definition = '', accession = '', organism = '', lineage = '', version = '';
+    let inFeatures = false, inOrigin = false, inOrganism = false, inDefinition = false;
+    let seqParts = [];
+    const features = [];
+    let currentFeature = null;
+    let currentQualifierKey = null;
+
+    function flushCurrentFeature() {
+        if (currentFeature) features.push(currentFeature);
+        currentFeature = null;
+        currentQualifierKey = null;
+    }
+
+    for (const rawLine of lines) {
+        const line = rawLine.replace(/\s+$/, '');
+        const trimmed = line.trim();
+
+        // End of record
+        if (trimmed === '//') break;
+
+        // HEADER fields. Only before the feature table: a qualifier continuation line that starts
+        // "locus is described", "definition of" or "organism names" is text, not a field (audit M3).
+        const inHeader = !inFeatures && !inOrigin;
+        if (inHeader && inDefinition) {
+            // A DEFINITION runs on over indented lines (audit L18: it was cut to its first line)
+            if (/^\s{5,}\S/.test(line)) { definition += ' ' + trimmed; continue; }
+            inDefinition = false;
+        }
+        if (inHeader && /^LOCUS\s+/i.test(trimmed)) {
+            const parts = trimmed.split(/\s+/);
+            // LOCUS name is the first token; the rest is length/type/date
+            if (parts.length > 1) locus = parts[1];
+            continue;
+        }
+        if (inHeader && /^DEFINITION\s+/i.test(trimmed)) {
+            definition = trimmed.replace(/^DEFINITION\s+/i, '');
+            inDefinition = true;
+            continue;
+        }
+        if (inHeader && /^ACCESSION\s+/i.test(trimmed)) {
+            accession = trimmed.replace(/^ACCESSION\s+/i, '');
+            continue;
+        }
+        if (inHeader && /^VERSION\s+/i.test(trimmed)) {
+            version = trimmed.replace(/^VERSION\s+/i, '');
+            continue;
+        }
+
+        // ORGANISM block (multi-line)
+        if (inHeader && /^\s*ORGANISM\s+/i.test(line)) {
+            organism = line.replace(/^\s*ORGANISM\s+/i, '');
+            inOrganism = true;
+            continue;
+        }
+        if (inHeader && inOrganism && /^\s{5,}\S/.test(line)) {
+            // Indented lines under ORGANISM are the taxonomic lineage
+            lineage = lineage ? `${lineage} ${trimmed}` : trimmed;
+            continue;
+        } else {
+            inOrganism = false;
+        }
+
+        // FEATURES block
+        if (trimmed === 'FEATURES' || trimmed.startsWith('FEATURES ')) {
+            inFeatures = true;
+            continue;
+        }
+        if (inFeatures) {
+            if (trimmed === 'ORIGIN' || /^\s{0,4}\w/.test(line) && !line.startsWith('     ')) {
+                flushCurrentFeature();
+                inFeatures = false;
+            } else {
+                const fline = trimmed;
+                // Feature key line (starts with a keyword)
+                // A feature key starts in column 6 (qualifiers and their
+                // continuation lines start in column 22), so any key - ncRNA,
+                // tmRNA, modified_base, ... - is recognised by its indent
+                const indent = line.length - line.replace(/^ +/, '').length;
+                if (indent >= 5 && indent < 21 && /^[A-Za-z0-9_'*-]+(\s|$)/.test(fline)) {
+                    flushCurrentFeature();
+                    const match = fline.match(/^([A-Za-z0-9_'.-]+)\s*(.+)?/);
+                    currentFeature = { type: match[1], location: match[2] || '', qualifiers: {} };
+                } else if (currentFeature && fline.startsWith('/')) {
+                    // Qualifier line
+                    const qmatch = fline.match(/^\/([^=]+)(?:=([\s\S]*))?$/);
+                    if (qmatch) {
+                        currentQualifierKey = qmatch[1];
+                        const value = qmatch[2] === undefined ? true : qmatch[2].replace(/^"/, '').replace(/"$/, '');
+                        currentFeature.qualifiers[currentQualifierKey] = value;
+                    }
+                } else if (currentFeature && currentQualifierKey && fline) {
+                    const previous = currentFeature.qualifiers[currentQualifierKey];
+                    const continuation = fline.replace(/"$/, '');
+                    currentFeature.qualifiers[currentQualifierKey] =
+                        previous === true ? continuation : `${previous} ${continuation}`.trim();
+                }
+                continue;
+            }
+        }
+
+        // ORIGIN (sequence)
+        if (trimmed.startsWith('ORIGIN')) {
+            inOrigin = true;
+            continue;
+        }
+        if (inOrigin) {
+            // Remove line numbers and spaces
+            const seq = trimmed.replace(/^\d+\s*/, '').replace(/\s+/g, '');
+            if (seq && !/^[\/\/]/.test(seq)) seqParts.push(seq);
+        }
+    }
+
+    // Flush last feature
+    flushCurrentFeature();
+
+    // GenBank lowercase carries no soft-masking meaning, so store uppercase.
+    // GenPept (protein) records share the format; sanitise them as protein.
+    const rawSeq = seqParts.join('').toUpperCase();
+    const sequence = _sanitizeFastaSequence(rawSeq, _isProteinFastaSequence(rawSeq));
+    if (!sequence) return null;
+
+    // Build header from metadata
+    const name = locus || accession || 'GenBank_import';
+    let fullHeader = name;
+    if (organism) {
+        const org = organism.split(/[;.]/)[0]?.trim();
+        if (org) fullHeader += ` [${org}]`;
+    }
+    if (definition) {
+        const def = definition.length > 80 ? definition.substring(0, 77) + '...' : definition;
+        fullHeader += ` ${def}`;
+    }
+
+    // Same record shape as the FASTA parser; downstream code (e.g.
+    // updateSourceInfo) reads gaplessPositions unconditionally
+    return [{
+        header: name,
+        fullHeader: fullHeader,
+        seq: sequence,
+        gaplessPositions: calculateGaplessPositions(sequence),
+        _genbank: { accession, organism, features }
+    }];
+}
+

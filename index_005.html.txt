@@ -1,0 +1,272 @@
+[index.html lines 1115-1385 of ViewAlign fd8b8e4]
+            <button type="button" id="geGatherAllBtn" class="ge-text-btn" title="Move the members of every group next to each other (groups in list order, unassigned last). Undo restores the order.">Gather all</button>
+        </div>
+        <div id="geSummary" class="ge-summary"></div>
+        <div id="clusteringContent" class="ge-body">
+            <!-- Populated by JavaScript -->
+        </div>
+    </div>
+    
+    <!-- Sequence Editor Modal -->
+    <div id="seqEditModal" style="display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.5); z-index: 10002; overflow: auto;">
+        <div style="background: white; margin: 30px auto; padding: 20px; max-width: 700px; border-radius: 8px; box-shadow: 0 4px 20px rgba(0,0,0,0.3);">
+            <div class="win-titlebar" style="--win-pad:20px;">
+                <h3>Sequence Editor</h3>
+                <button type="button" id="seqEditCloseBtn" class="win-close" title="Close">×</button>
+            </div>
+            <div style="font-size: 12px; color: #555; margin-bottom: 8px;">
+                <span id="seqEditIndex" style="display:none;"></span>
+                <label style="font-size: 11px;">Name:</label>
+                <input type="text" id="seqEditNameInput" value="" style="width: 60%; font-size: 12px; padding: 2px 4px; border: 1px solid #ccc; border-radius: 3px;" title="Edit sequence name">
+                <span id="seqEditName" style="display:none;"></span>
+            </div>
+            <div style="margin-bottom: 8px; display: flex; gap: 4px; flex-wrap: wrap;">
+                <button id="seqEditDegap" title="Remove all gap characters (- and .)" style="font-size: 11px; padding: 3px 8px;">Degap</button>
+                <button id="seqEditReverse" title="Reverse the sequence (5'->3' becomes 3'->5')" style="font-size: 11px; padding: 3px 8px;">Reverse</button>
+                <button id="seqEditComplement" title="Complement bases (A<->T, C<->G; in RNA, A<->U)" style="font-size: 11px; padding: 3px 8px;">Complement</button>
+                <button id="seqEditRevComp" title="Reverse Complement" style="font-size: 11px; padding: 3px 8px;">Rev Comp</button>
+                <button id="seqEditUppercase" title="Convert to uppercase" style="font-size: 11px; padding: 3px 8px;">Uppercase</button>
+                <button id="seqEditLowercase" title="Convert to lowercase" style="font-size: 11px; padding: 3px 8px;">Lowercase</button>
+            </div>
+            <div style="margin-bottom: 4px; font-size: 11px; color: #888;">
+                Edit the sequence text below (standard text editing: select, delete, type, Ctrl+C/V/X).
+                Length: <span id="seqEditLength">0</span>
+            </div>
+            <textarea id="seqEditTextarea" style="width: 100%; height: 250px; font-family: 'Courier New', monospace; font-size: 12px; resize: vertical; box-sizing: border-box; white-space: pre-wrap; word-break: break-all;" title="Plain-text sequence editor: type, select, delete like normal text"></textarea>
+            <div style="margin-top: 10px; display: flex; justify-content: space-between; align-items: center;">
+                <label style="font-size: 11px; color: #555;">
+                    <input type="checkbox" id="seqEditPadGaps" checked title="Add or remove trailing gaps so the edited sequence keeps the alignment's column width"> Pad/trim to alignment length
+                </label>
+                <div>
+                    <button id="seqEditUndoBtn" onclick="_seqEditUndo()" disabled style="padding: 4px 8px; font-size: 12px; cursor: pointer;" title="Undo last edit in textarea (Ctrl+Z, Cmd+Z)">Undo</button>
+                    <button id="seqEditRedoBtn" onclick="_seqEditRedo()" disabled style="padding: 4px 8px; font-size: 12px; margin-left: 2px; cursor: pointer;" title="Redo undone edit (Ctrl+Y, Ctrl+Shift+Z, Cmd+Shift+Z)">Redo</button>
+                    <button id="seqEditApplyBtn" style="padding: 4px 16px; font-size: 13px; background: #4CAF50; color: white; border: none; border-radius: 4px; cursor: pointer; margin-left: 12px;" title="Write the edited text back into the alignment">Apply to Alignment</button>
+                    <button id="seqEditCancelBtn" style="padding: 4px 16px; font-size: 13px; margin-left: 8px;" title="Close without applying changes">Cancel</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- MAFFT Add Sequences Modal -->
+    <div id="addSeqModal" style="display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.5); z-index: 10001; overflow: auto;">
+        <div style="background: white; margin: 50px auto; padding: 20px; max-width: 600px; border-radius: 8px; box-shadow: 0 4px 20px rgba(0,0,0,0.3);">
+            <h2 style="margin-top: 0;">Add Sequences</h2>
+            <p style="font-size: 12px; color: #555;">Paste new sequences in FASTA format. "Just Add" appends them (padded with gaps). "Add & Align" realigns everything with MAFFT (runs locally via WebAssembly).</p>
+            <div style="margin-bottom: 6px; display: flex; gap: 12px; font-size: 12px;">
+                <label title="Where to insert new sequences"><input type="checkbox" id="addSeqAtTop" checked> Place at top</label>
+                <label title="Align new sequences against the consensus before adding"><input type="checkbox" id="addSeqAlignCons" checked> Align to consensus</label>
+            </div>
+            <textarea id="addSeqInput" placeholder=">new_sequence_1&#10;ACGTACGTACGT...&#10;>new_sequence_2&#10;TGCATGCATGCA..." style="width: 100%; height: 200px; font-family: 'Courier New', monospace; font-size: 12px; resize: vertical; box-sizing: border-box;" title="Paste new sequences in FASTA format, or use Browse Files below"></textarea>
+            <div style="margin-top: 4px; font-size: 11px;">
+                <button id="addSeqBrowseButton" style="padding: 2px 8px; font-size: 11px; background: #f5f5f5; border: 1px solid #ccc; border-radius: 3px; cursor: pointer; margin-right: 6px;" title="Pick one or more sequence files from disk">Browse Files</button>
+                <input type="file" id="addSeqFileInput" multiple accept=".fasta,.fa,.fas,.fna,.ffn,.faa,.frn,.aln,.msf,.nex,.nexus,.sto,.stockholm,.txt,.gb,.gbk,.ab1" style="display:none;">
+                <span id="addSeqFileLabel" style="color: #888;"></span>
+            </div>
+            <div style="margin-top: 8px; text-align: right;">
+                <button id="addSeqJustAddButton" style="padding: 4px 16px; font-size: 13px; background: #2196F3; color: white; border: none; border-radius: 4px; cursor: pointer;" title="Append the new sequences padded with gaps, without realigning">Just Add</button>
+                <button id="addSeqSubmitButton" style="padding: 4px 16px; font-size: 13px; background: #4CAF50; color: white; border: none; border-radius: 4px; cursor: pointer; margin-left: 4px;" title="Add the new sequences and realign the whole alignment with MAFFT">Add & Align</button>
+                <button id="addSeqCancelButton" style="padding: 4px 16px; font-size: 13px; margin-left: 8px;" title="Close without adding sequences">Cancel</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Dot-Plot Modal -->
+    <div id="dotPlotModal" style="display:none;position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,0.6);z-index:10002;overflow:hidden;">
+        <div id="dotPlotDialog" class="dot-window">
+            <div class="win-rz" data-dir="n"></div><div class="win-rz" data-dir="s"></div><div class="win-rz" data-dir="e"></div><div class="win-rz" data-dir="w"></div>
+            <div class="win-rz" data-dir="ne"></div><div class="win-rz" data-dir="nw"></div><div class="win-rz" data-dir="se"></div><div class="win-rz" data-dir="sw"></div>
+            <div class="win-titlebar" id="dotPlotTitleBar" style="--win-pad:16px;cursor:move;" title="Drag to move; drag the lower-right corner to resize">
+                <h3 id="dotPlotTitle" style="pointer-events:none;">Dot Plot</h3>
+                <span class="win-btns">
+                    <button type="button" id="dotPlotDockClear" class="dot-mini-btn" title="Remove the stretch marks from the alignment" hidden>Clear marks</button>
+                    <button type="button" id="dotPlotRangeBtn" class="dot-mini-btn" title="Show / hide the boxes that limit the plot to a part of each sequence (A from-to, B from-to) and Compare with pasted">Parts</button>
+                    <button type="button" id="dotPlotDockBtn" class="win-close" title="Move the window out of the way to a small bar (the alignment behind it shows fully); click again to bring it back" aria-label="Dock">&#9662;</button>
+                    <button type="button" id="dotPlotMaxBtn" class="win-close win-maxbtn" title="Maximize (or double-click the title bar)" aria-label="Maximize">&#9633;</button>
+                    <button type="button" id="dotPlotCloseBtn" class="win-close" title="Close">×</button>
+                </span>
+            </div>
+            <!-- Settings: the mode, then one wide slider for the word (SPIN) or window (Dotter) length and, in
+                 Dotter mode, the identity slider (owner, 2026-10-23: one wide slider that follows the mode) -->
+            <div class="dot-ctl-row">
+                <span style="font-weight:bold;" id="dotPlotUpperLabel">Mode:</span>
+                <label title="Exact word match - faster, sharper diagonals"><input type="radio" name="dotPlotMode" value="spin" checked> SPIN (word)</label>
+                <label title="Sliding-window identity - tolerant of mismatches, better for diverged copies"><input type="radio" name="dotPlotMode" value="doter"> Dotter (window)</label>
+                <span class="dot-sep"></span>
+                <label class="dot-slider" id="dotPlotWindowWrap"><span id="dotPlotWindowLabel">Word length</span><input type="range" id="dotPlotWindow" value="6" min="2" max="20" step="1" title="Word length for SPIN exact matches (2-20). Shorter words find more, and noisier, matches"><output id="dotPlotWindowVal" for="dotPlotWindow">6</output></label>
+                <label class="dot-slider" id="dotPlotThreshWrap" title="Minimum window identity for a dot to be plotted (0-100%)" hidden><span>Identity &ge;</span><input type="range" id="dotPlotThreshold" min="0" max="100" value="55"><output id="dotPlotThreshVal" for="dotPlotThreshold">55%</output></label>
+            </div>
+            <!-- Actions -->
+            <div class="dot-ctl-row">
+                <label>Context <input type="number" id="dotPlotContextRadius" value="30" min="5" max="100" step="5" style="width:48px;" title="Extra bases to show around the hover position"> bp</label>
+                <label><input type="checkbox" id="dotPlotRevComp" title="Reverse-complement the second sequence/axis, to find inverted repeats"> RevComp B</label>
+                <span class="dot-sep"></span>
+                <label title="Recalculate as soon as a setting changes. Untick to change several settings, then press Recalculate once (useful for long sequences)"><input type="checkbox" id="dotPlotLive" checked> Live update</label>
+                <button id="dotPlotRecalc" title="Rerun the dot plot with the current settings">Recalculate</button>
+                <span class="dot-sep"></span>
+                <button id="dotPlotZoomOut" title="Zoom out (or the mouse wheel over the plot)">&minus;</button>
+                <button id="dotPlotZoomIn" title="Zoom in (or the mouse wheel over the plot)">+</button>
+                <button id="dotPlotFullView" title="Show the whole plot in the window (and keep fitting it when the window is resized)">Full view</button>
+                <span class="dot-sep"></span>
+                <button id="dotPlotExport" title="Save the whole plot as a PNG image">Export PNG</button>
+                <button id="dotPlotExportSvg" title="Save the whole plot as a vector SVG: each diagonal run of dots is one line">Export SVG</button>
+                <span class="dot-grow"></span>
+                <button id="dotPlotCopyRegion" title="Copy the aligned region around the pinned or hovered point as FASTA">Copy region</button>
+                <button id="dotPlotHelpBtn" class="dot-help-btn" title="Show / hide help for the dot plot" aria-label="Help">?</button>
+            </div>
+            <div id="dotPlotLookRow" class="dot-ctl-row">
+                <button type="button" id="dotPlotHighlightAll" title="Tint every stretch listed in Top Regions (those that pass the current settings) in the alignment, on both rows. Stays until cleared (Clear marks) or the window is closed">Highlight all in alignment</button>
+                <button type="button" id="dotPlotClearMarks2" class="dot-mini-btn" title="Remove the stretch marks from the alignment" hidden>Clear marks</button>
+                <span class="dot-sep"></span>
+                <label title="Colour of the dots">Dots <input type="color" id="dotColDot" value="#ffffff"></label>
+                <label title="Colour of the plot background. It covers the plot area only: the axis strips and the text around it stay white">Background <input type="color" id="dotColBg" value="#000000"></label>
+                <label title="Colour of the stretch under the pointer">Stretch <input type="color" id="dotColStretch" value="#64e6a0"></label>
+                <label title="Colour of the position marker (sliders / click)">Marker <input type="color" id="dotColMarker" value="#ff8c00"></label>
+                <label title="Tint of the stretches shown in the alignment">Alignment tint <input type="color" id="dotColTint" value="#4a9eff"></label>
+                <button type="button" id="dotColReset" title="Back to the default colours">Reset colours</button>
+                <span class="dot-sep"></span>
+                <select id="dotPresetSelect" title="Saved dot plot presets: settings, colours and selected stretches"></select>
+                <input type="text" id="dotPresetName" placeholder="Preset name" maxlength="60" size="12" title="Name to save the current settings, colours and stretches under">
+                <button type="button" id="dotPresetSave" title="Save the settings, colours and the stretches marked in the alignment under this name">Save</button>
+                <button type="button" id="dotPresetLoad" title="Load the chosen preset: settings (the plot is recalculated), colours and stretches (when the same pair is plotted)">Load</button>
+                <button type="button" id="dotPresetDelete" title="Delete the chosen preset">Delete</button>
+                <span id="dotPresetNote" class="dot-preset-note"></span>
+            </div>
+            <div id="dotPlotRangeRow" class="dot-ctl-row" hidden>
+                <label title="Plot only this part of sequence A (down the plot): residue numbers of the whole ungapped sequence, 1-based, both ends included"><b>A</b> from <input type="number" id="dotPlotRangeAFrom" min="1" step="1" style="width:68px;"> to <input type="number" id="dotPlotRangeATo" min="1" step="1" style="width:68px;"></label>
+                <label title="Plot only this part of sequence B (across the plot): residue numbers of the whole ungapped sequence, 1-based, both ends included (with RevComp B, the part is cut first, then reverse-complemented)"><b>B</b> from <input type="number" id="dotPlotRangeBFrom" min="1" step="1" style="width:68px;"> to <input type="number" id="dotPlotRangeBTo" min="1" step="1" style="width:68px;"></label>
+                <button type="button" id="dotPlotRangeReplot" title="Plot the typed parts (numbers outside the sequence are clamped to it)">Re-plot</button>
+                <button type="button" id="dotPlotRangeWhole" title="Back to the whole of both sequences">Whole</button>
+                <span class="dot-sep"></span>
+                <button type="button" id="dotPlotPasteBtn" title="Compare a pasted sequence (raw or FASTA, first record) with row A, row B, or itself">Compare with pasted&hellip;</button>
+                <span id="dotPlotRangeNote" class="dot-preset-note" role="status"></span>
+            </div>
+            <!-- Shown when a row of the plot was changed after the plot was made (checked only when the plot is used or the window regains attention) -->
+            <div id="dotPlotEditBar" class="dot-edit-bar" role="alert" hidden>
+                <span id="dotPlotEditText"></span>
+                <button type="button" id="dotPlotEditReplot" title="Plot the current rows again with the same settings and range (a range that no longer fits is clamped, or the whole row is plotted, with a message)">Re-plot</button>
+            </div>
+            <div id="dotPlotSplitRow" class="dot-split-row dot-ctl-row">
+                <label title="A sequence plotted against itself is symmetric, so each half can show the same comparison with its own method and settings: the controls above then apply above the diagonal, these below it. Only for a sequence against itself, without RevComp B."><input type="checkbox" id="dotPlotSplit" checked> Different settings below the diagonal</label>
+                <span id="dotPlotLowerCtl" class="dot-lower-ctl" hidden>
+                    <span style="font-weight:bold;">Lower half:</span>
+                    <label title="Exact word match"><input type="radio" name="dotPlotModeLower" value="spin"> SPIN (word)</label>
+                    <label title="Sliding-window identity"><input type="radio" name="dotPlotModeLower" value="doter" checked> Dotter (window)</label>
+                    <label class="dot-slider" id="dotPlotWindowLowerWrap"><span id="dotPlotWindowLowerLabel">Window</span><input type="range" id="dotPlotWindowLower" value="11" min="1" max="61" step="1" title="Word length (SPIN) or window length (Dotter) for the lower half"><output id="dotPlotWindowValLower" for="dotPlotWindowLower">11</output></label>
+                    <label class="dot-slider" id="dotPlotThreshLowerWrap" title="Minimum window identity for a dot in the lower half (Dotter)"><span>Identity &ge;</span><input type="range" id="dotPlotThresholdLower" min="0" max="100" value="55"><output id="dotPlotThreshValLower" for="dotPlotThresholdLower">55%</output></label>
+                </span>
+            </div>
+            <div style="display:flex;gap:8px;flex:1;min-height:260px;">
+                <div id="dotPlotViewport" style="overflow:auto;flex:1;min-width:300px;border:1px solid #ccc;position:relative;cursor:crosshair;">
+                    <!-- Only the visible part is drawn: the canvases stay pinned to the
+                         viewport and the spacer gives the scrollbars the full plot size -->
+                    <div style="position:sticky;top:0;left:0;width:0;height:0;z-index:1;">
+                        <canvas id="dotPlotCanvas" width="1" height="1" style="position:absolute;top:0;left:0;display:block;"></canvas>
+                        <canvas id="dotPlotOverlay" width="1" height="1" style="position:absolute;top:0;left:0;pointer-events:auto;"></canvas>
+                    </div>
+                    <div id="dotPlotSpacer"></div>
+                </div>
+                <div id="dotPlotSide" class="dot-side">
+                    <div id="dotPlotRegionList" class="dot-side-list" style="flex:1 1 55%;">
+                        <div class="dot-side-head">Top Regions<span style="flex:1;"></span><button type="button" id="dotPlotClearMarksBtn" class="dot-mini-btn" title="Remove the stretch marks from the alignment" hidden>Clear marks</button></div>
+                        <div id="dotPlotRegionItems" style="padding:4px;"></div>
+                    </div>
+                    <!-- The collection: starred stretches, kept across files and reloads and in snapshots (owner, 2026-10-23) -->
+                    <div id="dotPlotBookmarks" class="dot-side-list" style="flex:0 1 45%;min-height:90px;">
+                        <div class="dot-side-head" title="Stretches you starred in Top Regions. Kept across files and reloads, and saved in snapshots. An entry can be centred in the plot, shown in the alignment, handed to the Search box, copied as FASTA, renamed (double-click) or removed.">Collection<span style="flex:1;"></span><button type="button" id="dotPlotBookmarkTsvBtn" class="dot-mini-btn" title="Copy the collection as a tab-separated table (name, positions, pair, method, sequences)">TSV</button><button type="button" id="dotPlotBookmarkClearBtn" class="dot-mini-btn" title="Remove every entry">Clear</button></div>
+                        <div id="dotPlotBookmarkItems" style="padding:4px;"></div>
+                    </div>
+                </div>
+            </div>
+            <div id="dotPlotStatus" style="font-size:11px;color:#666;margin-top:4px;"></div>
+            <div id="dotPlotHover" style="font-size:11px;color:#555;font-family:monospace;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-height:16px;"></div>
+            <div id="dotPlotAlignMeta" style="font-size:11px;color:#666;font-family:monospace;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-height:16px;margin-top:2px;"></div>
+            <div id="dotPlotStripBar" class="dot-ctl-row dot-strip-bar">
+                <label title="Position in sequence A (down the plot). Arrow keys step by 1"><b>A</b> <input type="range" id="dotPlotPosA" min="1" max="1" step="1" value="1"><input type="number" id="dotPlotPosANum" min="1" max="1" value="1" style="width:64px;"></label>
+                <label title="Position in sequence B (across the plot; with RevComp B the number runs down as the slider moves forward, as on the ruler). Arrow keys step by 1"><b>B</b> <input type="range" id="dotPlotPosB" min="1" max="1" step="1" value="1"><input type="number" id="dotPlotPosBNum" min="1" max="1" value="1" style="width:64px;"></label>
+                <span class="dot-sep"></span>
+                <label title="Lines of the strip under the plot: with more than one the stretch around the position wraps into several lines (the Context box then applies to one line only)">Strip lines <input type="number" id="dotPlotStripLines" min="1" max="12" value="1" style="width:44px;"></label>
+                <button type="button" id="dotPlotStripExpand" title="Show a longer stretch in the strip (several lines); click again for one line">Expand</button>
+            </div>
+            <pre id="dotPlotRulerA" class="dot-ruler dot-ruler-a"></pre>
+            <pre id="dotPlotAlignPanel" style="margin:0;padding:8px;border-radius:6px;border:1px solid #d8d8d8;background:#f7f7f7;font:12px/1.4 ui-monospace, SFMono-Regular, Menlo, monospace;white-space:pre;overflow-x:auto;">A: -
+   
+B: -</pre>
+            <pre id="dotPlotRulerB" class="dot-ruler dot-ruler-b"></pre>
+            <div id="dotPlotSpinScroll" style="visibility:hidden;font-size:11px;line-height:14px;height:14px;color:#4a9eff;font-weight:bold;margin-top:3px;">Frozen - double-click to unfreeze</div>
+            <div id="dotPlotHelp" style="display:none;margin-top:8px;border:1px solid #ddd;padding:10px;background:#fafafa;max-height:36vh;overflow:auto;font-size:11px;line-height:1.35;">
+                <div style="font-weight:bold;margin-bottom:6px;">Dot Plot Help (local)</div>
+                <p style="margin:0 0 8px;">
+                    This dot plot compares <b>Sequence A</b> (y-axis) and <b>Sequence B</b> (x-axis).
+                    A point/diagonal indicates similarity at those coordinates.
+                </p>
+                <p style="margin:0 0 8px;"><b>SPIN vs Dotter</b></p>
+                <ul style="margin:0 0 10px;padding-left:18px;">
+                    <li><b>SPIN (word)</b>: exact k-mer ("word") matches. Short words find more matches, including chance ones; longer words find fewer, stricter matches and run faster. Words containing N (X in protein) are ignored.</li>
+                    <li><b>Dotter (window)</b>: sliding-window identity scoring along diagonals. Threshold controls which similarities are shown as dots.</li>
+                </ul>
+                <p style="margin:0 0 8px;"><b>Controls</b></p>
+                <ul style="margin:0 0 10px;padding-left:18px;">
+                    <li><b>Word/Window</b>: SPIN word length (2-20) or Dotter window length (1-61). Press Recalculate after changing it.</li>
+                    <li><b>Threshold</b>: Dotter only. Minimum identity of a window, as a percent of the window length, for a dot; windows cut short at a sequence end count their missing positions as mismatches.</li>
+                    <li><b>Context</b>: how many bases around the hover position are shown in the alignment panel.</li>
+                    <li><b>RevComp B</b>: compute the plot using the reverse-complement of sequence B.</li>
+                </ul>
+                <p style="margin:0 0 8px;"><b>Freeze, copy, navigate</b></p>
+                <ul style="margin:0;padding-left:18px;">
+                    <li><b>Move mouse</b> over the plot to preview the alignment slice.</li>
+                    <li><b>Double-click</b> a cell to <b>freeze</b> the alignment panel so it stays locked for copying. Double-click again to unfreeze.</li>
+                    <li><b>Copy Region</b>: copies the FASTA slice corresponding to the frozen/pinned match.</li>
+                    <li><b>Zoom</b>: use <b>Ctrl+wheel</b> (or +/- buttons) to zoom the plot only.</li>
+                    <li><b>Pan</b>: when zoomed, use the plot's scrollbars (or wheel) to move around.</li>
+                </ul>
+            </div>
+        </div>
+    </div>
+
+    <!-- Repeat/TSD Finder Modal -->
+    <!-- Repeat Finder: a floating panel that leaves the alignment visible and usable -->
+    <div id="repeatFinderModal" class="rf-layer" style="display:none;">
+        <div id="repeatFinderModalInner" class="rf-panel">
+            <div class="win-rz" data-dir="n"></div><div class="win-rz" data-dir="s"></div><div class="win-rz" data-dir="e"></div><div class="win-rz" data-dir="w"></div>
+            <div class="win-rz" data-dir="ne"></div><div class="win-rz" data-dir="nw"></div><div class="win-rz" data-dir="se"></div><div class="win-rz" data-dir="sw"></div>
+            <div id="repeatFinderDragHandle" class="win-titlebar" style="--win-pad:14px;cursor:move;user-select:none;" title="Drag to move; drag an edge or corner to resize; double-click to maximize">
+                <h3 style="pointer-events:none;">Repeat Finder</h3>
+                <span class="win-btns">
+                    <button type="button" id="repeatFinderMaxBtn" class="win-close win-maxbtn" title="Maximize (or double-click the title bar)">&#9633;</button>
+                    <button type="button" id="repeatFinderCloseBtn" class="win-close" title="Close">×</button>
+                </span>
+            </div>
+            <div class="rf-body">
+                <div class="rf-row">
+                    <span class="rf-label">Find</span>
+                    <div class="rf-seg" role="radiogroup" aria-label="Type of repeat">
+                        <label title="Adjacent repeated units (e.g. ATGATGATG)"><input type="radio" name="repeatMode" value="tandem" checked>Tandem</label>
+                        <label title="Two copies of the same sequence in the same orientation, anywhere in the sequence"><input type="radio" name="repeatMode" value="direct">Direct</label>
+                        <label title="Two copies in opposite orientation (reverse complement)"><input type="radio" name="repeatMode" value="inverted">Inverted</label>
+                        <label title="Target-site duplications flanking the SINE in every row of the alignment"><input type="radio" name="repeatMode" value="tsd">TSD (SINE)</label>
+                    </div>
+                </div>
+
+                <div id="repeatScopeRow" class="rf-row">
+                    <span class="rf-label">Search in</span>
+                    <div class="rf-seg" role="radiogroup" aria-label="Which sequences to search">
+                        <label title="One sequence, chosen on the right"><input type="radio" name="repeatScope" value="single" checked>One sequence</label>
+                        <label title="Every loaded sequence"><input type="radio" name="repeatScope" value="all">All</label>
+                        <label title="The rows selected in the alignment (click a name; Ctrl+click adds, Shift+click takes a range)"><input type="radio" name="repeatScope" value="selected">Selected rows</label>
+                    </div>
+                    <select id="repeatFinderSeqSelect" class="rf-seqselect" title="Sequence to search"></select>
+                </div>
+
+                <div id="repeatParamsGeneral" class="rf-row">
+                    <span class="rf-label">Settings</span>
+                    <label id="repeatMinLenLabel" title="Shortest tandem array reported: all copies together, and at least two full copies of the unit; units of 1 to 500 residues (fewer in a very long sequence)"><span id="repeatMinLenText">Min array length</span> <input type="number" id="repeatMinLen" value="10" min="3" max="1000" class="rf-num"> <span class="rf-unit">bp</span></label>
+                    <label title="Maximum mismatch between repeat copies (0 = identical)">Max divergence <input type="number" id="repeatMaxDiv" value="15" min="0" max="50" class="rf-num"> %</label>
+                </div>
+
+                <div id="repeatParamsTsd" style="display:none;">
+                    <div class="rf-row">
+                        <span class="rf-label" title="How the SINE body (between the two TSD copies) is located">SINE body</span>
+                        <div class="rf-seg" role="radiogroup" aria-label="How to find the SINE body">
+                            <label title="From column conservation, or from the reference / consensus row"><input type="radio" name="tsdMode" value="auto" checked>Auto</label>
+                            <label title="From row 1 or the consensus row (gap-padded reference)"><input type="radio" name="tsdMode" value="topseq">Reference row</label>
+                            <label title="Give the flank columns yourself"><input type="radio" name="tsdMode" value="manual">Manual</label>

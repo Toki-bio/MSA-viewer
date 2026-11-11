@@ -1,0 +1,592 @@
+[styles.css lines 3027-3617 of ViewAlign fd8b8e4]
+/* Display menu: need more width for mode controls */
+#display-controls {
+    max-width: 520px;
+    min-width: 360px;
+}
+.shade-mode-label {
+    margin-right: 8px;
+}
+#statusMessage {
+    position: fixed;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    background: rgba(0,0,0,0.8);
+    color: white;
+    padding: 10px 20px;
+    border-radius: 4px;
+    font-size: 14px;
+    /* Above every window (10000+) and detached panel (100000): under them, a toast such as
+       "Newick copied." in the Tree window was invisible */
+    z-index: 100001;
+    display: none;
+    /* Purely a passive toast (no click handler anywhere), but centered and
+       sized to its text - it was intercepting wheel/click events meant for
+       whatever's underneath, most noticeably Canvas mode's wheel-to-pan,
+       for as long as a message stayed visible (e.g. the 6s auto-switch
+       notice), making vertical scroll silently do nothing during that
+       window. */
+    pointer-events: none;
+}
+#minimizeBar {
+    display: none;
+    position: sticky;
+    top: 0;
+    height: 18px;
+    line-height: 18px;
+    background: #ccc;
+    cursor: pointer;
+    z-index: 100;
+    text-align: center;
+    transition: background 0.15s, opacity 0.12s ease-out;
+    font-size: 10px;
+    color: #666;
+    user-select: none;
+}
+#minimizeBar:hover { background: #aaa; color: #333; }
+
+/* SSH mini-console */
+#sshConsole {
+    display: none;
+    position: fixed;
+    bottom: 20px;
+    right: 16px;
+    width: 430px;
+    max-width: calc(100vw - 32px);
+    background: #1a1a1a;
+    color: #ccc;
+    border: 1px solid #555;
+    border-radius: 5px;
+    font-family: 'Courier New', monospace;
+    font-size: 11.5px;
+    z-index: 9990;
+    box-shadow: 0 4px 16px rgba(0,0,0,0.55);
+}
+#sshConsoleHeader {
+    background: #2d2d2d;
+    padding: 5px 8px;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    border-radius: 5px 5px 0 0;
+    user-select: none;
+}
+#sshConsoleTitle { color: #9cdcfe; font-size: 11px; font-family: sans-serif; }
+#sshConsoleHeader button {
+    background: none;
+    border: none;
+    border-radius: 4px;
+    color: #aaa;
+    font-size: 16px;
+    line-height: 1;
+    cursor: pointer;
+    width: 22px;
+    height: 22px;
+    padding: 0;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+}
+#sshConsoleHeader button:hover { background: #e24b4b; }
+#sshConsoleHeader button:hover { color: #fff; }
+#sshConsoleBody {
+    padding: 7px 10px;
+    max-height: 150px;
+    overflow-y: auto;
+}
+.ssh-line       { margin: 1px 0; line-height: 1.5; white-space: pre-wrap; word-break: break-all; }
+.ssh-line-ok    { color: #6ec16e; }
+.ssh-line-err   { color: #e06c75; }
+.ssh-line-info  { color: #9cdcfe; }
+.ssh-line-plain { color: #ccc; }
+.context-menu {
+    position: absolute;
+    background: white;
+    border: 1px solid #ccc;
+    padding: 5px;
+    z-index: 1000;
+}
+.context-menu div {
+    cursor: pointer;
+    padding: 2px 5px;
+}
+.context-menu div:hover {
+    background: #f0f0f0;
+}
+/* Residue selection: yellow tint plus one thin frame around each run of selected cells, over whatever
+   the residue shows. A frame per cell drew borders between the boxes (owner, 2026-10-23): a cell gets the
+   top and bottom lines, the run's first and last cell (classes from the selection refresh) the sides. */
+.seq-line.selected .seq-data span.nuc-selected,
+.seq-data span.nuc-selected {
+    --t-nuc: linear-gradient(rgba(255, 213, 0, 0.55), rgba(255, 213, 0, 0.55));
+    box-shadow: inset 0 1px 0 0 rgba(140, 100, 0, 0.9), inset 0 -1px 0 0 rgba(140, 100, 0, 0.9) !important;
+}
+.seq-data span.nuc-selected.nuc-sel-start {
+    box-shadow: inset 1px 0 0 0 rgba(140, 100, 0, 0.9), inset 0 1px 0 0 rgba(140, 100, 0, 0.9), inset 0 -1px 0 0 rgba(140, 100, 0, 0.9) !important;
+}
+.seq-data span.nuc-selected.nuc-sel-end {
+    box-shadow: inset -1px 0 0 0 rgba(140, 100, 0, 0.9), inset 0 1px 0 0 rgba(140, 100, 0, 0.9), inset 0 -1px 0 0 rgba(140, 100, 0, 0.9) !important;
+}
+.seq-data span.nuc-selected.nuc-sel-start.nuc-sel-end {
+    box-shadow: inset 1px 0 0 0 rgba(140, 100, 0, 0.9), inset -1px 0 0 0 rgba(140, 100, 0, 0.9), inset 0 1px 0 0 rgba(140, 100, 0, 0.9), inset 0 -1px 0 0 rgba(140, 100, 0, 0.9) !important;
+}
+
+/* Annotation track (BED): one line above the ruler of every block; each lane is 1em.
+   Features are absolutely positioned boxes (ch units, or px in a column-windowed block);
+   the name cell is the same sticky .seq-name as the rows'. */
+.annot-track-line {
+    display: flex;
+    align-items: flex-start;
+    position: relative;
+    min-width: max-content;
+    white-space: nowrap;
+    line-height: 1.0;
+    padding-bottom: 3px;
+    user-select: none;
+}
+.annot-track-line .seq-name {
+    font-weight: normal;
+    color: #777;
+    height: 100%;
+}
+.annot-track-label {
+    display: inline-block;
+    max-width: 100%;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    font: 0.7em/1.4 Arial, Helvetica, sans-serif;
+    vertical-align: top;
+}
+.annot-track-data {
+    position: relative;
+    height: 100%;
+    overflow: visible !important;
+    display: inline-block;
+}
+.annot-track-inner {
+    position: relative;
+    height: 100%;
+}
+.annot-feat {
+    position: absolute;
+    height: calc(1em - 2px);
+    margin-top: 1px;
+    box-sizing: border-box;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    padding: 0 4px;
+    min-width: 2px;
+    /* clip-path, not overflow:hidden: an overflow box would be the scroll container the
+       sticky label sticks to, and the label must stick to the alignment's scrollport */
+    clip-path: inset(0 round 2px);
+}
+.annot-feat.plus  { clip-path: polygon(0 0, calc(100% - 0.45em) 0, 100% 50%, calc(100% - 0.45em) 100%, 0 100%); padding-right: 0.55em; }
+.annot-feat.minus { clip-path: polygon(0.45em 0, 100% 0, 100% 100%, 0.45em 100%, 0 50%); padding-left: 0.55em; }
+.annot-feat.narrow { padding: 0; clip-path: none; }
+.annot-feat:hover { box-shadow: inset 0 0 0 2px rgba(0, 0, 0, 0.35); }
+/* The label stays at the visible left edge while its box is partly scrolled off
+   (--annot-label-left: the name column's width, set by the renderer) */
+.annot-feat-label {
+    position: sticky;
+    left: var(--annot-label-left, 0px);
+    font: 0.68em/1 Arial, Helvetica, sans-serif;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    pointer-events: none;
+}
+.tooltip.annot-tip { white-space: normal; max-width: 360px; line-height: 1.35; }
+
+/* Scale ruler styling */
+.scale-ruler-line {
+    margin-bottom: 2px;
+    height: var(--row-h, 15px);
+}
+
+.scale-ruler-line .seq-name {
+    /* Keep the name column visible but empty to maintain alignment */
+    min-width: calc(var(--nameLen) * 1ch + 16px + var(--name-gap));
+    width: calc(var(--nameLen) * 1ch + 16px + var(--name-gap));
+    max-width: calc(var(--nameLen) * 1ch + 16px + var(--name-gap));
+}
+
+.scale-ruler-line .seq-data {
+    font-family: 'Courier New', monospace;
+    color: #666;
+    padding: 0;
+    white-space: pre;
+    overflow: visible !important;
+    display: inline-block;
+    padding-top: calc(2 * var(--text-dy, 0px));
+    line-height: calc(var(--row-h, 15px) - 2 * var(--text-dy, 0px));   /* the digits where the rows' letters are */
+    /* The ruler is one run of text, the rows are one inline-block per residue, whose width the
+       browser rounds up (13px: 7.8013px glyph, 7.8125px cell). Without this the numbers drifted
+       left of their columns, ~5 columns by column 3700. --res-w: _syncResidueWidthVar. */
+    letter-spacing: calc(var(--res-w, 1ch) - 1ch);
+}
+/* With Highlight diffs the ruler is one span per column, already a cell wide */
+.scale-ruler-line .seq-data > span { letter-spacing: normal; }
+
+/* Hide horizontal scrollbar cross-browser */
+#alignmentContainer::-webkit-scrollbar:horizontal {
+    height: 0;
+}
+#alignmentContainer {
+    -ms-overflow-style: none;  /* IE/Edge */
+    scrollbar-width: none;     /* Firefox */
+    overflow-x: auto;          /* Keep scrollable */
+    overflow-y: auto;          /* Vertical scroll when needed */
+}
+#alignmentContainer::-webkit-scrollbar {
+    display: none;             /* Chrome/Safari */
+}
+
+/* Remove page-wide vertical scrollbar */
+/* Remove page-wide vertical scrollbar (allow normal scrolling) */
+body {
+    overflow: auto;
+}
+
+/* ============================================================================
+   FULL-WINDOW DRAG AND DROP OVERLAY
+   ============================================================================ */
+.drag-overlay {
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100vw;
+    height: 100vh;
+    background: rgba(59, 130, 246, 0.15);
+    -webkit-backdrop-filter: blur(4px);
+    backdrop-filter: blur(4px);
+    border: 4px dashed rgba(59, 130, 246, 0.5);
+    z-index: 10000;
+    pointer-events: none;
+    transition: opacity 0.2s ease;
+}
+
+.drag-overlay.hidden {
+    opacity: 0;
+}
+
+.drag-overlay.active {
+    opacity: 1;
+}
+
+/* Diagnostic mutation highlighting */
+span.diagnostic-mutation {
+    font-weight: bold !important;
+    cursor: help;
+}
+
+.seq-data span.tsd-mark-bold {
+    font-weight: 700 !important;
+    text-decoration: underline;
+    text-decoration-thickness: 2px;
+    text-underline-offset: 1px;
+}
+
+.seq-data span.tsd-mark-color {
+    border-radius: 2px;
+}
+
+@media (max-width: 700px) {
+    #controls {
+        padding: 1px 3px;
+    }
+
+    .control-row {
+        flex-wrap: wrap !important;
+        align-items: flex-start;
+        gap: 2px;
+        padding-top: 2px;
+    }
+
+    .undo-redo-bar {
+        margin-left: 0 !important;
+    }
+
+    #snapshot-section {
+        margin-left: 0 !important;
+    }
+
+    .standard-menu-group {
+        order: 10;
+        flex: 1 1 100% !important;
+        min-width: 0 !important;
+        width: 100% !important;
+        flex-wrap: wrap !important;
+        gap: 3px;
+    }
+
+    #actions-section {
+        order: 11;
+        flex: 0 0 auto !important;
+        margin-left: 0 !important;
+    }
+
+    #headerInfoPanel {
+        order: 12;
+        flex: 1 1 100%;
+        max-width: 100%;
+        align-items: flex-start;
+        padding: 0;
+    }
+
+    #sourceInfo,
+    #sourcePathLine {
+        max-width: 100%;
+        text-align: left;
+    }
+
+    .control-group,
+    .menu-section.side-section#input-section .control-group,
+    #actions-section .control-group {
+        position: fixed !important;
+        left: 4px !important;
+        right: 4px !important;
+        top: 86px !important;
+        width: auto !important;
+        min-width: 0 !important;
+        max-width: none !important;
+        box-sizing: border-box;
+        padding: 8px;
+        max-height: calc(100vh - 96px);
+    }
+
+    #actions-section .control-group {
+        max-height: calc(100vh - 96px);
+        max-width: calc(100vw - 8px);
+    }
+
+    #actions-controls .button-group {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+
+    .action-section {
+        padding: 6px 0;
+    }
+
+    #editToolPanel {
+        flex-wrap: wrap;
+        gap: 3px;
+    }
+}
+/* ============ BLAST UI STYLES ============ */
+
+/* Search dialog */
+.blast-modal-backdrop {
+    position: fixed;
+    inset: 0;
+    background: rgba(0,0,0,0.45);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 10000;
+}
+.blast-dialog {
+    background: white;
+    border-radius: 6px;
+    box-shadow: 0 4px 16px rgba(0,0,0,0.25);
+    max-width: 420px;
+    width: 92%;
+    max-height: 80vh;
+    overflow-y: auto;
+}
+.blast-dialog-title {
+    padding: 14px 16px;
+    border-bottom: 1px solid #ddd;
+    font-weight: bold;
+    font-size: 13px;
+}
+.blast-dialog-content { padding: 16px; }
+
+/* Results modal */
+.blast-results-modal-backdrop {
+    position: fixed;
+    inset: 0;
+    background: rgba(0,0,0,0.45);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 10001;
+}
+.blast-results-dialog-text {
+    background: #fff;
+    border-radius: 6px;
+    box-shadow: 0 4px 24px rgba(0,0,0,0.3);
+    width: 92vw;
+    max-width: 1100px;
+    height: 82vh;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+}
+
+/* Title bar */
+.blast-text-title-bar {
+    padding: 10px 14px;
+    border-bottom: 1px solid #ddd;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    flex-shrink: 0;
+}
+.blast-close-btn {
+    width: 26px; height: 26px; padding: 0; margin: 0; border: none; border-radius: 5px;
+    background: transparent; color: #555; font-size: 18px; line-height: 1; cursor: pointer;
+    display: inline-flex; align-items: center; justify-content: center; flex-shrink: 0;
+}
+.blast-close-btn:hover { background: #e24b4b; color: #fff; }
+
+/* Tab bar */
+.blast-tab-bar {
+    display: flex;
+    border-bottom: 2px solid #ccc;
+    flex-shrink: 0;
+    background: #f5f5f5;
+}
+.blast-tab-btn {
+    flex: 1;
+    padding: 8px 6px;
+    border: none;
+    border-bottom: 3px solid transparent;
+    background: none;
+    cursor: pointer;
+    font-size: 11px;
+    font-family: 'Courier New', monospace;
+    color: #555;
+    transition: background 0.15s;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    margin-bottom: -2px;
+}
+.blast-tab-btn:hover { background: #e8e8e8; }
+.blast-tab-btn.active {
+    background: #fff;
+    border-bottom: 3px solid #2a7d2a;
+    color: #000;
+    font-weight: bold;
+}
+
+/* Content panes */
+.blast-pane {
+    display: none;
+    flex: 1;
+    overflow-y: auto;
+    min-height: 0;
+}
+.blast-pane.active { display: flex; flex-direction: column; }
+
+.blast-text-content {
+    flex: 1;
+    overflow-y: auto;
+    padding: 12px 16px;
+    font-family: 'Courier New', monospace;
+    font-size: 12px;
+    line-height: 1.55;
+    background: #fafafa;
+    color: #222;
+    white-space: pre;
+    word-wrap: normal;
+    margin: 0;
+    tab-size: 4;
+}
+
+/* Override pane scroll — inner sections handle their own scroll */
+.blast-pane { overflow: hidden; }
+
+/* Summary section — fixed at top of each pane */
+.blast-summary-section { flex-shrink:0; overflow-y:auto; max-height:38%; border-bottom:2px solid #ddd; padding:6px 14px 0; }
+.blast-summary-table { width:100%; border-collapse:collapse; font-family:'Courier New',monospace; font-size:11px; white-space:nowrap; }
+.blast-summary-table thead th { background:#ececec; padding:4px 8px; text-align:left; border-bottom:2px solid #bbb; position:sticky; top:0; z-index:1; }
+.blast-summary-table td { padding:3px 8px; border-bottom:1px solid #f0f0f0; cursor:pointer; vertical-align:middle; }
+.blast-summary-table td.desc { white-space:normal; max-width:280px; word-break:break-word; }
+.blast-summary-table .strand-plus  { color:#1a6b1a; font-weight:bold; }
+.blast-summary-table .strand-minus { color:#8b0000; font-weight:bold; }
+.blast-summary-row:hover td { background:#eef8ee; }
+.blast-row-flash td { background:#FFF3B0 !important; transition: background 1.5s ease; }
+
+/* Graphical hit-distribution diagram (NCBI-BLAST-style position bars) —
+   its own independently-scrollable section, separate from the summary
+   table below, so a database with many hits doesn't force the diagram and
+   the table to compete for the same bounded scroll area. Bars render as
+   near-hairline strokes (2px) but each row keeps a taller invisible hit
+   area (7px) so hovering/clicking a bar stays easy despite the thin
+   visual weight. */
+.blast-hitdist-section { flex-shrink:0; overflow-y:auto; max-height:130px; border-bottom:2px solid #ddd; padding:6px 14px; }
+.blast-hitdist-track { position:relative; }
+.blast-hitdist-ruler { position:relative; height:16px; font-family:'Courier New',monospace; font-size:10px; color:#555; border-bottom:1px solid #999; margin-bottom:2px; }
+.blast-hitdist-ruler .tick-left { position:absolute; left:0; top:0; }
+.blast-hitdist-ruler .tick-right { position:absolute; right:0; top:0; }
+.blast-hitdist-ruler .tick-mid { position:absolute; top:0; transform:translateX(-50%); }
+.blast-hitdist-ruler .tick-mid::after { content:''; position:absolute; left:50%; bottom:-5px; width:1px; height:4px; background:#999; }
+.blast-hitdist-row { position:relative; height:11px; }
+.blast-hitdist-bar {
+    position:absolute; top:2.5px; height:6px; border-radius:1px; cursor:pointer;
+    opacity:0.9; outline:none;
+}
+.blast-hitdist-bar:hover, .blast-hitdist-bar:focus { opacity:1; height:7px; top:2px; box-shadow:0 0 0 1px #333; }
+/* Single shared tooltip, appended to <body>, position:fixed so it's never
+   clipped by the diagram's own scrollable ancestor (.blast-hitdist-section) —
+   see the JS-side note where it's created for the incident this replaced. */
+.blast-hitdist-tooltip {
+    position:fixed; z-index:10010; background:#222; color:#fff; display:none;
+    font-size:10px; font-family:-apple-system,'Segoe UI',sans-serif; padding:4px 7px;
+    border-radius:3px; white-space:nowrap; pointer-events:none;
+}
+
+/* Scrollable hits section */
+.blast-hits-section { flex:1; overflow-y:auto; min-height:0; }
+.blast-hit { padding:10px 16px 4px; border-top:2px solid #e0e0e0; }
+.blast-hit:first-child { border-top:none; }
+.blast-hit-header { font-family:'Courier New',monospace; font-size:12px; font-weight:bold; color:#1a4a1a; margin-bottom:4px; word-break:break-word; }
+.blast-hit-actions { display:flex; gap:6px; margin-bottom:6px; flex-wrap:wrap; }
+.blast-copy-btn { padding:2px 10px; font-size:11px; cursor:pointer; border:1px solid #bbb; border-radius:3px; background:#f5f5f5; color:#333; white-space:nowrap; }
+.blast-copy-btn:hover  { background:#e8f5e8; border-color:#4a9a4a; }
+.blast-copy-btn.copied { background:#d0f0d0; border-color:#2a7d2a; color:#1a5a1a; }
+.blast-hit-stats { font-family:'Courier New',monospace; font-size:11px; color:#444; margin-bottom:6px; line-height:1.7; }
+.blast-hit-stats .stat-strand-plus  { color:#1a6b1a; font-weight:bold; }
+.blast-hit-stats .stat-strand-minus { color:#8b0000; font-weight:bold; }
+.blast-alignment-block { background:#f6f8f6; border:1px solid #ddd; border-radius:3px; padding:8px 12px; margin:0 0 8px; font-family:'Courier New',monospace; font-size:12px; line-height:1.5; white-space:pre; overflow-x:auto; }
+
+/* Highlight-diffs mode: dim columns that match the consensus (highlight differences) */
+/* Dimmed = 60 % white over the cell (what opacity 0.4 on white gives), drawn as a veil over the cell's own
+   box only: with opacity the 0.5 px overlap below each cell (see .seq-data span) was painted twice and showed
+   as a dark line between rows. Same result as Canvas, which dims with globalAlpha 0.4 over white. */
+body.highlight-diffs .seq-data > span:not(.diff-highlight) { position: relative; }
+body.highlight-diffs .seq-data > span:not(.diff-highlight)::after {
+    content: ''; position: absolute; left: 0; right: 0; top: 0; bottom: 0.5px;
+    background: rgba(255, 255, 255, 0.6); pointer-events: none;
+}
+body.highlight-diffs .seq-data > span.diff-highlight { font-weight: bold; }
+
+
+/* ── Codon Analysis ──
+   Nucleotide rows keep their normal look; the translation track under each row carries the
+   codon structure (boxes over each codon's three bases). The old per-base blue/green/orange
+   underlines and the red bars on every gap cell made rows unreadable. */
+body.codon-mode span.codon-p0, body.codon-mode span.codon-p1, body.codon-mode span.codon-p2 { }
+
+/* Bases of an in-frame stop codon */
+body.codon-mode span.codon-stop {
+    background: #ffd9d6 !important;
+    color: #b3261e !important;
+    font-weight: bold;
+}
+
+/* Gap cells of a frameshift (internal gap run not a multiple of 3) keep the normal gap look:
+   the track below marks the run once with a red "!" (hover it for the run length). Colouring
+   every such gap turned long runs red, and in non-coding alignments they are everywhere. */
+body.codon-mode span.codon-fs-internal { }
+
+/* Synonymous / non-synonymous differences from the first sequence, one thin line each */
+body.codon-mode span.codon-syn {
+    text-decoration: underline;
+    text-decoration-color: #2e9d57;
+    text-underline-offset: 2px;
+}
+/* Synonymous through two or three changed bases: dashed (one of the changes alone may change the amino acid) */

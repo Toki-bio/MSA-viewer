@@ -1,0 +1,129 @@
+[index.html lines 1386-1514 of ViewAlign fd8b8e4]
+                        </div>
+                    </div>
+                    <div id="tsdAutoRegions" class="rf-row">
+                        <span class="rf-label"></span>
+                        <label title="Bases searched on each side of the detected SINE body">Search <input type="number" id="tsdFlankSize" value="30" min="5" max="200" class="rf-num"> bp on each side</label>
+                    </div>
+                    <div id="tsdManualRegions" style="display:none;">
+                        <div class="rf-row">
+                            <span class="rf-label"></span>
+                            <span title="Host sequence before the SINE, where the 5′ TSD copy is searched">5′ flank columns</span>
+                            <input type="number" id="tsdUpStart" value="1" min="1" class="rf-num" title="First column (1-based)"> –
+                            <input type="number" id="tsdUpEnd" value="30" min="1" class="rf-num" title="Last column (1-based)">
+                            <span title="Host sequence after the SINE, where the 3′ TSD copy is searched" style="margin-left:10px;">3′ flank columns</span>
+                            <input type="number" id="tsdDownStart" value="80" min="1" class="rf-num" title="First column (1-based)"> –
+                            <input type="number" id="tsdDownEnd" value="110" min="1" class="rf-num" title="Last column (1-based)">
+                        </div>
+                        <div class="rf-row">
+                            <span class="rf-label"></span>
+                            <button type="button" id="tsdFillFromSelectionBtn" class="rf-btn" title="Select the SINE body columns first (Ctrl+Alt+click), then fill both flank ranges from them">Use selected columns as the SINE body</button>
+                        </div>
+                    </div>
+                    <div class="rf-row">
+                        <span class="rf-label">TSD</span>
+                        <label title="Length range of the duplication">length <input type="number" id="tsdMinLen" aria-label="Minimum duplication length" value="4" min="2" max="30" class="rf-num"> – <input type="number" id="tsdMaxLen" aria-label="Maximum duplication length" value="20" min="2" max="50" class="rf-num"> bp</label>
+                        <label title="Maximum fraction of mismatched bases between the two copies">max mismatch <input type="number" id="tsdMaxDiv" value="20" min="0" max="50" class="rf-num"> %</label>
+                    </div>
+                </div>
+
+                <div id="repeatActionRow" class="rf-row rf-actions">
+                    <button id="repeatRunBtn" class="rf-btn rf-btn-primary" title="Search with the current settings">Find</button>
+                    <button id="repeatClearHighlightsBtn" class="rf-btn" title="Remove all repeat highlights from the alignment">Clear highlights</button>
+                </div>
+
+                <div id="tsdResultTools" class="rf-row rf-tools" hidden>
+                    <span class="rf-label">Mark</span>
+                    <select id="tsdMarkStyle" title="How found TSDs are shown in the alignment">
+                        <option value="color" selected>Colour</option>
+                        <option value="bold">Bold</option>
+                        <option value="lowercase">Lower case</option>
+                    </select>
+                    <input type="color" id="tsdMarkColor" value="#ffd54f" title="Highlight colour" class="rf-color">
+                    <button type="button" id="tsdMarkBtn" class="rf-btn" title="Show every found TSD in the alignment">Mark in alignment</button>
+                    <button type="button" id="tsdUndoMarkBtn" class="rf-btn" title="Step back to how the TSDs were marked before the last marking (pressed again, the marking before that)">Undo last marking</button>
+                    <button type="button" id="tsdCopyBtn" class="rf-btn" title="Copy the TSD table (tab-separated) for a spreadsheet">Copy table</button>
+                </div>
+
+                <div id="repeatResults" class="rf-results">Choose what to find, then press Find.</div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Alignment Tree Modal -->
+    <div id="treeBuilderModal" style="display:none;position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,0.6);z-index:10002;overflow:auto;">
+        <div id="treeBuilderDialog" style="background:white;margin:20px auto;padding:16px;max-width:min(1200px, 94vw);max-height:calc(100vh - 40px);overflow:auto;box-sizing:border-box;border-radius:8px;box-shadow:0 4px 20px rgba(0,0,0,0.3);">
+            <div class="win-titlebar" style="--win-pad:16px;">
+                <h3>Alignment Tree</h3>
+                <button type="button" id="treeBuilderCloseBtn" class="win-close" title="Close">×</button>
+            </div>
+            <div id="treeBuilderSummary" style="font-size:12px;color:#555;margin-bottom:8px;"></div>
+            <div style="margin-bottom:6px;font-size:11px;display:flex;gap:12px;align-items:center;">
+                <span style="color:#777;">Method:</span>
+                <label title="Unweighted Pair Group Method with Arithmetic Mean"><input type="radio" name="treeMethod" value="upgma" checked> UPGMA</label>
+                <label title="Neighbor-Joining - Saitou &amp; Nei 1987"><input type="radio" name="treeMethod" value="nj"> NJ</label>
+            <span style="color:#777;margin-left:16px;">Model:</span>
+            <select id="treeDistanceModel" style="font-size:11px;padding:0 2px;height:18px;" title="Distance correction model">
+                <option value="raw">p-distance (raw)</option>
+                <option value="jc69">Jukes-Cantor (JC69)</option>
+                <option value="k80">Kimura 2-param (K80)</option>
+            </select>
+            </div>
+            <textarea id="treeNewickOutput" readonly style="width:100%;height:130px;box-sizing:border-box;font-family:'Courier New',monospace;font-size:11px;white-space:pre;resize:vertical;" title="Newick-format tree output; select and copy, or use the buttons below"></textarea>
+            <div style="display:flex;gap:6px;align-items:center;justify-content:flex-end;margin:8px 0;">
+                <button id="treeCopyNewickBtn" style="padding:4px 12px;font-size:12px;" title="Copy the Newick tree text to the clipboard">Copy Newick</button>
+                <button id="treeDownloadNewickBtn" style="padding:4px 12px;font-size:12px;" title="Save the tree as a .nwk file">Download .nwk</button>
+            </div>
+            <pre id="treeTextOutput" style="max-height:42vh;overflow:auto;font-family:'Courier New',monospace;font-size:11px;white-space:pre;border:1px solid #ddd;padding:8px;background:#fafafa;min-height:70px;margin:0;"></pre>
+        </div>
+    </div>
+
+    <!-- Statistics window: floating (drag, resize, minimize) or docked on the right -->
+    <div id="statsModal" class="stats-win" data-no-slider-pop style="display:none;">
+        <div id="statsHeader" class="win-titlebar stats-titlebar">
+            <h3>Alignment Statistics</h3>
+            <div class="ge-window-btns">
+                <button type="button" id="statsMaxBtn" class="ge-win-btn" title="Maximize (or double-click the title bar)">&#9633;</button>
+                <button type="button" id="statsDockBtn" class="ge-win-btn" title="Dock to the right side of the window">&#9707;</button>
+                <button type="button" id="statsCloseBtn" class="win-close" title="Close">×</button>
+            </div>
+        </div>
+        <div id="statsContent" class="stats-content">
+            <div id="statsStale" class="stats-stale" hidden>The alignment changed since these statistics were computed. <button type="button" id="statsRecompute">Recompute</button></div>
+            <div id="statsSummaryTab"></div>
+            <div class="stats-foot stats-credit"><b>Based on Easel / HMMER by Sean R. Eddy.</b> These statistics reimplement the definitions of <code>esl-alistat</code> and <code>esl-alipid</code> from the Easel library of the HMMER project (Eddy SR 2011, <i>PLoS Comput Biol</i> 7:e1002195; <a href="http://hmmer.org" target="_blank" rel="noopener">hmmer.org</a>, <a href="https://github.com/EddyRivasLab/easel" target="_blank" rel="noopener">github.com/EddyRivasLab/easel</a>). No Easel code is included; hover a field name for how each value is calculated.</div>
+        </div>
+        <div class="stats-dock-resizer" title="Drag to change the panel width"></div>
+        <div class="stats-rz" data-dir="n"></div><div class="stats-rz" data-dir="s"></div>
+        <div class="stats-rz" data-dir="e"></div><div class="stats-rz" data-dir="w"></div>
+        <div class="stats-rz" data-dir="ne"></div><div class="stats-rz" data-dir="nw"></div>
+        <div class="stats-rz" data-dir="se"></div><div class="stats-rz" data-dir="sw"></div>
+        <div id="statsTipCard" class="stats-tipcard" hidden></div>
+    </div>
+
+    <!-- Recent Files Dropdown -->
+    <div id="recentDropdown" style="display:none;position:fixed;top:140px;right:20px;width:360px;max-height:400px;overflow-y:auto;background:white;border:1px solid #ccc;border-radius:6px;box-shadow:0 4px 16px rgba(0,0,0,0.2);z-index:10003;font-family:-apple-system,BlinkMacSystemFont,sans-serif;"></div>
+
+    <script src="cluster.js?v=174"></script>
+    <script src="kmer-tree.js?v=4"></script>
+    <script src="peel.js?v=6"></script>
+    <script src="bam-parser.js?v=174"></script>
+    <script src="sample-call.js?v=6"></script>
+    <script src="variant-effect.js?v=2"></script>
+    <script src="ab1-parser.js?v=2"></script>
+    <script src="chromatogram-viewer.js?v=7"></script>
+    <script src="realign-region.js?v=5"></script>
+    <script src="genome-fasta.js?v=2"></script>
+    <script src="genome-window.js?v=4"></script>
+    <script src="script.js?v=406"></script>
+    <script src="genome-view.js?v=6"></script>
+    <script src="a11y.js?v=3"></script>
+    <script src="tree-draw.js?v=178"></script>
+    <script src="finder.js?v=3"></script>
+    <script src="block-mask.js?v=2"></script>
+    <script src="block-bicluster.js?v=18"></script>
+    <script>
+    // All functionality moved to script.js
+    </script>
+</body>
+</html>

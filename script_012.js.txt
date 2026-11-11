@@ -1,0 +1,424 @@
+[script.js lines 4960-5382 of ViewAlign fd8b8e4]
+// Parse SAM into FASTA-like alignment (pileup reference + gapped reads)
+function parseSamToAlignment(samText) {
+    // CRLF (a SAM saved on Windows): split on '\n' alone, the '\r' stayed on the last field
+    const lines = samText.split(/\r?\n/).filter(l => l.trim() && !l.startsWith('@'));
+    if (lines.length === 0) return null;
+
+    const records = [];
+    for (const line of lines) {
+        const f = line.split('\t');
+        if (f.length < 10) continue;
+        const flag = parseInt(f[1]) || 0;
+        if (flag & 0x904) continue; // unmapped or secondary/supplementary
+        if (!f[5] || f[5] === '*' || !f[9] || f[9] === '*') continue;
+        records.push({ qname: f[0], rname: f[2], pos: parseInt(f[3]) - 1, cigar: f[5], seq: f[9], flag,
+            mpos: f[7] !== '=' && f[7] !== '*' ? parseInt(f[7]) - 1 : -1, tlen: parseInt(f[8]) || 0 });
+    }
+    if (records.length === 0) return null;
+
+    // Reads on different references share no coordinates, so pile up only the
+    // reference with the most reads and say what was left out
+    const perRef = new Map();
+    for (const r of records) perRef.set(r.rname, (perRef.get(r.rname) || 0) + 1);
+    if (perRef.size > 1) {
+        const ranked = [...perRef.entries()].sort((a, b) => b[1] - a[1]);
+        const keep = ranked[0][0];
+        const skipped = ranked.slice(1).map(([n, c]) => `${n} (${c})`).join(', ');
+        for (let i = records.length - 1; i >= 0; i--) if (records[i].rname !== keep) records.splice(i, 1);
+        _parseNotice = `SAM has reads on ${perRef.size} references; showing ${keep} (${ranked[0][1]} reads). Not shown: ${skipped}.`;
+    }
+
+    // Determine coordinate range
+    let minPos = Infinity, maxPos = 0;
+    for (const r of records) {
+        const span = _cigarRefSpan(r.cigar);
+        minPos = Math.min(minPos, r.pos);
+        maxPos = Math.max(maxPos, r.pos + span);
+    }
+    const refLen = maxPos - minPos;
+
+    // Build pileup consensus reference
+    const pileup = new Array(refLen).fill(null).map(() => ({}));
+    for (const r of records) {
+        const ops = r.cigar.match(/\d+[MIDNSHP=X]/g) || [];
+        let rp = 0, refp = r.pos - minPos;
+        for (const op of ops) {
+            const len = parseInt(op);
+            const t = op[op.length - 1];
+            if (t === 'M' || t === '=' || t === 'X') {
+                for (let i = 0; i < len; i++) {
+                    const b = (r.seq[rp + i] || 'N').toUpperCase();
+                    const idx = refp + i;
+                    if (idx >= 0 && idx < refLen) { const c = pileup[idx]; c[b] = (c[b] || 0) + 1; }
+                }
+                rp += len; refp += len;
+            } else if (t === 'I' || t === 'S') { rp += len; }
+            else if (t === 'D' || t === 'N') { refp += len; }
+        }
+    }
+
+    let refSeq = '';
+    for (const counts of pileup) {
+        let best = 'N', bestN = 0;
+        for (const [b, n] of Object.entries(counts)) { if (n > bestN) { bestN = n; best = b; } }
+        refSeq += best;
+    }
+
+    // Lay reads out as rows of one alignment. Inserted bases (CIGAR I) get
+    // their own columns, sized to the longest insertion at that point across
+    // all reads, with gaps in every other row, so bases after an insertion stay
+    // in their reference column. Soft- and hard-clipped bases are not aligned
+    // to the reference and are left out.
+    const maxIns = new Array(refLen + 1).fill(0);
+    for (const r of records) {
+        let refp = r.pos - minPos;
+        for (const op of r.cigar.match(/\d+[MIDNSHP=X]/g) || []) {
+            const len = parseInt(op), t = op[op.length - 1];
+            if (t === 'M' || t === '=' || t === 'X' || t === 'D' || t === 'N') refp += len;
+            else if (t === 'I' && refp >= 0 && refp <= refLen) maxIns[refp] = Math.max(maxIns[refp], len);
+        }
+    }
+    // colOf[p]: output column of reference position p; its insertion slot
+    // occupies the maxIns[p] columns just before it
+    const colOf = new Array(refLen + 1);
+    let width = 0;
+    for (let p = 0; p <= refLen; p++) {
+        width += maxIns[p];
+        colOf[p] = width;
+        if (p < refLen) width++;
+    }
+
+    let refRow = '';
+    for (let p = 0; p <= refLen; p++) refRow += '-'.repeat(maxIns[p]) + (p < refLen ? refSeq[p] : '');
+    const seqs = [{
+        header: 'REF',
+        fullHeader: 'REF_' + (minPos + 1) + '-' + maxPos,
+        seq: refRow,
+        gaplessPositions: calculateGaplessPositions(refRow)
+    }];
+
+    for (const r of records) {
+        const row = new Array(width).fill('-');
+        let readp = 0, refp = r.pos - minPos;
+        for (const op of r.cigar.match(/\d+[MIDNSHP=X]/g) || []) {
+            const len = parseInt(op), t = op[op.length - 1];
+            if (t === 'M' || t === '=' || t === 'X') {
+                for (let i = 0; i < len; i++) {
+                    const p = refp + i;
+                    if (p >= 0 && p < refLen) row[colOf[p]] = r.seq[readp + i] || 'N';
+                }
+                readp += len; refp += len;
+            } else if (t === 'I') {
+                if (refp >= 0 && refp <= refLen) {
+                    const start = colOf[refp] - maxIns[refp];
+                    for (let i = 0; i < len; i++) row[start + i] = r.seq[readp + i] || 'N';
+                }
+                readp += len;
+            } else if (t === 'D' || t === 'N') {
+                refp += len;
+            } else if (t === 'S') {
+                readp += len;
+            }
+        }
+        const fullSeq = row.join('');
+        seqs.push({
+            header: r.qname,
+            fullHeader: r.qname + ' pos=' + (r.pos + 1) + ' cigar=' + r.cigar,
+            seq: fullSeq,
+            gaplessPositions: calculateGaplessPositions(fullSeq),
+            _samPair: (r.flag & 0x1) ? { flag: r.flag, mpos: r.mpos, tlen: r.tlen } : null
+        });
+    }
+
+    return seqs;
+}
+
+// =====================================================================
+// CODON ANALYSIS (MACSE-inspired)
+// Genetic code - Standard (NCBI table 1)
+// =====================================================================
+const _GENETIC_CODE = {
+    'TTT':'F','TTC':'F','TTA':'L','TTG':'L','TCT':'S','TCC':'S','TCA':'S','TCG':'S',
+    'TAT':'Y','TAC':'Y','TAA':'*','TAG':'*','TGT':'C','TGC':'C','TGA':'*','TGG':'W',
+    'CTT':'L','CTC':'L','CTA':'L','CTG':'L','CCT':'P','CCC':'P','CCA':'P','CCG':'P',
+    'CAT':'H','CAC':'H','CAA':'Q','CAG':'Q','CGT':'R','CGC':'R','CGA':'R','CGG':'R',
+    'ATT':'I','ATC':'I','ATA':'I','ATG':'M','ACT':'T','ACC':'T','ACA':'T','ACG':'T',
+    'AAT':'N','AAC':'N','AAA':'K','AAG':'K','AGT':'S','AGC':'S','AGA':'R','AGG':'R',
+    'GTT':'V','GTC':'V','GTA':'V','GTG':'V','GCT':'A','GCC':'A','GCA':'A','GCG':'A',
+    'GAT':'D','GAC':'D','GAA':'E','GAG':'E','GGT':'G','GGC':'G','GGA':'G','GGG':'G'
+};
+
+// Genetic code variants - only differences from Standard
+const _CODE_VARIANTS = {
+    '2': { // Vertebrate Mitochondrial
+        'AGA':'*','AGG':'*','ATA':'M','TGA':'W'
+    },
+    '3': { // Yeast Mitochondrial
+        'ATA':'M','CTT':'T','CTC':'T','CTA':'T','CTG':'T','TGA':'W',
+        'CGA':null,'CGC':null // absent codons
+    },
+    '4': { // Mold / Protozoan / Coelenterate Mitochondrial + Mycoplasma/Spiroplasma
+        'TGA':'W'
+    },
+    '5': { // Invertebrate Mitochondrial
+        'AGA':'S','AGG':'S','ATA':'M','TGA':'W'
+    },
+    '6': { // Ciliate / Dasycladacean / Hexamita Nuclear
+        'TAA':'Q','TAG':'Q'
+    },
+    '9': { // Echinoderm / Flatworm Mitochondrial
+        'AAA':'N','AGA':'S','AGG':'S','TGA':'W'
+    },
+    '10': { // Euplotid Nuclear
+        'TGA':'C'
+    },
+    '11': { // Bacterial / Archaeal / Plant Plastid (same as Standard)
+    },
+    '12': { // Alternative Yeast Nuclear
+        'CTG':'S'
+    },
+    '13': { // Ascidian Mitochondrial
+        'AGA':'G','AGG':'G','ATA':'M','TGA':'W'
+    },
+    '14': { // Alternative Flatworm Mitochondrial
+        'AAA':'N','AGA':'S','AGG':'S','TAA':'Y','TGA':'W'
+    },
+    '16': { // Chlorophycean Mitochondrial
+        'TAG':'L'
+    },
+    '21': { // Trematode Mitochondrial
+        'TGA':'W','ATA':'M','AGA':'S','AGG':'S','AAA':'N'
+    },
+    '22': { // Scenedesmus obliquus Mitochondrial
+        'TCA':'*','TAG':'L'
+    }
+};
+
+// Build active code from selected variant
+function _getActiveCode() {
+    const sel = document.getElementById('codonCode');
+    const tableId = sel ? sel.value : '1';
+    const code = Object.assign({}, _GENETIC_CODE);
+    const overrides = _CODE_VARIANTS[tableId] || {};
+    for (const [codon, aa] of Object.entries(overrides)) {
+        if (aa === null) delete code[codon];
+        else code[codon] = aa;
+    }
+    return code;
+}
+
+// Build synonymous codon map for the active code
+function _getSynCodons(code) {
+    const syn = {};
+    for (const codon of Object.keys(code)) {
+        syn[codon] = new Set();
+        const aa = code[codon];
+        for (const c2 of Object.keys(code)) {
+            if (code[c2] === aa && c2 !== codon) syn[codon].add(c2);
+        }
+    }
+    return syn;
+}
+
+// A codon with IUPAC ambiguity letters translates to the one amino acid all its
+// readings share (CCN = P, GCY = A, TAR = stop), else X. Cached per code table.
+const _IUPAC_NT = { A: 'A', C: 'C', G: 'G', T: 'T', U: 'T', R: 'AG', Y: 'CT', M: 'AC', K: 'GT', S: 'CG', W: 'AT',
+    H: 'ACT', B: 'CGT', V: 'ACG', D: 'AGT', N: 'ACGT' };
+const _degenerateCache = new WeakMap();
+function _translateDegenerate(codon, code) {
+    let cache = _degenerateCache.get(code);
+    if (!cache) { cache = new Map(); _degenerateCache.set(code, cache); }
+    if (cache.has(codon)) return cache.get(codon);
+    let aa = 'X';
+    const sets = [...codon].map(ch => _IUPAC_NT[ch]);
+    if (sets.length === 3 && sets.every(Boolean)) {
+        let common = null;
+        outer: for (const a of sets[0]) for (const b of sets[1]) for (const c of sets[2]) {
+            const t = code[a + b + c];
+            if (t == null) { common = null; break outer; }     // a codon absent from this table
+            if (common === null) common = t;
+            else if (common !== t) { common = null; break outer; }
+        }
+        if (common) aa = common;
+    }
+    cache.set(codon, aa);
+    return aa;
+}
+
+// Compute per-position codon analysis for a single frame (frameOffset = 0,1,2 alignment columns)
+// Gaps are skipped during codon assembly (no frameshift on gaps); incomplete terminal codons flagged.
+// When frameOffset is omitted, defaults to 0 (backward-compatible single-frame mode).
+const _IUPAC_TWO = { R: ['A', 'G'], Y: ['C', 'T'], K: ['G', 'T'], M: ['A', 'C'], S: ['C', 'G'], W: ['A', 'T'] };
+function _computeCodonAnalysis(seqs, len, frameOffset) {
+    frameOffset = frameOffset || 0;
+    if (seqs.length < 1) return null;
+    // IUPAC ambiguity letters are nucleotide too; codons containing them translate to X
+    const ntRe = /^[ACGTUNRYKMSWBDHVacgtunrykmswbdhv.\s-]+$/;
+    for (const s of seqs) {
+        const cleaned = s.seq.replace(/[-.\s]/g, '');
+        if (cleaned.length > 0 && !ntRe.test(cleaned)) return null;
+    }
+    // Do not truncate alignment length; gapped CDS alignments are often not multiples of 3.
+    if (len < 3) return null;
+
+    const activeCode = _getActiveCode();
+    const nSeqs = seqs.length;
+    const phase = new Array(nSeqs).fill(null).map(() => new Array(len).fill(-1));
+    const stops = new Array(nSeqs).fill(null).map(() => []);
+    const frameShifts = new Array(nSeqs).fill(null).map(() => []);
+    const synNonSyn = new Array(nSeqs).fill(null).map(() => new Array(len).fill(null));
+    const aaSeq = new Array(nSeqs).fill(null).map(() => []);
+
+    const refIdx = 0;
+    // Populated once the reference sequence (i === refIdx, processed first) is done, so
+    // later sequences can look up "the ref codon starting at this alignment column" instead
+    // of "the ref codon at the same ordinal index" (see fix note below).
+    const refCodonByCol = new Map();
+
+    for (let i = 0; i < nSeqs; i++) {
+        const seq = seqs[i].seq;
+        let codonPhase = 0;
+        let codonBuf = '';
+        let codonCols = [];
+        let gapRunStart = -1;
+        let gapRunLen = 0;
+        let seenResidue = false; // leading gaps are missing sequence, not an indel
+
+        // Gap runs no longer decide frameshifts on their own (see the pass after this loop).
+        const flushGapRun = () => {
+            gapRunStart = -1;
+            gapRunLen = 0;
+        };
+
+        for (let pos = 0; pos < len; pos++) {
+            const base = seq[pos];
+            // Shorter sequences in the MSA: missing columns behave like gaps
+            const isMissing = base === undefined || base === '';
+            const isGap = isMissing || base === '-' || base === '.';
+
+            // Gaps: count run length; multiples of 3 preserve frame, 1 or 2 bp indels mark frameshift.
+            // Tracked before the frameOffset skip below so a run that straddles the frameOffset
+            // boundary is measured at its true full length, not truncated to the part on one side.
+            if (isGap) {
+                if (gapRunStart < 0) gapRunStart = pos;
+                gapRunLen++;
+                continue;
+            }
+            flushGapRun(false);
+
+            // Skip non-gap columns before frameOffset (not part of the analyzed CDS)
+            // Bases before the frame start are not counted, so they must not stop the first
+            // counted base from being placed on the codon grid below
+            if (pos < frameOffset) continue;
+
+            // A sequence that starts after the frame start begins wherever its first column
+            // falls in the alignment's codon grid, not always at codon position 1 (a row
+            // starting one column late used to be read one base out of frame). The bases of
+            // a codon it only partly covers get a phase but no amino acid.
+            if (!seenResidue) {
+                seenResidue = true;
+                const lead = (pos - frameOffset) % 3;
+                if (lead > 0) { codonPhase = lead; codonBuf = '?'.repeat(lead); }
+            }
+
+            // Non-gap base - add to codon
+            phase[i][pos] = codonPhase;
+            codonBuf += base.toUpperCase().replace('U', 'T');   // RNA: the code table is keyed by T
+            codonCols.push(pos);
+            codonPhase++;
+
+            if (codonPhase >= 3 && codonBuf.includes('?')) {
+                codonPhase = 0;
+                codonBuf = '';
+                codonCols = [];
+                continue;
+            }
+            if (codonPhase >= 3) {
+                const codon = codonBuf.replace(/[Nn]/g, 'N');
+                const aa = activeCode[codon] || _translateDegenerate(codon, activeCode);
+                // n: the codon's number in the reference (row 1) - the row's own count would misnumber a row that
+                // starts inside the gene (a sample from reads); a codon the reference does not have gets none
+                const n = i === refIdx ? aaSeq[i].length + 1 : (refCodonByCol.get(codonCols[0]) || {}).n;
+                aaSeq[i].push({ cols: codonCols.slice(), codon, aa, n });
+
+                if (aa === '*') {
+                    for (const c of codonCols) stops[i].push(c);
+                }
+
+                // Syn/non-syn vs the reference codon that starts at the SAME alignment column
+                // (not the same ordinal index in the codon list, which drifts out of sync as
+                // soon as one sequence has an in-frame indel the other doesn't).
+                if (i !== refIdx) {
+                    const refEntry = refCodonByCol.get(codonCols[0]);
+                    if (refEntry) {
+                        const refCodon = refEntry.codon;
+                        const refAA = refEntry.aa;
+                        // Only the bases that differ from the reference codon are marked (all three
+                        // used to be, including unchanged ones); each is classed by what that single
+                        // change would do to the reference amino acid
+                        // Codons with an ambiguous base (N, R, Y, ...) are left unmarked: the
+                        // change cannot be classed (AAN vs AAA was marked non-synonymous)
+                        if (codon !== refCodon && /^[ACGT]{3}$/.test(codon) && /^[ACGT]{3}$/.test(refCodon)) {
+                            const nDiff = [0, 1, 2].filter(k => codon[k] !== refCodon[k]).length;
+                            for (let k = 0; k < 3; k++) {
+                                if (codon[k] === refCodon[k]) continue;
+                                // the same amino acid through two or three changed bases: synonymous, marked apart
+                                // (dashed), since one of those changes alone may change the amino acid
+                                if (aa === refAA) { synNonSyn[i][codonCols[k]] = nDiff > 1 ? 'synmulti' : 'syn'; continue; }
+                                const mutCodon = refCodon.substring(0, k) + codon[k] + refCodon.substring(k + 1);
+                                const mutAA = activeCode[mutCodon] || 'X';
+                                synNonSyn[i][codonCols[k]] = (mutAA !== refAA) ? 'nonsyn' : 'syn';
+                            }
+                        } else if (/^[ACGT]{3}$/.test(refCodon) && /^[ACGTRYKMSW]{3}$/.test(codon) && codon.replace(/[ACGT]/g, '').length === 1) {
+                            // One heterozygous base (two alleles, e.g. a sample row called from reads): each allele's
+                            // codon is classed as above and a base gets the stronger mark; an allele that is a stop
+                            // marks the codon as a stop (a heterozygous nonsense change)
+                            const j = codon.search(/[RYKMSW]/);
+                            const alleles = _IUPAC_TWO[codon[j]].map(b => codon.substring(0, j) + b + codon.substring(j + 1));
+                            const rank = { syn: 1, synmulti: 2, nonsyn: 3 };
+                            for (const al of alleles) {
+                                if (al === refCodon) continue;
+                                const alAA = activeCode[al] || 'X';
+                                const nDiff = [0, 1, 2].filter(k => al[k] !== refCodon[k]).length;
+                                if (alAA === '*' && refAA !== '*') for (const c of codonCols) if (!stops[i].includes(c)) stops[i].push(c);
+                                for (let k = 0; k < 3; k++) {
+                                    if (al[k] === refCodon[k]) continue;
+                                    let cls;
+                                    if (alAA === refAA) cls = nDiff > 1 ? 'synmulti' : 'syn';
+                                    else {
+                                        const mutCodon = refCodon.substring(0, k) + al[k] + refCodon.substring(k + 1);
+                                        cls = (activeCode[mutCodon] || 'X') !== refAA ? 'nonsyn' : 'syn';
+                                    }
+                                    const prev = synNonSyn[i][codonCols[k]];
+                                    if (!prev || rank[cls] > rank[prev]) synNonSyn[i][codonCols[k]] = cls;
+                                }
+                            }
+                        }
+                    }
+                }
+
+                codonPhase = 0;
+                codonBuf = '';
+                codonCols = [];
+            }
+        }
+        flushGapRun(true);
+        // A last codon cut short by the end of the sequence is not flagged: that is where the
+        // sequence stops, not a frameshift (it was marked on the alignment's last column).
+
+        if (i === refIdx) {
+            for (const entry of aaSeq[refIdx]) refCodonByCol.set(entry.cols[0], entry);
+        }
+    }
+
+    _markRelativeFrameshifts(phase, frameShifts, len, _codonFsRefMode());
+    return { phase, stops, frameShifts, synNonSyn, aaSeq, refIdx, frameOffset };
+}
+
+// What frameshifts are judged against (Display > Codon "Frameshifts vs"): 'majority' = the codon
+// position most rows have at each column (default); 'row1' = the first row's codon position
+function _codonFsRefMode() {
+    return document.getElementById('codonFsRef')?.value === 'row1' ? 'row1' : 'majority';
+}
+

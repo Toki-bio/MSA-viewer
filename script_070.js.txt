@@ -1,0 +1,465 @@
+[script.js lines 30757-31220 of ViewAlign fd8b8e4]
+function _scheduleStaleRepaint() {
+    if (_staleHandle != null || !_staleRows.size) return;
+    _staleHandle = window.requestIdleCallback
+        ? requestIdleCallback(_runStaleRepaint, { timeout: 300 })
+        : setTimeout(_runStaleRepaint, 16);
+}
+
+function _runStaleRepaint(deadline) {
+    _staleHandle = null;
+    if (!_staleRows.size) return;
+    const t0 = performance.now();
+    // Small slices: each one's layout is paid in the next frame, so keep frames short
+    const more = () => (deadline && typeof deadline.timeRemaining === 'function' && !deadline.didTimeout)
+        ? deadline.timeRemaining() > 4 && performance.now() - t0 < 10
+        : performance.now() - t0 < 8;
+    const ctx = _staleRepaintContext();
+    while (_staleOrder.length && more()) {
+        const row = _staleOrder.shift();
+        const from = _staleRows.get(row);
+        if (from === undefined) continue;
+        _repaintRowCols(row, from, Infinity, ctx);
+        _staleRows.delete(row);
+    }
+    // Repainted spans lost their residue-selection classes; restore them every slice
+    if (state.selectedNucs.size) scheduleNucSelectionRefresh();
+    if (_staleRows.size) _scheduleStaleRepaint();
+}
+
+// Scrolling brings stale rows into view: finish those rows before the frame is drawn.
+function _repaintStaleRowsOnScreen() {
+    if (!_staleRows.size) return;
+    const { rows } = _onScreenWindow();
+    if (!rows.size) return;
+    const ctx = _staleRepaintContext();
+    let any = false;
+    rows.forEach(row => {
+        const from = _staleRows.get(row);
+        if (from === undefined) return;
+        _repaintRowCols(row, from, Infinity, ctx);
+        _staleRows.delete(row);
+        any = true;
+    });
+    _staleOrder = _staleOrder.filter(r => _staleRows.has(r));
+    if (any && state.selectedNucs.size) scheduleNucSelectionRefresh();
+}
+
+// Rows with a line on screen, and the columns visible in them (with a margin).
+function _onScreenWindow() {
+    const view = visibleAlignmentRect();
+    const rows = new Set();
+    let colFrom = Infinity, colTo = -1;
+    if (!view || !alignmentContainer) return { rows, colFrom: 0, colTo: -1 };
+    const cw = _unifiedCharWidthPx || _measureCharWidth() || 8;
+    const pad = 40;
+    alignmentContainer.querySelectorAll(':scope > .block-block').forEach(block => {
+        const br = block.getBoundingClientRect();
+        if (br.bottom < view.top || br.top > view.bottom) return;
+        block.querySelectorAll(':scope > .seq-line[data-seq-index]').forEach(line => {
+            const i = parseInt(line.dataset.seqIndex, 10);
+            if (!(i >= 0)) return;
+            const r = line.getBoundingClientRect();
+            if (r.bottom < view.top || r.top > view.bottom) return;
+            rows.add(i);
+            const data = line.querySelector('.seq-data');
+            const first = data?.firstElementChild;
+            const firstPos = first ? parseInt(first.dataset.pos, 10) : NaN;
+            if (!Number.isInteger(firstPos)) return;
+            const left = data.getBoundingClientRect().left;
+            colFrom = Math.min(colFrom, firstPos + Math.max(0, Math.floor((view.left - left) / cw) - pad));
+            colTo = Math.max(colTo, firstPos + Math.ceil((view.right - left) / cw) + pad);
+        });
+    });
+    return { rows, colFrom: colFrom === Infinity ? 0 : colFrom, colTo };
+}
+
+function _measureCharWidth() {
+    const sp = alignmentContainer?.querySelector('.seq-data > span[data-pos]');
+    const w = sp ? sp.getBoundingClientRect().width : 0;
+    return w > 0 ? w : null;
+}
+
+function canPatchColumnsInPlace(newWidth, oldWidth) {
+    if (!isSpanRenderMode() || state._needsWindowedDom) return false;
+    if (!state.spanCache) return false;
+    // Every row must be indexed (the consensus row's entry makes a size test pass without it)
+    for (let i = 0; i < state.seqs.length; i++) if (!state.spanCache.get(i)?.size) return false;
+    if (state._diffColumns?.size || state._brkBeforePos?.size || _foldDomInfo() || state.trimBoundaries || state.softTrimBoundaries) return false;
+    if (state._codonData || state._clusterCharMap || state.repeatHighlights?.size || state.blockMask) return false;
+    const grow = newWidth - oldWidth;
+    if (grow !== 0 && grow !== 1) return false;
+    if (grow === 1) {
+        const useBlocks = isDomBlock();   // (span render mode: Block here is the DOM Block)
+        const blockWidth = blockSizeRequested();
+        // Block mode: a full last block would need a new block, which only a render can add
+        if (useBlocks && (!(blockWidth > 0) || oldWidth % blockWidth === 0)) return false;
+    }
+    return true;
+}
+
+// Returns false (and changes nothing) when the view can't be patched; the caller renders.
+function patchColumnsInPlace(fromPos, oldWidth) {
+    const len = state.seqs.reduce((m, s) => Math.max(m, s.seq.length), 0);
+    if (!canPatchColumnsInPlace(len, oldWidth)) return false;
+    const blocks = [...alignmentContainer.querySelectorAll(':scope > .block-block')];
+    if (!blocks.length) return false;
+    const blockInfo = blocks.map(block => {
+        const scale = block.querySelector(':scope > .scale-ruler-line .seq-data');
+        const [blen, bstart] = String(scale?.dataset.scale || '').split(':').map(Number);
+        return { block, scale, start: bstart, end: bstart + blen };
+    });
+    if (blockInfo.some(b => !Number.isInteger(b.start) || !Number.isInteger(b.end))) return false;
+    const from = Math.max(0, Math.min(fromPos, oldWidth));
+
+    const onScreen = _onScreenWindow();    // measured before any DOM change
+
+    // 1. A new last column: one span per row, ruler relabelled
+    if (len === oldWidth + 1) {
+        const last = blockInfo.reduce((a, b) => (b.end > a.end ? b : a));
+        const newPos = oldWidth;
+        last.block.querySelectorAll(':scope > .seq-line[data-seq-index]').forEach(line => {
+            const row = parseInt(line.dataset.seqIndex, 10);
+            if (!(row >= 0)) return;
+            const dataEl = line.querySelector('.seq-data');
+            const span = document.createElement('span');
+            span.dataset.pos = String(newPos);
+            span.textContent = GENEDOC_FILLER;
+            dataEl.insertBefore(span, dataEl.querySelector(':scope > .seq-length'));
+            registerSpanInCache(row, newPos, span);
+        });
+        last.end = len;
+        const blen = last.end - last.start;
+        last.scale.dataset.scale = blen + ':' + last.start;
+        last.scale.textContent = generateScale(blen, 10, last.start);
+        last.block.style.setProperty('--cols', String(blen));
+    }
+
+    // 2. Column statistics from `from` rightwards; everything left of it is unchanged
+    const shadeMode = _checkedRadioValue('shadeMode', 'all');
+    const seqCount = state.seqs.length;
+    const cache = state.conservationDataCache;
+    const cons = (cache && cache.shadeMode === shadeMode && cache.len === oldWidth)
+        ? cache.data.slice(0, from) : null;
+    let conservationData;
+    if (cons) {
+        const unknownN = !isProteinAlignment();
+        for (let pos = from; pos < len; pos++) cons[pos] = _computeConservationForColumn(state.seqs, seqCount, pos, shadeMode, unknownN);
+        conservationData = cons;
+    } else {
+        conservationData = preCalculateConservation(state.seqs, len, shadeMode);
+    }
+    state.conservationDataCache = { len, shadeMode, data: conservationData, fp: _seqsFingerprint() };
+
+    if (el('showConsensus')?.checked) {
+        const opts = _getConsensusOptions();
+        const seqArray = state.seqs.map(s => s.seq);
+        let consensus = (state.consensusCache?.len === oldWidth) ? state.consensusCache.values.slice(0, from) : null;
+        const consOpts = consensus ? state.consensusCache.opts : _consensusOptsKey();
+        if (consensus) {
+            for (let pos = from; pos < len; pos++) consensus[pos] = _computeConsensusCharForColumn(seqArray, pos, opts);
+        } else {
+            consensus = computeConsensusForSequences(seqArray).split('');
+        }
+        state.consensusCache = { len, values: consensus.slice(), fp: _seqsFingerprint(), opts: consOpts };
+        state.consensusSeq = consensus.join('').replace(/-/g, '');
+        // Rebuild the consensus line of every block the edit reaches (one row each; their
+        // hover tooltips close over the consensus array, so patching would leave them stale)
+        const nameLen = effectiveNameLength();
+        const sticky = el('stickyNames').checked;
+        const thr = id => parseInt(el(id).value, 10) / 100;
+        blockInfo.forEach(b => {
+            if (b.end <= from) return;
+            b.block.querySelectorAll(':scope > .consensus-line').forEach(old => {
+                const position = old.classList.contains('consensus-top') ? 'top' : 'bottom';
+                const tmp = document.createElement('div');
+                addConsensusLine(tmp, consensus, b.start, b.end, nameLen, sticky, thr('blackSlider'), thr('darkSlider'), thr('lightSlider'),
+                    el('enableBlack').checked, el('enableDark').checked, el('enableLight').checked, b.end >= len, position, {});
+                old.replaceWith(tmp.firstChild);
+            });
+        });
+    }
+
+    // 3. Residue spans: what is on screen now, everything else in idle time. Every row is
+    //    marked, not only the edited ones: the column shading from `from` on changed too.
+    const ctx = { config: getSequenceRenderConfig(), cons: conservationData };
+    const lo = Math.max(from, onScreen.colFrom);
+    onScreen.rows.forEach(row => _repaintRowCols(row, lo, onScreen.colTo, ctx));
+    const all = [];
+    for (let row = 0; row < state.seqs.length; row++) all.push(row);
+    _markRowsStale(all, from, onScreen.rows);
+
+    updateColumnSelections();
+    scheduleNucSelectionRefresh();
+    updateEditActiveCell();
+    if (typeof updateSourceInfo === 'function') updateSourceInfo();
+    if (typeof refreshSelectionsPanel === 'function') refreshSelectionsPanel();
+    return true;
+}
+
+// Scrolling can reveal rows still waiting for their idle repaint (capture: the alignment
+// container's scroll does not bubble).
+document.addEventListener('scroll', _repaintStaleRowsOnScreen, true);
+
+// Leaving edit mode has to restore true conservation shading, which the session left
+// unshaded on repositioned residues. Do the least work that achieves that.
+function exitEditModeRepaint() {
+    const snapshot = state.editEntrySeqs;
+    state.editEntrySeqs = null;
+    const cols = columnsChangedSinceEditStart(snapshot);
+    if (cols && cols.size === 0) return;                 // nothing was edited
+    // Typing a residue repaints only its own span (fastUpdateEditCellAt), so the codon rows
+    // (translation boxes, stop/syn/non-syn marks) are stale until the next full render; the
+    // in-place reshade below would leave them that way after Edit mode ends.
+    if (cols && cols.size && canReshadeInPlace() && !state._codonData) {
+        reshadeChangedColumnsInPlace(cols);
+        return;
+    }
+    state.conservationDataCache = null;
+    renderAlignment();
+}
+
+function ensureEditSpanCache() {
+    if (state._enableSpanCache !== false || !isSpanRenderMode()) return;
+    // The spans are already in the DOM; the last render just declined to index them. Index
+    // what is there rather than re-rendering to get an index, which costs a full rebuild of
+    // every span (~1.4 s on a 97k-residue alignment) on a button press that should be free.
+    const cache = new Map();
+    let harvested = 0;
+    document.querySelectorAll('#alignmentContainer .seq-line').forEach(line => {
+        if (line.classList.contains('scale-ruler-line')) return;
+        // Block mode repeats a row once per block, so rows accumulate across .seq-line elements.
+        const row = line.classList.contains('consensus-line')
+            ? CONSENSUS_ROW_INDEX
+            : parseInt(line.dataset.seqIndex, 10);
+        if (!Number.isInteger(row)) return;
+        let rowCache = cache.get(row);
+        if (!rowCache) { rowCache = new Map(); cache.set(row, rowCache); }
+        const dataEl = line.querySelector('.seq-data');
+        if (!dataEl) return;
+        // Walk children directly with getAttribute: a descendant selector plus .dataset per
+        // span is markedly slower across ~100k nodes, and this runs on a button press.
+        const kids = dataEl.children;
+        for (let i = 0; i < kids.length; i++) {
+            const span = kids[i];
+            const raw = span.getAttribute('data-pos');
+            if (raw === null) continue;          // trailing seq-length label
+            rowCache.set(+raw, span);
+            harvested++;
+        }
+    });
+    if (!harvested) {
+        // Nothing rendered to harvest: fall back to a render, which indexes as it builds.
+        renderAlignment({ deferConservation: !state.editLiveConservation });
+        return;
+    }
+    state.spanCache = cache;
+    state._enableSpanCache = true;
+}
+
+function setGeneDocEditMode(active) {
+    const wasActive = state.editModeActive;
+    if (active && !isEditModeSupported()) {
+        showMessage(editModeUnavailableMessage(), 3500);
+        updateGeneDocEditUI();
+        return;
+    }
+    state.editModeActive = !!active;
+    if (state.editModeActive && !GENEDOC_MOVE_TOOLS.has(state.editTool) && !GENEDOC_GAP_TOOLS.has(state.editTool) && state.editTool !== 'residue' && state.editTool !== 'selectColumn') {
+        state.editTool = 'moveNoGaps';
+    }
+    if (!state.editModeActive) {
+        clearGeneDocEditDrag();
+        state.editCell = null;
+        exitEditModeRepaint();
+    } else if (!wasActive) {
+        markEditSessionStart();
+        ensureEditSpanCache();
+    }
+    updateGeneDocEditUI();
+    updateEditActiveCell();
+    requestAnimationFrame(() => updateControlsOffset());
+}
+
+function setGeneDocEditTool(tool) {
+    if (!GENEDOC_MOVE_TOOLS.has(tool) && !GENEDOC_GAP_TOOLS.has(tool) && tool !== 'residue' && tool !== 'selectColumn') return;
+    if (!isEditModeSupported()) {
+        showMessage(editModeUnavailableMessage(), 3500);
+        return;
+    }
+    const wasActive = state.editModeActive;
+    state.editTool = tool;
+    state.editModeActive = true;
+    clearGeneDocEditDrag();
+    if (!wasActive) {
+        markEditSessionStart();
+        ensureEditSpanCache();
+    }
+    if (tool !== 'residue') state.editCell = null;
+    updateGeneDocEditUI();
+    updateEditActiveCell();
+    requestAnimationFrame(() => updateControlsOffset());
+}
+
+function updateGeneDocEditUI() {
+    const toggle = el('editToggleButton');
+    const panel = el('editToolPanel');
+    if (toggle) {
+        toggle.classList.toggle('active', state.editModeActive);
+        toggle.setAttribute('aria-pressed', state.editModeActive ? 'true' : 'false');
+    }
+    if (panel) {
+        panel.hidden = !state.editModeActive;
+        panel.querySelectorAll('[data-edit-tool]').forEach(button => {
+            const active = state.editModeActive && button.dataset.editTool === state.editTool;
+            button.classList.toggle('active', active);
+            button.setAttribute('aria-pressed', active ? 'true' : 'false');
+        });
+    }
+    const liveConservationToggle = el('editLiveConservationToggle');
+    if (liveConservationToggle) {
+        liveConservationToggle.checked = !!state.editLiveConservation;
+    }
+    document.body.classList.toggle('edit-mode-active', state.editModeActive);
+    if (state.editModeActive) {
+        document.body.dataset.editTool = state.editTool;
+    } else {
+        delete document.body.dataset.editTool;
+    }
+}
+
+function updateEditActiveCell() {
+    if (state.editActiveSpan) {
+        state.editActiveSpan.classList.remove('edit-active-cell');
+        state.editActiveSpan = null;
+    }
+    if (!state.editModeActive || state.editTool !== 'residue' || !state.editCell) return;
+    if (isCanvasMode()) {
+        (_canvasState.scheduleOverlay || _canvasState.scheduleDraw)?.();
+        return;
+    }
+    const span = getSpanElement(state.editCell.row, state.editCell.pos);
+    if (span) {
+        span.classList.add('edit-active-cell');
+        state.editActiveSpan = span;
+    }
+}
+
+// A gap is a dash, dot, tilde or whitespace. Everything else the parser keeps is sequence
+// content - including '*', a stop codon, which the FASTA reader preserves deliberately
+// (see FASTA_PROTEIN_ONLY_CHARS). Testing for [A-Za-z] instead classified '*' as a gap, so
+// a Move/Slide drag consumed it and trimAlignmentWidthTo truncated it - both destroying a
+// residue in protein alignments. Defining a gap positively, and a residue as "not a gap",
+// keeps any future symbol on the safe side of that distinction.
+const GENEDOC_GAP_CHAR = /[-.~\s]/;
+
+function isGeneDocResidueChar(char) {
+    return typeof char === 'string' && char.length > 0 && !GENEDOC_GAP_CHAR.test(char.charAt(0));
+}
+
+function isGeneDocGapChar(char) {
+    return !isGeneDocResidueChar(char);
+}
+
+function normalizeAlignmentLengths() {
+    if (!state.seqs.length) return 0;
+    const len = _maxOf(state.seqs, s => s.seq.length);
+    state.seqs.forEach(s => {
+        if (s.seq.length < len) s.seq = s.seq.padEnd(len, GENEDOC_FILLER);
+    });
+    return len;
+}
+
+function refreshAllGaplessPositions() {
+    state.seqs.forEach(s => {
+        s.gaplessPositions = calculateGaplessPositions(s.seq);
+    });
+}
+
+// fromPos/oldWidth: the edit changed no column left of fromPos, and the alignment was
+// oldWidth wide before it, which lets the view be patched instead of rebuilt.
+function finalizeGeneDocEdit(message, duration = 1800, fromPos = null, oldWidth = null) {
+    normalizeAlignmentLengths();
+    refreshAllGaplessPositions();
+    if (!(Number.isInteger(fromPos) && Number.isInteger(oldWidth) && patchColumnsInPlace(fromPos, oldWidth))) {
+        renderAlignment();
+    }
+    if (message) showMessage(message, duration);
+}
+
+function countTrailingGeneDocFillers(chars) {
+    let count = 0;
+    for (let i = chars.length - 1; i >= 0; i--) {
+        if (!isGeneDocGapChar(chars[i])) break;
+        count++;
+    }
+    return count;
+}
+
+function geneDocInsertDashString(seq, pos) {
+    const chars = seq.split('');
+    if (pos < 0 || pos >= chars.length) return { seq, changed: false };
+    const trailingFillers = countTrailingGeneDocFillers(chars);
+    chars.splice(pos, 0, GENEDOC_FILLER);
+    if (trailingFillers > 0) chars.pop();
+    const out = chars.join('');
+    // Inside the trailing filler run the splice and pop cancel out: nothing changed
+    return { seq: out, changed: out !== seq };
+}
+
+function geneDocDeleteDashString(seq, pos) {
+    const chars = seq.split('');
+    if (pos < 0 || pos >= chars.length || !isGeneDocGapChar(chars[pos])) {
+        return { seq, changed: false };
+    }
+    chars.splice(pos, 1);
+    chars.push(GENEDOC_FILLER);
+    const out = chars.join('');
+    return { seq: out, changed: out !== seq };
+}
+
+function geneDocSlideStepString(seq, pos, direction) {
+    const chars = seq.split('');
+    if (pos < 0 || pos >= chars.length || !isGeneDocResidueChar(chars[pos])) return { seq, moved: 0 };
+    if (direction > 0) {
+        const result = geneDocInsertDashString(seq, pos);
+        return { seq: result.seq, moved: result.changed ? 1 : 0 };
+    }
+    // Left: only the gap immediately left of the grab is consumable. Scanning further
+    // (653047d) let a mid-run drag splice out a gap hundreds of columns away, which
+    // rewrites every column between that gap and the end of the row.
+    if (pos === 0 || !isGeneDocGapChar(chars[pos - 1])) return { seq, moved: 0 };
+    chars.splice(pos - 1, 1);
+    chars.push(GENEDOC_FILLER);
+    return { seq: chars.join(''), moved: -1 };
+}
+
+function geneDocMoveStepString(seq, pos, direction) {
+    const chars = seq.split('');
+    if (pos < 0 || pos >= chars.length || !isGeneDocResidueChar(chars[pos])) return { seq, moved: 0 };
+    if (direction > 0) {
+        let runEnd = pos;
+        while (runEnd < chars.length && isGeneDocResidueChar(chars[runEnd])) runEnd++;
+        if (runEnd < chars.length) {
+            for (let i = runEnd; i > pos; i--) {
+                chars[i] = chars[i - 1];
+            }
+            chars[pos] = GENEDOC_FILLER;
+        } else {
+            chars.splice(pos, 0, GENEDOC_FILLER);
+        }
+        return { seq: chars.join(''), moved: 1 };
+    }
+    if (pos === 0 || !isGeneDocGapChar(chars[pos - 1])) return { seq, moved: 0 };
+    let target = pos - 1;
+    for (let source = pos; source < chars.length; source++) {
+        if (isGeneDocResidueChar(chars[source])) {
+            chars[target++] = chars[source];
+        }
+    }
+    while (target < chars.length) {
+        chars[target++] = GENEDOC_FILLER;
+    }
+    return { seq: chars.join(''), moved: -1 };
+}
+

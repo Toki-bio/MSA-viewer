@@ -1,0 +1,376 @@
+[script.js lines 15918-16292 of ViewAlign fd8b8e4]
+// The "Canvas" chip next to the mode radios duplicated the radio once Canvas became the default
+// view (owner: "two Canvas buttons at the top"); the radio's title carries what the chip said.
+function ensureCanvasModeNotice() {
+    const notice = document.getElementById('canvasModeNotice');
+    if (notice) notice.remove();
+    return null;
+}
+
+// The mode row (codon frame, Canvas notice, reads) is shown only while one of its
+// controls is visible. Watches its children, so every place that shows or hides one is covered.
+// The letter case of the residues on screen: 'asis', 'upper' or 'lower' (state.residueCase), set from the
+// aa | Aa | AA switch on the mode row or the Display menu's Case select, both kept in sync; Full/Block use
+// the text-transform classes, Canvas draws the transformed letter. The consensus row keeps its own case.
+function setResidueCase(v) {
+    v = v === 'upper' || v === 'lower' ? v : 'asis';
+    state.residueCase = v;
+    if (alignmentContainer) {
+        alignmentContainer.classList.remove('residue-case-upper', 'residue-case-lower');
+        if (v !== 'asis') alignmentContainer.classList.add('residue-case-' + v);
+    }
+    const sel = el('residueCase');
+    if (sel && sel.value !== v) sel.value = v;
+    document.querySelectorAll('input[name="caseQuick"]').forEach(r => { r.checked = r.value === v; });
+    if (typeof isCanvasMode === 'function' && isCanvasMode() && _canvasState.scheduleDraw) _canvasState.scheduleDraw();
+}
+function syncModeRow() {
+    const row = document.getElementById('modeRow');
+    if (!row) return;
+    const any = [...row.children].some(c => !c.hidden && getComputedStyle(c).display !== 'none');
+    if (row.hidden !== !any) row.hidden = !any;
+    placeModeRow();
+}
+// On the menu line when the whole line still fits there (the file line included),
+// else on a line of its own below the menus
+function placeModeRow() {
+    const row = document.getElementById('modeRow');
+    if (!row || row.hidden) return;
+    row.classList.remove('own-line');
+    const top = el => el ? el.getBoundingClientRect().top : 0;
+    const menus = document.querySelector('#menuRow > .standard-menu-group');
+    const info = document.getElementById('headerInfoPanel');
+    const lineTop = top(menus);
+    const wrapped = Math.abs(top(row) - lineTop) > 6 || (info && info.getClientRects().length && top(info) - lineTop > 6);
+    if (wrapped) row.classList.add('own-line');
+}
+window.addEventListener('resize', () => placeModeRow());
+window.addEventListener('resize', () => _syncResidueWidthVar());   // a browser zoom or screen change: rows follow the device pixel ratio
+// The undo/redo buttons come after text labels of fractional width (Copy is 35.36px), so they sat at
+// x = 153.33 and Chrome anti-aliased their rounded corners a shade differently after each repaint (two
+// pixels changed with nothing else on screen). A translate (layout untouched; the narrow-screen rule sets
+// their margin with !important) puts them on whole device pixels.
+function snapUndoBarToPixels() {
+    const bar = document.querySelector('#menuRow > .undo-redo-bar');
+    if (!bar) return;
+    const dpr = window.devicePixelRatio || 1;
+    const shift = parseFloat(bar.dataset.snapShift || '0');
+    const x = bar.getBoundingClientRect().left - shift;          // where layout put it
+    let d = Math.ceil(x * dpr - 1e-3) / dpr - x;
+    if (d < 1e-3) d = 0;
+    if (Math.abs(d - shift) < 1e-4) return;
+    bar.dataset.snapShift = String(d);
+    bar.style.transform = d ? `translateX(${d}px)` : '';
+}
+window.addEventListener('resize', snapUndoBarToPixels);
+document.addEventListener('DOMContentLoaded', () => {
+    snapUndoBarToPixels();
+    if (document.fonts && document.fonts.ready) document.fonts.ready.then(snapUndoBarToPixels);
+    // the labels before it can change (the BAM button appears with a reference, the file name panel)
+    const row = document.getElementById('menuRow');
+    if (row && typeof ResizeObserver !== 'undefined') {
+        const ro = new ResizeObserver(() => snapUndoBarToPixels());
+        for (const c of row.children) { if (c.classList.contains('undo-redo-bar')) break; ro.observe(c); }
+    }
+});
+(function watchModeRow() {
+    const row = document.getElementById('modeRow');
+    if (!row || typeof MutationObserver === 'undefined') return;
+    let queued = false;
+    new MutationObserver(muts => {
+        // placeModeRow's own class change on the row is not a change of its controls
+        if (muts.every(m => m.target === row && m.type === 'attributes' && m.attributeName === 'class')) return;
+        if (queued) return;
+        queued = true;
+        Promise.resolve().then(() => { queued = false; syncModeRow(); });
+    }).observe(row, { childList: true, subtree: true, attributes: true, attributeFilter: ['style', 'class', 'hidden'] });
+})();
+
+// Keep the Block size row visible but grey it out when not in Block - prevents layout jump. Every
+// change of the view radios reaches syncQuickModeSwitch (onModeChange, the default-view switch to
+// Canvas in renderAlignment, ?view=); only onModeChange did this, so after ?view=canvas|full or the
+// default switch to Canvas the slider looked live where it does nothing (GLM audit cblk #49).
+function _syncBlockSizeControl() {
+    const container = el('blockSizeContainer');
+    const isBlocks = el('modeBlocks')?.checked;
+    if (container) {
+        container.style.opacity = isBlocks ? '1' : '0.4';
+        container.style.pointerEvents = isBlocks ? 'auto' : 'none';
+    }
+    _syncBlockSizeDisplay();   // out of Block: the width asked for, no "fits" note
+}
+
+// The quick view switch on the top bar (#quickModeSwitch): a compact segmented control mirroring the
+// Display menu's view radios. One line per view - [Display menu radio, short label, tooltip]; removing a
+// view from the switch is removing its line. Its radios are qm + the radio's name (qmBlocks, qmCanvas, qmReads).
+const QUICK_VIEW_OPTIONS = [
+    ['modeBlocks', 'B', 'Block view: the alignment wrapped in blocks (Block Size in the Display menu)'],
+    ['modeCanvas', 'C', 'Canvas view: drawn on a canvas, any size; the default view'],
+    ['modeReads', 'R', 'Reads view: mapped SAM/BAM reads (offered once reads are loaded)'],
+];
+function _ensureQuickModeSwitch() {
+    const sw = document.getElementById('quickModeSwitch');
+    if (!sw || sw.dataset.built) return sw;
+    sw.dataset.built = '1';
+    for (const [target, label, tip] of QUICK_VIEW_OPTIONS) {
+        const id = 'qm' + target.slice(4);
+        const r = document.createElement('input');
+        r.type = 'radio'; r.name = 'quickMode'; r.id = id; r.dataset.target = target;
+        const l = document.createElement('label');
+        l.htmlFor = id; l.id = id + 'Label'; l.textContent = label; l.title = tip; l.setAttribute('aria-label', tip.split(':')[0]);
+        // clicking it drives the real radio + onModeChange; syncQuickModeSwitch() reflects changes made elsewhere
+        r.addEventListener('change', () => {
+            const t = document.getElementById(target);
+            if (t && !t.checked) { t.checked = true; onModeChange(); }
+        });
+        sw.append(r, l);
+    }
+    return sw;
+}
+
+// Full is not offered in either switch (v318), but ?view=full and the old presets still open it, and then no
+// button of the switch is lit: a small "Full" chip says which view this is, only while Full is active
+// (GLM audit fix2 B4). It is a span, not a radio or a label: nothing in it picks a view.
+// The page was opened with ?view=full (or its old name single): the one case where a stored 'single' keeps Full
+function _pageOpenedInFull() {
+    try { const v = (new URLSearchParams(window.location.search).get('view') || '').toLowerCase(); return v === 'full' || v === 'single'; } catch (_) { return false; }
+}
+function _syncFullChip() {
+    const on = !!document.getElementById('modeSingle')?.checked;
+    const sw = document.getElementById('quickModeSwitch');
+    if (sw) {
+        let chip = sw.querySelector('.full-chip');
+        if (!chip && on) {
+            chip = document.createElement('span');
+            chip.className = 'full-chip';
+            chip.textContent = 'Full';
+            chip.title = 'Full view (opened with ?view=full or an old preset); pick Block or Canvas to leave it';
+            // hung under the switch, out of the flow: a chip in the row made the toolbar wrap to a second line
+            if (getComputedStyle(sw).position === 'static') sw.style.position = 'relative';
+            chip.style.cssText = 'position:absolute;right:0;top:100%;z-index:20;font-size:10px;line-height:13px;padding:0 5px;border:1px solid #888;border-radius:8px;background:#fff3c4;color:#333;white-space:nowrap;pointer-events:none;';
+            sw.appendChild(chip);
+        }
+        if (chip) chip.hidden = !on;
+    }
+    const main = document.getElementById('modeFullChip');
+    if (main) main.hidden = !on;
+}
+function syncQuickModeSwitch() {
+    _syncBlockSizeControl();
+    _ensureQuickModeSwitch();
+    for (const [canonicalId] of QUICK_VIEW_OPTIONS) {
+        const canonical = document.getElementById(canonicalId);
+        const quick = document.getElementById('qm' + canonicalId.slice(4));
+        if (canonical && quick) quick.checked = canonical.checked;
+    }
+
+    _syncFullChip();
+    // Shown in every view (owner 2026-10-31); it was shown only in Canvas and Reads, as a way back from them.
+    const isReadsMode = document.getElementById('modeReads')?.checked;
+    const isCanvasMode = document.getElementById('modeCanvas')?.checked;
+
+    // Reads is only a real option once a reads (BAM/SAM) file has actually
+    // been loaded - it's not a mode you'd otherwise want to switch into blind.
+    const readsLabel = document.getElementById('qmReadsLabel');
+    if (readsLabel) readsLabel.style.display = (bamState?.reads?.length > 0 || isReadsMode) ? '' : 'none';   // (a genome view is always isReadsMode)
+
+    const canvasNotice = ensureCanvasModeNotice();
+    setCanvasNoticeVisible(!!isCanvasMode);
+    const readsToggle = ensureReadsDisplayToggle();
+    if (readsToggle) readsToggle.style.display = isReadsMode ? 'flex' : 'none';
+    const sampleBtn = ensureSampleRowButton();
+    if (sampleBtn) sampleBtn.style.display = isReadsMode && bamState?.reads?.length && !_genome ? '' : 'none';
+    const zoomGroup = document.getElementById('readsZoomGroup');
+    if (zoomGroup) zoomGroup.style.display = isReadsMode && (bamState?.reads?.length || _genome) ? 'inline-flex' : 'none';
+    const optionsPanel = document.getElementById('readsOptionsPanel');
+    if (optionsPanel && !(isReadsMode && (bamState?.reads?.length || _genome))) optionsPanel.style.display = 'none';
+    const varBtn = document.getElementById('readsVariantsButton');
+    if (varBtn) varBtn.style.display = isReadsMode && (bamState?.reads?.length || _genome) ? '' : 'none';
+    syncModeRow();
+    syncSearchControlsAvailability();
+}
+
+// The last mode radio id that actually completed a switch (not just got
+// clicked) - used to revert the UI if a user cancels the Full-mode warning
+// below. Matches the radio marked `checked` by default in the HTML.
+let _lastModeRadioId = 'modeBlocks';
+
+// ---- View anchor: where the view is, independent of mode and zoom ----
+// The first sequence row whose top is in view and the first residue column right of the name
+// column. Mode switches and zoom capture it from the live view and scroll the new view so that
+// row and column are at its top left again (row 0 / column 0: scrolled all the way up / left, so
+// the ruler stays in view). Both ends are measured on the rendered rows, not converted from pixel
+// offsets, which went wrong four ways: the sampled row was the consensus line (14px; sequence rows
+// 13px), so Full -> Canvas landed ~7% of the rows off; a Block view was converted as if it were
+// one tall block (it landed at the bottom, column 1); small alignments scroll the page, which was
+// ignored (back to row 1); Canvas -> a small view used 8px/16px guesses for the cells. Full <->
+// Block always went back to column 1, and zooming kept pixel offsets, so the view moved.
+
+// Screen y where alignment content starts to be visible: the container's top, or the bottom of the
+// fixed toolbar when the page has scrolled the container's top under it
+function _alignmentViewTop() {
+    const c = alignmentContainer;
+    const ctrl = el('controls');
+    return Math.max(c.getBoundingClientRect().top + c.clientTop, ctrl ? ctrl.getBoundingClientRect().bottom : 0, 0);
+}
+// The windowed views (and Canvas) scroll the container; small alignments scroll the page
+function _alignmentScrollsItself() {
+    const c = alignmentContainer;
+    return c.scrollHeight > c.clientHeight + 1 && /auto|scroll/.test(getComputedStyle(c).overflowY);
+}
+// Screen x where a row's residues start to be visible: right of its sticky name cell
+function _domDataLeft(row) {
+    const c = alignmentContainer;
+    const name = row?.querySelector(':scope > .seq-name');
+    if (name && el('stickyNames')?.checked !== false) return name.getBoundingClientRect().right;
+    return c.getBoundingClientRect().left + c.clientLeft;
+}
+// First column of a rendered block (a windowed ruler holds only its column window)
+function _blockStartColumn(block) {
+    const p = _unifiedWindowRenderParams;
+    if (state._needsWindowedDom && p && block?.dataset.blockIndex != null) return +block.dataset.blockIndex * p.blockWidth;
+    const sc = block?.querySelector(':scope > .scale-ruler-line > .seq-data[data-scale]');
+    return sc ? +sc.dataset.scale.split(':')[1] : 0;
+}
+function _blockElementForColumn(col) {
+    const c = alignmentContainer;
+    const p = _unifiedWindowRenderParams;
+    if (state._needsWindowedDom && p) return c.querySelector(`:scope > .block-block[data-block-index="${Math.floor(col / p.blockWidth)}"]`);
+    let first = null;
+    for (const b of c.querySelectorAll(':scope > .block-block')) {
+        first = first || b;
+        const sc = b.querySelector(':scope > .scale-ruler-line > .seq-data[data-scale]');
+        if (!sc) continue;
+        const [n, s] = sc.dataset.scale.split(':').map(Number);
+        if (col >= s && col < s + n) return b;
+    }
+    return first;
+}
+
+// fromCanvas: read Canvas's pan offset (default: the current mode). Returns { row, col } or null.
+function _captureViewAnchor(fromCanvas = isCanvasMode()) {
+    if (fromCanvas) {
+        const m = _canvasState.metrics;
+        if (!m || !_canvasState.canvas) return null;
+        const L = _canvasState.layout;
+        if (L) {
+            // Block view: the band at the view's top and its first row in view (0: the band's top,
+            // its ruler in view, as row 0 is the strip's top); the column is the band's first.
+            // Below a band's rows (its bottom consensus, the gap): the next band's top.
+            const oy = _canvasState.offsetY || 0, H0 = m.headerH || m.charH;
+            const n = _canvasState.seqsLen || state.seqs.length;
+            let b = L.bandAt(oy);
+            let row = Math.max(0, Math.ceil((oy - L.bandTop[b] - H0) / L.bandPitch[b] - 0.01));
+            if (row >= n && b < L.nBands - 1) { b++; row = 0; }
+            const slot = b * L.bandCols;
+            const folds = _canvasSlotFolds(slot);
+            const col = folds ? folds[0][0] : _canvasSlotToCol(slot);
+            return { row: Math.min(row, Math.max(0, n - 1)), col: col >= 0 ? col : slot };
+        }
+        const pitch = _canvasState.rowPitch || m.charH;
+        const oy = _canvasState.offsetY || 0, ox = _canvasState.offsetX || 0;
+        // Canvas is laid out in slots (Variable sites only hides columns): the slot's column
+        const slot = Math.max(0, Math.ceil(ox / m.charW - 0.01));
+        const folds = _canvasSlotFolds(slot);
+        const col = folds ? folds[0][0] : _canvasSlotToCol(slot);
+        return {
+            row: Math.max(0, Math.ceil((oy - (m.headerH || m.charH)) / pitch - 0.01)),
+            col: col >= 0 ? col : slot
+        };
+    }
+    const c = alignmentContainer;
+    const rows = c.querySelectorAll('.seq-line[data-seq-index]');
+    if (!rows.length) return null;
+    const viewTop = _alignmentViewTop();
+    // rows are in document order, top to bottom: the first one whose top is in view
+    let lo = 0, hi = rows.length - 1;
+    while (lo < hi) {
+        const mid = (lo + hi) >> 1;
+        if (rows[mid].getBoundingClientRect().top >= viewTop - 0.5) hi = mid; else lo = mid + 1;
+    }
+    let i = lo;
+    while (i < rows.length - 1 && +rows[i].dataset.seqIndex < 0) i++;   // not a consensus line
+    const row = rows[i];
+    if (+row.dataset.seqIndex < 0) return null;
+    const dataLeft = _domDataLeft(row);
+    let col = null;
+    for (const sp of row.querySelectorAll(':scope > .seq-data > span[data-pos]')) {
+        const r = sp.getBoundingClientRect();
+        if (r.width > 0 && r.left >= dataLeft - 0.5) { col = +sp.dataset.pos; break; }
+    }
+    if (col == null) col = _blockStartColumn(row.closest('.block-block'));
+    return { row: +row.dataset.seqIndex, col };
+}
+
+// Block view: the content y that puts an anchor { row, col } at the view's top: the band holding the
+// column, the row's line in it (row 0: the band's top, its ruler in view)
+function _canvasBlockAnchorY(a) {
+    const L = _canvasState.layout, m = _canvasState.metrics;
+    const b = _canvasBandOfCol(a.col);
+    const n = _canvasState.seqsLen || state.seqs.length;
+    const row = Math.min(a.row, Math.max(0, n - 1));
+    return L.bandTop[b] + (row > 0 ? (m.headerH || m.charH) + row * L.bandPitch[b] : 0);
+}
+function _applyViewAnchor(a) {
+    if (!a) return;
+    if (isCanvasMode()) {
+        const m = _canvasState.metrics;
+        if (!m) return;
+        const L = _canvasState.layout;
+        if (isBlockLayout() && !L) { _canvasState.pendingAnchor = a; return; }   // the bands are not laid out yet: at the end of the render
+        if (L) {
+            _canvasState.offsetX = 0;
+            _canvasState.offsetY = _canvasBlockAnchorY(a);
+            if (a.oy != null && a.bands === _canvasBandsSig(L)) _canvasState.offsetY = a.oy;   // the same bands (a redraw): exactly where it was
+        } else {
+            const pitch = _canvasState.rowPitch || m.charH;
+            _canvasState.offsetY = a.row > 0 ? (m.headerH || m.charH) + a.row * pitch : 0;
+            const slot = _canvasColToSlotNear(a.col);
+            if (a.col <= 0) _canvasState.offsetX = 0;
+            else if (slot >= 0) _canvasState.offsetX = slot * m.charW;
+        }
+        _canvasState.scheduleDraw?.();
+        // Resize the persistent scrollbars to the new content as they take the offset: a bar
+        // still sized for the old cells clamped it and wrote the clamped value back (zooming in
+        // near the end of a Canvas moved it ~250 columns left)
+        window._syncHorizontalScrollbar?.();
+        window._syncVerticalScrollbar?.();
+        _canvasState.onOffsetChange?.();
+        return;
+    }
+    const c = alignmentContainer;
+    const blocks = isDomBlock();   // (Canvas Block returned above)
+    const p = _unifiedWindowRenderParams;
+    const windowed = !!state._needsWindowedDom && !!p;
+    const cellW = () => parseFloat(c.style.getPropertyValue('--res-w')) || _unifiedCharWidthPx || 7.8;
+    const vScrollBy = dy => { if (_alignmentScrollsItself()) c.scrollTop += dy; else window.scrollBy(0, dy); };
+    if (windowed) {
+        // The target rows may not be built yet: go near them from the windowed geometry first
+        const nb = Math.max(1, Math.ceil(p.len / p.blockWidth));
+        const G = _unifiedGeometry(nb, p.blockWidth, p.len);
+        const b = Math.min(nb - 1, Math.floor(a.col / p.blockWidth));
+        c.scrollTop = G.top(b) + (a.row > 0 ? (_unifiedHeaderHeightPx || 0) + a.row * G.rowH(b) : 0);
+        if (!blocks) c.scrollLeft = a.col * cellW();
+        _refreshUnifiedWindowOnScroll(c);
+    }
+    // Then exactly: the target row's top to the view's top, the target residue to the names' edge
+    for (let pass = 0; pass < (windowed ? 2 : 1); pass++) {
+        const block = _blockElementForColumn(a.col);
+        if (!block) return;
+        const rowEl = block.querySelector(`.seq-line[data-seq-index="${a.row}"]`);
+        const target = a.row > 0 ? rowEl : block;
+        if (target) vScrollBy(target.getBoundingClientRect().top - _alignmentViewTop());
+        if (!blocks || c.scrollWidth > c.clientWidth + 1) {
+            const line = rowEl || block.querySelector('.seq-line[data-seq-index]:not([data-seq-index="-1"])');
+            let sp = line?.querySelector(`:scope > .seq-data > span[data-pos="${a.col}"]`);
+            // a hidden column (fold): its run's marker stands where it was
+            const fr = sp && sp.classList.contains('fold-hidden') ? _foldAt(a.col) : null;
+            if (fr) sp = line.querySelector(`:scope > .seq-data > .col-fold[data-fold="${fr[0]}-${fr[1]}"]`) || sp;
+            if (a.col <= _blockStartColumn(block) && !fr) c.scrollLeft = 0;
+            else if (sp && sp.getBoundingClientRect().width > 0) c.scrollLeft += sp.getBoundingClientRect().left - _domDataLeft(line);
+            else if (!blocks) c.scrollLeft = a.col * cellW();
+        }
+        if (windowed) _refreshUnifiedWindowOnScroll(c);
+    }
+}
+

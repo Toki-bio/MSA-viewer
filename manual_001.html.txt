@@ -1,0 +1,484 @@
+[manual.html lines 1-483 of ViewAlign fd8b8e4]
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>ViewAlign - Manual</title>
+<style>
+:root {
+  --bg: #fafbfc;
+  --sidebar-bg: #f6f8fa;
+  --text: #24292e;
+  --muted: #586069;
+  --border: #e1e4e8;
+  --accent: #0366d6;
+  --accent-subtle: #f0f7ff;
+  --warn: #b08800;
+  --warn-bg: #fff8e1;
+  --code-bg: #f6f8fa;
+  --heading: #1a1a2e;
+  --sidebar-width: 260px;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #0d1117;
+    --sidebar-bg: #161b22;
+    --text: #c9d1d9;
+    --muted: #8b949e;
+    --border: #30363d;
+    --accent: #58a6ff;
+    --accent-subtle: #1a2a3a;
+    --warn: #d29922;
+    --warn-bg: #2a210f;
+    --code-bg: #161b22;
+    --heading: #f0f6fc;
+  }
+}
+* { box-sizing: border-box; margin:0; padding:0; }
+html { scroll-behavior: smooth; }
+body {
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif;
+  font-size: 15px; line-height: 1.65;
+  color: var(--text); background: var(--bg);
+  display: flex; min-height: 100vh;
+}
+
+/* ── SIDEBAR ── */
+#sidebar {
+  position: fixed; top:0; left:0; bottom:0;
+  width: var(--sidebar-width);
+  background: var(--sidebar-bg);
+  border-right: 1px solid var(--border);
+  overflow-y: auto; overflow-x: hidden;
+  z-index: 20;
+  padding: 20px 0 40px;
+  scrollbar-width: thin;
+}
+#sidebar h2 {
+  font-size: 15px; font-weight: 700; padding: 0 20px 12px;
+  color: var(--heading); border-bottom: 1px solid var(--border);
+  margin-bottom: 8px;
+}
+#sidebar h2 a { color: inherit; text-decoration: none; }
+.side-group { margin-bottom: 4px; }
+.side-group > a {
+  display: flex; align-items: center;
+  padding: 5px 20px;
+  font-size: 13px; font-weight: 600;
+  color: var(--heading); text-decoration: none;
+  transition: background .12s;
+}
+.side-group > a:hover { background: var(--border); }
+.side-group > a.active { color: var(--accent); background: var(--accent-subtle); }
+.side-sub {
+  display: none;
+  padding: 0 0 4px 0;
+}
+.side-group.open .side-sub { display: block; }
+.side-sub a {
+  display: block;
+  padding: 3px 20px 3px 34px;
+  font-size: 12.5px; color: var(--muted);
+  text-decoration: none;
+  transition: all .12s;
+  border-left: 2px solid transparent;
+}
+.side-sub a:hover { color: var(--text); background: var(--border); }
+.side-sub a.active { color: var(--accent); border-left-color: var(--accent); background: var(--accent-subtle); }
+
+/* ── MAIN ── */
+#main {
+  margin-left: var(--sidebar-width);
+  flex: 1; min-width: 0;
+  max-width: 900px; padding: 32px 40px 80px;
+}
+section { margin-bottom: 52px; }
+section h2 {
+  font-size: 22px; color: var(--heading); border-bottom: 2px solid var(--border);
+  padding-bottom: 6px; margin-bottom: 18px;
+}
+section h3 {
+  font-size: 17px; color: var(--heading); margin: 28px 0 10px;
+}
+section h4 {
+  font-size: 15px; color: var(--heading); margin: 20px 0 8px; font-weight: 600;
+}
+p { margin-bottom: 12px; }
+p, li { color: var(--text); }
+ul, ol { margin: 0 0 14px 20px; }
+li { margin-bottom: 5px; }
+code {
+  background: var(--code-bg); padding: 1px 5px; border-radius: 3px;
+  font-family: 'SF Mono', 'Consolas', 'Courier New', monospace; font-size: 13px;
+}
+pre {
+  background: var(--code-bg); padding: 12px 16px; overflow-x: auto;
+  border: 1px solid var(--border); border-radius: 6px;
+  font-family: 'SF Mono', 'Consolas', 'Courier New', monospace;
+  font-size: 12px; line-height: 1.5; margin-bottom: 14px;
+}
+table {
+  width: 100%; border-collapse: collapse; margin: 14px 0; font-size: 13.5px;
+}
+th, td {
+  text-align: left; padding: 7px 10px; border: 1px solid var(--border);
+}
+th { background: var(--code-bg); font-weight: 600; font-size: 12.5px; }
+tr:nth-child(even) td { background: var(--table-stripe); }
+kbd {
+  display: inline-block; padding: 2px 6px; font-size: 11.5px;
+  font-family: 'SF Mono', 'Consolas', 'Courier New', monospace;
+  line-height: 1.2; color: var(--text); background: var(--code-bg);
+  border: 1px solid var(--border); border-bottom-width: 2px;
+  border-radius: 3px; vertical-align: middle;
+}
+.note {
+  background: var(--warn-bg); border-left: 4px solid var(--warn);
+  padding: 10px 14px; margin: 14px 0; border-radius: 0 4px 4px 0;
+  font-size: 14px;
+}
+.tip {
+  background: #e6ffed; border-left: 4px solid #28a745;
+  padding: 10px 14px; margin: 14px 0; border-radius: 0 4px 4px 0;
+  font-size: 14px;
+}
+@media (prefers-color-scheme: dark) { .tip { background: #1a3320; } }
+img { max-width: 100%; border: 1px solid var(--border); border-radius: 4px; margin: 8px 0; }
+
+/* ── RESPONSIVE ── */
+@media (max-width: 768px) {
+  #sidebar { display: none; }
+  #main { margin-left: 0; padding: 20px 16px 60px; }
+}
+</style>
+</head>
+<body>
+
+<!-- ═══ SIDEBAR ═══ -->
+<aside id="sidebar">
+  <h2><a href="#">ViewAlign Manual</a></h2>
+
+  <div class="side-group open">
+    <a href="#getting-started">1. Getting Started</a>
+    <div class="side-sub">
+      <a href="#gs-what-is">1.1 What is ViewAlign?</a>
+      <a href="#gs-loading">1.2 Loading an Alignment</a>
+      <a href="#gs-formats">1.3 Supported Formats</a>
+      <a href="#gs-interface">1.4 Interface Layout</a>
+      <a href="#gs-recent">1.5 Recent Files &amp; History</a>
+      <a href="#gs-examples">1.6 Worked Examples</a>
+      <a href="#gs-updates">1.7 Recent Updates</a>
+    </div>
+  </div>
+
+  <div class="side-group open">
+    <a href="#input-menu">2. Input Menu</a>
+    <div class="side-sub">
+      <a href="#in-fasta">2.1 FASTA / MSF Input</a>
+      <a href="#in-file">2.2 File Loading</a>
+      <a href="#in-url">2.3 URL Loading</a>
+      <a href="#in-ssh">2.4 SSH Remote Loading</a>
+      <a href="#in-sam">2.5 SAM / BAM / CRAM</a>
+      <a href="#in-snapshot">2.6 Snapshots (Save &amp; Load)</a>
+      <a href="#in-saveload">2.7 Save / Export Alignment</a>
+    </div>
+  </div>
+
+  <div class="side-group open">
+    <a href="#alignment-menu">3. Alignment Menu</a>
+    <div class="side-sub">
+      <a href="#al-real-time">3.1 Real-Time Alignment</a>
+      <a href="#al-advanced">3.2 Advanced MAFFT Options</a>
+      <a href="#al-realign-block">3.2.1 Realign Block</a>
+      <a href="#al-codon-align">3.2.2 Codon-aware alignment of coding sequences</a>
+      <a href="#al-addseq">3.3 Adding Sequences</a>
+      <a href="#al-blast">3.4 BLAST Search</a>
+      <a href="#al-blast-db">3.5 BLAST DB Management</a>
+      <a href="#al-degap">3.6 Degap Alignment</a>
+      <a href="#al-realign-consensus">3.7 Re-align Against Consensus</a>
+    </div>
+  </div>
+
+  <div class="side-group open">
+    <a href="#clustering-menu">4. Clustering Menu</a>
+    <div class="side-sub">
+      <a href="#cl-trim">4.1 Trimming</a>
+      <a href="#cl-kmer">4.2 k-mer groups</a>
+      <a href="#cl-snp">4.3 Diagnostic SNPs</a>
+      <a href="#cl-quality">4.3.1 Quality, breakpoints, presets</a>
+      <a href="#cl-2d">4.4 2D analysis</a>
+      <a href="#cl-understanding">4.5 Group explorer</a>
+      <a href="#cl-layers">4.6 Colour layers</a>
+      <a href="#cl-blockmask">4.7 Legacy squint mask</a>
+    </div>
+  </div>
+
+  <div class="side-group open">
+    <a href="#display-menu">5. Display Menu</a>
+    <div class="side-sub">
+      <a href="#di-modes">5.1 View Modes</a>
+      <a href="#di-checks">5.2 Highlight Diffs &amp; Variable Sites</a>
+      <a href="#di-var-threshold">5.2.1 Variable-Sites Threshold</a>
+      <a href="#di-var-breakpoints">5.2.2 Breakpoint Markers</a>
+      <a href="#di-colors">5.3 Alignment Colour Schemes</a>
+      <a href="#di-codons">5.4 Codon Analysis</a>
+      <a href="#di-sticky">5.5 Sticky Names</a>
+      <a href="#di-zoom">5.6 Zoom &amp; Reset</a>
+      <a href="#di-names">5.7 Name Length</a>
+    </div>
+  </div>
+
+  <div class="side-group open">
+    <a href="#consensus-menu">6. Consensus Menu</a>
+    <div class="side-sub">
+      <a href="#co-display">6.1 Consensus Display</a>
+      <a href="#co-thresholds">6.2 Thresholds &amp; Coverage</a>
+      <a href="#co-group">6.3 Group Consensus</a>
+      <a href="#an-track">6.4 Annotation track (BED)</a>
+    </div>
+  </div>
+
+  <div class="side-group open">
+    <a href="#search-menu">7. Search Menu</a>
+    <div class="side-sub">
+      <a href="#se-motif">7.1 Motif Search</a>
+      <a href="#se-regex">7.2 Regex Search</a>
+      <a href="#se-mismatch">7.3 Mismatch Tolerance</a>
+      <a href="#se-colour">7.4 Search Highlight Colour</a>
+      <a href="#se-restriction">7.5 Restriction Sites</a>
+      <a href="#se-selections">7.6 Selections Panel</a>
+    </div>
+  </div>
+
+  <div class="side-group open">
+    <a href="#edit-menu">8. Editing</a>
+    <div class="side-sub">
+      <a href="#ed-row">8.1 Row Operations</a>
+      <a href="#ed-col">8.2 Column Operations</a>
+      <a href="#ed-editmode">8.3 GeneDoc-Style Edit Mode</a>
+      <a href="#ed-move-slide">8.4 Move &amp; Slide Tools</a>
+      <a href="#ed-seqedit">8.5 Sequence Text Editor</a>
+      <a href="#ed-undo">8.6 Undo / Redo</a>
+      <a href="#ed-degap">8.7 Degap Tool</a>
+      <a href="#ed-context">8.8 Right-Click Editing</a>
+    </div>
+  </div>
+
+  <div class="side-group open">
+    <a href="#actions-menu">9. Actions Menu</a>
+    <div class="side-sub">
+      <a href="#ac-select">9.1 Selection</a>
+      <a href="#ac-sort">9.2 Sort Functions</a>
+      <a href="#ac-order">9.3 Save / Load Order</a>
+      <a href="#ac-tools">9.4 Analysis Tools</a>
+      <a href="#ac-colour">9.5 Colour &amp; Shading</a>
+      <a href="#ac-cluster">9.6 Cluster Operations</a>
+      <a href="#ac-plot">9.7 Plotting</a>
+      <a href="#ac-repeat-finder">9.8 Repeat Finder</a>
+      <a href="#ac-tsd-finder">9.9 TSD Finder</a>
+      <a href="#ac-export">9.10 Export &amp; Share</a>
+      <a href="#ac-colour-names">9.11 Colour Names</a>
+    </div>
+  </div>
+
+  <div class="side-group open">
+    <a href="#shortcuts">10. Keyboard Shortcuts</a>
+    <div class="side-sub">
+      <a href="#sc-general">10.1 General</a>
+      <a href="#sc-editing">10.2 Editing</a>
+      <a href="#sc-mouse">10.3 Mouse Actions</a>
+    </div>
+  </div>
+
+  <div class="side-group open">
+    <a href="#server">11. Server Features</a>
+    <div class="side-sub">
+      <a href="#sv-setup">11.1 Setup</a>
+      <a href="#sv-mafft">11.2 MAFFT Integration</a>
+      <a href="#sv-ssh">11.3 SSH Remote Access</a>
+      <a href="#sv-bam">11.4 BAM/CRAM Support</a>
+      <a href="#sv-security">11.5 Security</a>
+    </div>
+  </div>
+
+  <div class="side-group open">
+    <a href="#tips">12. Tips &amp; Best Practices</a>
+    <div class="side-sub">
+      <a href="#tp-large">12.1 Large Alignments</a>
+      <a href="#tp-figures">12.2 Publication Figures</a>
+      <a href="#tp-coding">12.3 Coding Sequence Analysis</a>
+      <a href="#tp-clustering">12.4 Clustering Best Practices</a>
+    </div>
+  </div>
+
+  <div class="side-group open">
+    <a href="#credits">13. Credits &amp; Attribution</a>
+  </div>
+
+</aside>
+
+<!-- ═══ MAIN CONTENT ═══ -->
+<div id="main" role="main">
+
+<!-- ════════════════════════════════════════ -->
+<section id="getting-started">
+  <h2>1. Getting Started</h2>
+
+  <h3 id="gs-what-is">1.1 What is ViewAlign?</h3>
+  <p>
+    ViewAlign is a browser-based application for viewing, editing, and analysing
+    multiple sequence alignments. It handles DNA, RNA, protein, and coding sequence (CDS)
+    data - from a handful of sequences to thousands. No installation is required; the viewer
+    runs entirely in your browser. An optional local Node.js server adds sequence-database
+    hosting for similarity search, SSH remote access and a scripted MAFFT endpoint.
+  </p>
+  <p>Key capabilities:</p>
+  <ul>
+    <li><strong>View</strong> - Three visualisation modes in the view switch (Reads joins Block and Canvas once SAM/BAM reads are loaded): Block (wrapped in bands of the Block Size width, narrower when the window holds fewer columns and never wider than the alignment, drawn on a canvas), Canvas (high-performance for massive alignments), and Reads (IGV-style read packing for SAM/BAM data). A fourth, Full (the alignment as page text), is hidden; open it with <code>?view=full</code>.</li>
+    <li><strong>Edit</strong> - GeneDoc-style residue editing, Move/Slide tools, undo/redo</li>
+    <li><strong>Analyse</strong> - Statistics (distance and identity matrices you can copy or save), codon analysis, dot plots, repeat/TSD finder, tree builder, restriction site search, k-mer / SNP grouping and 2D rectangles</li>
+    <li><strong>Colour</strong> - Monochrome conservation shading plus nucleotide, purine/pyrimidine, ambiguity, and amino-acid colour schemes</li>
+    <li><strong>Export</strong> - FASTA, RTF (Word-compatible), SVG (vector), Newick trees, standalone HTML snapshots</li>
+  </ul>
+
+  <h3 id="gs-loading">1.2 Loading an Alignment</h3>
+  <p>You can load data in any of these ways:</p>
+  <table>
+    <tr><th>Method</th><th>How</th></tr>
+    <tr><td>Paste &amp; Load</td><td>Paste FASTA or MSF text into the Input textarea and click <strong>Load</strong> (or press <kbd>Ctrl+L</kbd>)</td></tr>
+    <tr><td>Drag &amp; Drop</td><td>Drop a file onto the drop zone - any format in 1.3; the format is recognised from the content, not the extension, and gzip-compressed files (<code>.gz</code>) are unpacked first</td></tr>
+    <tr><td>File Picker</td><td>Click the drop zone to browse for a file</td></tr>
+    <tr><td>URL parameter</td><td>Open the viewer with <code>?url=&lt;fasta-url&gt;</code> (optional <code>&amp;title=</code>, and <code>&amp;view=full</code>, <code>block</code> or <code>canvas</code> to choose the view). See the starter alignment below. With <code>&amp;demo=&lt;id&gt;</code> the viewer also runs a worked example once the file has loaded (see &ldquo;Worked examples&rdquo; below)</td></tr>
+    <tr><td>SAM Paste</td><td>Paste SAM text directly - auto-detected and parsed with CIGAR expansion</td></tr>
+    <tr><td>SSH Remote</td><td>Fetch files from a remote server via SSH (requires server with SSH configuration)</td></tr>
+    <tr><td>Accession</td><td>Paste one or more GenBank/RefSeq accessions (nucleotide or protein, separated by spaces, commas or new lines) and click <strong>Load</strong>; the records are fetched from NCBI. Works without the server</td></tr>
+  </table>
+  <p>
+    A small public starter alignment is included so you can feel the viewer without
+    preparing a file: 40 DNA sequences, 231 columns, ten copies each of SINE groups
+    K1–K4.
+  </p>
+  <p>
+    <a href="https://toki-bio.github.io/MSA-viewer/?url=https://toki-bio.github.io/MSA-viewer/examples/svk_k4.fa&amp;title=SVK%20SINE%20(K1–K4)">Open the starter alignment in the viewer</a>
+    · source file <a href="examples/svk_k4.fa"><code>examples/svk_k4.fa</code></a>
+  </p>
+  <p>
+    Things to try on that file: <strong>Shade</strong>, Clustering →
+    <strong>Group by k-mer</strong> then <strong>Find SNP groups</strong>,
+    <strong>Show 2D</strong>, Colour Names, Display → <strong>Variable sites only</strong>,
+    Consensus → <strong>+ Consensus Below</strong> on a selected group.
+  </p>
+
+  <h3 id="gs-formats">1.3 Supported Formats</h3>
+  <table>
+    <tr><th>Format</th><th>Extensions</th><th>Notes</th></tr>
+    <tr><td>FASTA</td><td><code>.fasta</code>, <code>.fa</code></td><td>Standard FASTA with <code>&gt;</code> headers; wrapped lines, lowercase, <code>.</code> gaps and <code>;</code> comment lines are accepted</td></tr>
+    <tr><td>MSF</td><td><code>.msf</code></td><td>GCG Multiple Sequence Format with header block</td></tr>
+    <tr><td>SAM</td><td><code>.sam</code></td><td>Tab-separated alignment records; auto-detected. See 2.5</td></tr>
+    <tr><td>BAM</td><td><code>.bam</code></td><td>Read in the browser; open the reference sequence first. Recognised by content. See 2.5</td></tr>
+    <tr><td>CRAM</td><td><code>.cram</code></td><td>Decoded in the browser against the loaded reference; open the reference sequence first. Recognised by content. See 2.5</td></tr>
+    <tr><td>Clustal</td><td><code>.aln</code></td><td>Clustal-format output of ClustalW, Clustal Omega, MUSCLE, MSAProbs, ProbCons and Kalign; residue counts and conservation lines are ignored</td></tr>
+    <tr><td>PHYLIP</td><td><code>.phy</code></td><td>Strict (10-character names) and relaxed (names of any length), each sequential or interleaved; the layout that gives every sequence the declared length is used. A binary 0/1 matrix (rows of states) loads as states</td></tr>
+    <tr><td>NEXUS</td><td><code>.nex</code>, <code>.nexus</code></td><td>NEXUS <code>DATA</code> or <code>CHARACTERS</code> block, sequential or interleaved; <code>[comments]</code> are ignored and quoted taxon names may contain spaces; a <code>DATATYPE=STANDARD</code> matrix of 0/1 states is kept as states</td></tr>
+    <tr><td>Stockholm</td><td><code>.sto</code>, <code>.stockholm</code></td><td>Pfam/Rfam Stockholm, sequential or interleaved; <code>#=GF</code>/<code>#=GS</code>/<code>#=GR</code>/<code>#=GC</code> lines are skipped</td></tr>
+    <tr><td>GenBank</td><td><code>.gb</code>, <code>.gbk</code></td><td>Flatfile import from <code>LOCUS</code>/<code>FEATURES</code>/<code>ORIGIN</code>; every record in a multi-record file loads as its own row; records can also be fetched by accession (1.2)</td></tr>
+    <tr><td>AB1</td><td><code>.ab1</code></td><td>Sanger chromatogram (dropped or picked, also in Add Sequences): the called bases become one row, and right-click → <strong>View Chromatogram...</strong> shows the trace. Recognised by content</td></tr>
+  </table>
+  <p><strong>Missing data and state matrices.</strong> A <code>?</code> stays <code>?</code> when a file loads and in Save and snapshots: it means missing data, while <code>N</code> or <code>X</code> means any residue. Rows made only of digits, <code>?</code>, <code>-</code> and <code>.</code> (a presence/absence or restriction-site matrix in NEXUS, PHYLIP or FASTA) are kept as rows of states and survive Save and snapshots; digits beside letters are still treated as position numbers and dropped.</p>
+  <p>A3M (lowercase insert states expanded into columns) and PIR/NBRF files are read as FASTA variants. EMBL flatfiles are not supported and are refused ("No valid sequences found").</p>
+
+  <h3 id="gs-interface">1.4 Interface Layout</h3>
+  <p>
+    The interface has a collapsible menu bar at the top and the alignment viewport below.
+    Press <kbd>Ctrl+H</kbd> to hide or show the menu bar; press <kbd>Ctrl+I</kbd> for the
+    keyboard shortcuts reference.
+  </p>
+  <p>The menu bar is organised into dropdown sections:</p>
+  <table>
+    <tr><th>Menu</th><th>Purpose</th></tr>
+    <tr><td><strong>Input</strong></td><td>Load, snapshots, SVG / RTF export - file handling. Next to it: <strong>+</strong> (add sequences), the <strong>Copy</strong>, <strong>Save</strong> (FASTA) and <strong>SAM/BAM</strong> buttons, the undo/redo arrows, the <strong>Edit</strong> toggle (GeneDoc-style editing tools, §8.3) and <strong>Degap</strong></td></tr>
+    <tr><td><strong>Shade</strong></td><td>Black/Dark/Light conservation shading thresholds and colours, and the All/Non-Gap conservation calculation mode (§5.3)</td></tr>
+    <tr><td><strong>Display</strong></td><td>View mode, zoom, name length and Sticky names, codon toggle, variable sites filter with percentage threshold and breakpoint markers, letter case and colour scheme</td></tr>
+    <tr><td><strong>Consensus</strong></td><td>Consensus line settings, group consensus computation</td></tr>
+    <tr><td><strong>Annotation</strong></td><td>BED annotation track: load from file or URL, show/hide, clear (§6.4)</td></tr>
+    <tr><td><strong>Clustering</strong></td><td>Trim ends, k-mer groups, diagnostic SNP groups, 2D rectangles</td></tr>
+    <tr><td><strong>Search</strong></td><td>Motif search with regex and mismatch support, restriction sites</td></tr>
+    <tr><td><strong>Colour Names</strong></td><td>Colour sequence labels by name pattern or name similarity; sort by colour</td></tr>
+    <tr><td><strong>Alignment</strong></td><td>MAFFT and codon-aware realignment, add sequences, degap block</td></tr>
+    <tr><td><strong>Groups</strong></td><td>Appears after a grouping run. Docks the Group explorer (membership, colours, copy FASTA)</td></tr>
+    <tr><td><strong>Selections</strong></td><td>Appears when anything is selected or highlighted: one list of rows, columns, residues, searches and marks (§7.6)</td></tr>
+    <tr><td><strong>Keys</strong></td><td>Hover for the keyboard shortcut sheet</td></tr>
+    <tr><td><strong>Actions</strong></td><td>Selection, sorting, analysis (tree, statistics, repeats/TSD), presets, info, manual; the dot plot is reached from the right-click menu</td></tr>
+  </table>
+  <p>
+    Every menu except Input, Actions and Groups can be <strong>detached</strong>
+    with the grip at the top of its panel and dragged; the dock button puts it back
+    in the menu bar. The Group explorer has its own detach/dock handle.
+  </p>
+  <p>
+    The top-right corner shows the current application version and the loaded file name.
+  The top bar also has a small view switch, <strong>B | C</strong> (Block, Canvas; <strong>R</strong>
+  for Reads once reads are loaded), in every view: one click changes the view, the same as the Display
+  menu's Mode radios. Hover a letter for the view's name.
+  </p>
+  <figure style="margin: 12px 0;">
+    <img src="img/interface-layout.png" alt="The viewer with examples/svk_k4.fa loaded and the Display menu open; the menu row, the open menu, the alignment viewport and the version/file panel are outlined and numbered 1 to 4."
+      style="max-width: 100%; border: 1px solid #ddd; border-radius: 4px;">
+    <figcaption style="font-size: 11px; color: #666; margin-top: 5px;">
+      <code>examples/svk_k4.fa</code> in Block mode with the Display menu open. (1) the menu row; (2) an open dropdown, here Display; (3) the alignment viewport; (4) the version and the loaded file with its sequence count, column count and length range. Regenerate with <code>node tools/figures/build_manual_figures.js &amp;&amp; python tools/figures/build_manual_figures.py</code>.
+    </figcaption>
+  </figure>
+
+  <h3 id="gs-recent">1.5 Recent Files &amp; History</h3>
+  <p>
+    Click the <strong>Recent</strong> button to open the history dropdown.
+    It records every alignment loaded by paste, file, URL or SSH, with a timestamp and the
+    sequence count. Clicking an entry reloads a paste from its stored text and a file opened by
+    drag-and-drop or the file picker in Chromium browsers from its saved file handle; other
+    entries ask you to open the file again.
+    History persists across browser sessions via <code>localStorage</code>.
+  </p>
+
+  <h3 id="gs-examples">1.6 Worked Examples</h3>
+  <p>A feature panel that has an example shows a small <strong>Example</strong> pill (in a window, beside its title bar buttons). A click opens the example in a new tab: the viewer loads the example file, runs the feature, and shows a closable note that says what the result is. The same thing can be opened by a link: <code>?url=&lt;file&gt;&amp;title=&lt;title&gt;&amp;demo=&lt;id&gt;</code>. The ids are <code>kmer</code>, <code>snp</code>, <code>bicluster</code>, <code>trim</code>, <code>autocolour</code>, <code>macse</code>, <code>codon</code>, <code>dotplot</code>, <code>repeats</code>, <code>resites</code>, <code>reads</code> and <code>tree</code>. An id the viewer does not know does nothing. The example files are in the <code>examples</code> folder of the repository.</p>
+
+  <h3 id="gs-updates">1.7 Recent Updates</h3>
+  <p><strong>Version 1.34.1</strong> (build v338) and <strong>1.34.0</strong> (build v330). Builds v244 to v338 also changed these things:</p>
+  <ul>
+    <li><strong>Worked examples</strong> - many feature panels have a small <em>Example</em> pill that opens a ready-made example in a new tab. It uses a link of the form <code>?url=&lt;file&gt;&amp;title=&lt;title&gt;&amp;demo=&lt;id&gt;</code> (and <code>&amp;reads=</code> for the SAM/BAM example). The files come from the <code>examples</code> folder (see &ldquo;Worked examples&rdquo; below).</li>
+    <li><strong>Find a function</strong> - the bar in the menu row, or <kbd>Ctrl+K</kbd>, lists every function of the program (&sect;10).</li>
+    <li><strong>Block is drawn on the canvas</strong> - Block uses the Canvas renderer; Full is hidden from the view switch (open it with <code>?view=full</code>); the view switch is compact (&sect;5.1).</li>
+    <li><strong>Genome view</strong> - the <em>Open genome...</em> button in the Input menu opens a whole genome with its reads, read only where you look: select the FASTA, its <code>.fai</code>, and optionally the BAM and its <code>.bai</code> together.</li>
+    <li><strong>Dot plot</strong> - dot plot of parts (selected columns, typed ranges, a rectangle or a pasted sequence), B numbered in the row's own residues.</li>
+    <li><strong>Repeat Finder</strong> - adjacent copy pairs, microsatellite pairs grouped by unit, a search that shows progress and can be paused or cancelled, and Undo last marking.</li>
+    <li><strong>Reads</strong> - <code>?reads=&lt;url&gt;</code> opens a SAM/BAM on the <code>?url=</code> reference in Reads mode.</li>
+    <li><strong>Sequence editor</strong> - Undo and Redo work inside the open editor.</li>
+    <li><strong>Fixes</strong> - keyboard shortcuts leave the alignment alone while a job runs or a window is in front; stale aligner results are dropped; <kbd>Ctrl+L</kbd> asks before it discards edits; Realign keeps <code>*</code> and every residue and accepts letters MAFFT does not know; region Realign flips only the reversed row; consensus of RNA is written in U; rows with the same name in Clustal and Stockholm files stay separate; 0/1 state rows survive FASTA; MSF names with <code>oo</code> load.</li>
+  </ul>
+  <p><strong>Version 1.33.3</strong> (build v243):</p>
+  <ul>
+    <li><strong>Codon analysis by gene, compact</strong> - in Block mode a block without CDS gets no translation rows, and a second translation row appears only in blocks where two genes overlap; before, every row of every block kept two empty translation rows on a mitogenome, so the first screen (tRNA-Phe, 12S rRNA) looked blank. The message on switching it on names the first CDS and its column (§5.4).</li>
+    <li><strong>AA only</strong> - a button in the Codon bar (and a checkbox in the Display menu) shows the translation in place of the nucleotides, one amino-acid line per sequence; blocks without a CDS keep their nucleotides. Click again for the nucleotides (§5.4).</li>
+    <li><strong>Codon alignment (MACSE)</strong> - a button in the Alignment menu, and <strong>MACSE…</strong> in the Codon bar, select Sequence type <em>Coding sequence</em> with MACSE and show its settings (§3.2.2).</li>
+    <li><strong>Toolbar</strong> - a long file title shortens only the file name with an ellipsis (the counts stay) instead of wrapping onto a second toolbar line; the Codon bar sits on the menu line when the whole line fits, and on its own line below the menus otherwise.</li>
+    <li><strong>Ctrl+D with residues selected</strong> - a plain drag selects residues, not columns, and Ctrl+D then opened the browser's bookmark dialog; it now deletes the columns the selection spans (asking first unless it covers every sequence). Ctrl+D never opens the bookmark dialog outside a text field: with nothing selected it says how to select columns (§10.2).</li>
+    <li><strong>Scrolling</strong> - after a jump, a block could keep the rows of its previous position and leave the view blank until the next scroll.</li>
+  </ul>
+  <p><strong>Version 1.33.2</strong> (build v242):</p>
+  <ul>
+    <li><strong>Protein trees</strong> - distances on a protein alignment now compare amino acids; before, only columns where both residues were A, C, G or T were compared, so most amino-acid differences were ignored. JC69 and K80 fall back to p-distance on protein, and the tree summary says so (§9.4).</li>
+    <li><strong>Protein searches</strong> - <em>Search both strands</em> searches the forward strand only on a protein alignment (an amino-acid motif has no reverse complement) (§7.1).</li>
+    <li><strong>Protein labels</strong> - the file line gives lengths in <code>aa</code> for a protein alignment; the Repeat/TSD finder says it is meant for nucleotide sequences.</li>
+    <li><strong>Find SNP groups</strong> - a note on groups that arise by chance (§4.3).</li>
+  </ul>
+  <p><strong>Version 1.33.1</strong> (build v241):</p>
+  <ul>
+    <li><strong>MAFFT protein types</strong> - Protein (JTT 200PAM) and Protein (BLOSUM62) realignment now send the scoring matrix to MAFFT (<code>-j 200</code> / <code>-b 62</code>); before, JTT returned empty rows and BLOSUM62 silently forced FFT-NS-1 (§3.2).</li>
+    <li><strong>Codon marks after editing</strong> - the translation track and its stop, synonymous and non-synonymous marks are refreshed when Edit mode ends, so a residue typed in Edit mode is reflected at once (§5.4, §8.3).</li>
+  </ul>
+  <p><strong>Version 1.33.0</strong> (builds v227 to v240):</p>
+  <ul>
+    <li><strong>Codon-aware alignment</strong> - Sequence type <em>Coding sequence</em> realigns protein-coding sequences with a JavaScript port of MACSE v2.07 <code>alignSequences</code> that gives MACSE's alignments (checked on 2,636 genes) and runs on several cores, plus a fast reference-based approximation (§3.2.2).</li>
+    <li><strong>Annotation track (BED)</strong> - genes, exons, repeats or primers drawn above the alignment from a BED file, a URL or <code>?bed=</code>; coordinates follow the gaps; click a feature to select its columns; saved in snapshots (§6.4).</li>
+    <li><strong>Codon analysis by gene</strong> - with CDS features in the annotation track, each gene is translated in its own frame and strand and nothing outside the genes; a mitochondrial annotation switches the code to Vert Mito and says so. <strong>Frameshifts vs: Row 1</strong> judges frameshifts against the first sequence instead of the majority (§5.4).</li>

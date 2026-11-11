@@ -1,0 +1,368 @@
+[script.js lines 36598-36964 of ViewAlign fd8b8e4]
+function _dotDrawOverlay(row, col) {
+    const S = _dotPlotState;
+    const overlay = document.getElementById('dotPlotOverlay');
+    const { vw, vh } = _dotViewport();
+    if (!overlay) return;
+    const oCtx = _dotSizeToViewport(overlay, vw, vh);
+    oCtx.clearRect(0, 0, vw, vh);
+    _dotDrawSlideMarker(oCtx, vw, vh);
+    if (row < 0 || col < 0 || row >= S.rows || col >= S.cols) return;
+    const z = S.zoom, P = DOT_AXIS_PAD;
+    const { x: cx, y: cy } = _dotCellToScreen(row, col);
+    oCtx.save();
+    oCtx.beginPath(); oCtx.rect(P, P, vw - P, vh - P); oCtx.clip();
+    // Crosshair
+    oCtx.strokeStyle = 'rgba(80,160,255,0.7)'; oCtx.lineWidth = 1;
+    oCtx.beginPath();
+    oCtx.moveTo(P, cy); oCtx.lineTo(vw, cy);
+    oCtx.moveTo(cx, P); oCtx.lineTo(cx, vh);
+    oCtx.stroke();
+    // Diagonal trace through the hovered cell
+    let rA = row, cA = col;
+    while (rA - 1 >= 0 && cA - 1 >= 0 && _dotIsDot(rA - 1, cA - 1)) { rA--; cA--; }
+    let rB = row, cB = col;
+    while (rB + 1 < S.rows && cB + 1 < S.cols && _dotIsDot(rB + 1, cB + 1)) { rB++; cB++; }
+    if (_dotIsDot(row, col)) {
+        const a = _dotCellToScreen(rA, cA), b = _dotCellToScreen(rB, cB);
+        oCtx.strokeStyle = S.colours?.stretch || 'rgba(100,230,160,0.9)';
+        oCtx.lineWidth = Math.max(z * 0.9 + 1, 2);
+        oCtx.lineCap = 'round';
+        oCtx.beginPath(); oCtx.moveTo(a.x, a.y); oCtx.lineTo(b.x, b.y); oCtx.stroke();
+    }
+    // Pinned position marker (red crosshair)
+    if (S.pinnedRow >= 0 && S.pinnedCol >= 0) {
+        const p = _dotCellToScreen(S.pinnedRow, S.pinnedCol);
+        oCtx.strokeStyle = 'rgba(220,50,50,0.85)'; oCtx.lineWidth = 1.5;
+        oCtx.beginPath();
+        oCtx.moveTo(P, p.y); oCtx.lineTo(vw, p.y);
+        oCtx.moveTo(p.x, P); oCtx.lineTo(p.x, vh);
+        oCtx.stroke();
+        oCtx.strokeStyle = 'rgba(220,50,50,0.9)'; oCtx.lineWidth = 2;
+        oCtx.strokeRect(p.x - z / 2 - 1, p.y - z / 2 - 1, z + 2, z + 2);
+    }
+    oCtx.restore();
+    // Position labels in the axis strips, on a white patch so they cover the tick labels
+    oCtx.font = 'bold 11px system-ui';
+    const label = (text, x, y, align, base) => {
+        const w = oCtx.measureText(text).width + 10;
+        const left = align === 'center' ? x - w / 2 : x - w + 3;
+        const top = base === 'bottom' ? y - 15 : y - 10;
+        oCtx.fillStyle = '#fff'; oCtx.fillRect(left, top, w, 20);
+        oCtx.fillStyle = 'rgba(40,120,230,1)'; oCtx.textAlign = align; oCtx.textBaseline = base;
+        oCtx.fillText(text, x, y);
+    };
+    if (cx >= P) label(String(_dotShownB(col)), cx, P - 1, 'center', 'bottom');
+    if (cy >= P) label(String(_dotShownA(row)), P - 2, cy, 'right', 'middle');
+    if (S.pinnedRow >= 0 && S.pinnedCol >= 0) {
+        oCtx.fillStyle = 'rgba(220,50,50,0.95)'; oCtx.font = 'bold 10px system-ui';
+        oCtx.textAlign = 'left'; oCtx.textBaseline = 'top';
+        oCtx.fillText('PIN: A' + _dotShownA(S.pinnedRow) + ' / B' + _dotShownB(S.pinnedCol), P + 4, 16);
+    }
+}
+
+function _dotClearOverlay() {
+    const overlay = document.getElementById('dotPlotOverlay');
+    const { vw, vh } = _dotViewport();
+    if (overlay) { const c = _dotSizeToViewport(overlay, vw, vh); c.clearRect(0, 0, vw, vh); _dotDrawSlideMarker(c, vw, vh); }
+}
+
+const _DOT_COMPLEMENT = {
+    A: 'T', C: 'G', G: 'C', T: 'A', U: 'A', N: 'N',
+    R: 'Y', Y: 'R', S: 'S', W: 'W', K: 'M', M: 'K', B: 'V', V: 'B', D: 'H', H: 'D'
+};
+
+async function openDotPlot(seqA, seqB, nameA, nameB, meta = null) {
+    const S = _dotPlotState;
+    const gen = S.gen = (S.gen || 0) + 1;     // a later open makes this one stale
+    clearTimeout(_dotLiveTimer);
+    S.lower = null;
+    // Uppercase; U and T are the same base
+    const norm = s => s.toUpperCase().replace(/U/g, 'T');
+    // The sources stay the FULL sequences (a recalculation, a typed range and a preset all start from them); the plot
+    // holds the slice meta.rangeA / meta.rangeB ([from, to], 1-based, ungapped, inclusive) selects, or all of it
+    const fullA = norm(seqA), fullB = norm(seqB);
+    S.sourceSeqA = fullA; S.sourceSeqB = fullB;
+    S.nameA = nameA; S.nameB = nameB; S.revB = false;
+    S.meta = meta || S.meta || null;
+    const m = S.meta || {};
+    const rgA = _dotClampRange(m.rangeA, fullA.length), rgB = _dotClampRange(m.rangeB, fullB.length);
+    S.offA = rgA ? rgA[0] - 1 : 0; S.offB = rgB ? rgB[0] - 1 : 0;
+    S.fullLenA = fullA.length; S.fullLenB = fullB.length;
+    S.seqA = rgA ? fullA.slice(rgA[0] - 1, rgA[1]) : fullA;
+    S.seqB = rgB ? fullB.slice(rgB[0] - 1, rgB[1]) : fullB;
+    S.dispOffB = S.offB;
+    S.ext = (m.ext && /^(A|B|AB)$/.test(m.ext.side)) ? { side: m.ext.side, name: String(m.ext.name || 'pasted sequence'), cons: !!m.ext.cons } : null;   // cons: the side is the alignment's consensus (computed at plot time), not pasted text
+    S.rangeNote = S._pendingRangeNote || m.note || ''; S._pendingRangeNote = '';
+    const extA = !!S.ext && S.ext.side.includes('A'), extB = !!S.ext && S.ext.side.includes('B');   // a pasted side has no row, no alignment map
+    S.rowIndexA = Number.isInteger(m.rowIndexA) && !extA ? m.rowIndexA : -1;
+    S.rowIndexB = Number.isInteger(m.rowIndexB) && !extB ? m.rowIndexB : -1;
+    const sliceMap = _dotSliceMap;
+    S.alignMapA = extA ? null : sliceMap(m.alignMapA || _buildUngappedToAlignMap(m.alignedSeqA), S.offA, S.seqA.length);
+    S.alignMapB = extB ? null : sliceMap(m.alignMapB || _buildUngappedToAlignMap(m.alignedSeqB), S.offB, S.seqB.length);
+    const spinRadio = document.querySelector('input[name="dotPlotMode"][value="spin"]');
+    S.spinMode = spinRadio ? spinRadio.checked : true;
+    const [lo, hi] = S.spinMode ? DOT_WORD_RANGE : DOT_WINDOW_RANGE;
+    const wRaw = parseInt(document.getElementById('dotPlotWindow')?.value, 10);
+    S.windowSize = Math.min(hi, Math.max(lo, Number.isFinite(wRaw) ? wRaw : (S.spinMode ? 6 : 11)));
+    const tRaw = parseInt(document.getElementById('dotPlotThreshold')?.value, 10);
+    S.threshold = (Number.isFinite(tRaw) ? tRaw : 55) / 100;
+    S.pinnedRow = S.pinnedCol = -1;
+    S.lastRow = S.lastCol = -1;
+    // Another pair (the sequences, not their range or strand) clears the stretches marked in the alignment for the one before
+    // and brings the window back; a recalculation, a range, RevComp or a preset of the same pair keeps them
+    const pairId = nameA + '|' + nameB + '|' + seqA.length + '|' + seqB.length;
+    if (S._pairId !== pairId && state.dotRegionMarks) _dotClearRegionMarks();
+    S._pairId = pairId;
+    const pairKey = pairId + '|' + S.offA + '|' + S.seqA.length + '|' + S.offB + '|' + S.seqB.length;
+    S._frozen = false;
+    S._frozenRow = S._frozenCol = -1;
+    S._copyRegion = null;
+    S.regions = [];
+    S._shownRegion = -1;   // the marks stay (residue-anchored); the new list has no shown entry
+
+    const revComp = document.getElementById('dotPlotRevComp')?.checked;
+    // the slider position is kept by a recalculation of the same plot and dropped for another one; when only the strand of B
+    // changed the position is mirrored (the same residue, not the same column)
+    if (S._pairKey !== pairKey) { S.slideRow = S.slideCol = -1; S._pairKey = pairKey; }
+    else if (!!S._pairRev !== !!revComp && S.slideCol >= 0) S.slideCol = S.seqB.length - 1 - S.slideCol;
+    S._pairRev = !!revComp;
+    if (revComp) {
+        S.seqB = [...S.seqB].reverse().map(b => _DOT_COMPLEMENT[b] ?? 'N').join('');
+        S.nameB = nameB + ' (RevComp)'; S.revB = true;
+        if (S.alignMapB) S.alignMapB = [...S.alignMapB].reverse();
+        S.dispOffB = S.fullLenB - S.offB - S.seqB.length;   // the plotted B starts this far into the reverse complement of the whole sequence
+    }
+    S.unknown = _dotUnknownChars(S.sourceSeqA, S.sourceSeqB, (S.rowIndexA >= 0 || S.rowIndexB >= 0) && isProteinAlignment());
+    _dotCheckEdits();   // a recalculation or range change of a plot whose rows were edited keeps saying so (and a fresh plot costs the fast path)
+
+    const modal = document.getElementById('dotPlotModal');
+    if (modal) showExclusiveModal('dotPlotModal');
+    const titleEl = document.getElementById('dotPlotTitle');
+    if (titleEl) titleEl.textContent = `Dot Plot: ${nameA}${_dotRangeText('A')} vs ${nameB}${_dotRangeText('B')}${revComp ? ' (rc)' : ''}`;
+    _dotSyncRangeInputs();
+    const statusEl = document.getElementById('dotPlotStatus');
+    _dotClearHoverInfo();
+
+    const cells = S.seqA.length * S.seqB.length;
+    if (cells > DOT_MAX_CELLS || !cells) {   // no residues on a side (an empty consensus, an all-gap row): an empty plot would throw in ImageData
+        S.matchMap = S.scores = S.overview = null;
+        S.rows = S.cols = 0;
+        S.slideRow = S.slideCol = -1;
+        _dotSyncSlideRanges();   // nothing to slide over: the sliders go grey instead of keeping the last pair's ranges
+        _dotClearOverlay();
+        const c = document.getElementById('dotPlotCanvas');
+        if (c) c.getContext('2d').clearRect(0, 0, c.width, c.height);
+        if (statusEl) statusEl.textContent = !cells ? `Nothing to plot: ${S.seqA.length ? nameB : nameA} has no residues here.` :
+            `Too large to plot: ${S.seqA.length.toLocaleString()} x ${S.seqB.length.toLocaleString()} positions ` +
+            `(limit ${DOT_MAX_CELLS.toLocaleString()} cells, about 10,000 x 10,000). Plot shorter sequences.`;
+        _dotRenderRegionList();
+        S.computing = false;   // this is the newest open, so no computation of an earlier one may stay marked as running (its result is dropped by the gen check)
+        return;
+    }
+    if (statusEl) statusEl.textContent = `Computing ${S.seqA.length} x ${S.seqB.length}...`;
+
+    S.computing = true;
+    const t0 = performance.now();
+    try {
+        if (S.spinMode) {
+            const result = await _dotRunWorker('word', { seqA: S.seqA, seqB: S.seqB, wordSize: S.windowSize, unknown: S.unknown });
+            S.matchMap = new Uint8Array(result.matchMap);
+            S.scores = null;
+            S.rows = result.rows; S.cols = result.cols;
+            S.scoreMin = 0; S.scoreMax = 1;
+        } else {
+            const result = await _dotRunWorker('window', { seqA: S.seqA, seqB: S.seqB, windowSize: S.windowSize, mode: 'identity', unknown: S.unknown });
+            S.scores = new Int16Array(result.scores);
+            S.matchMap = null;
+            S.rows = result.rows; S.cols = result.cols;
+            S.scoreMin = result.min; S.scoreMax = result.max;
+        }
+    } catch (err) {
+        if (gen !== S.gen) return;
+        S.matchMap = S.scores = S.overview = null;
+        S.rows = S.cols = 0;
+        S.slideRow = S.slideCol = -1;
+        _dotSyncSlideRanges();
+        _dotClearOverlay();   // the previous pair's crosshair and marker
+        const ec = document.getElementById('dotPlotCanvas');
+        if (ec) ec.getContext('2d').clearRect(0, 0, ec.width, ec.height);
+        if (statusEl) statusEl.textContent = `Error: ${err.message}`;
+        _dotRenderRegionList();   // S.regions was emptied for this pair; the list still showed the previous one
+        S.computing = false; return;
+    }
+    if (gen !== S.gen) return;
+    // Lower half with its own settings (self-plot only: the halves are mirror images)
+    const splitBox = document.getElementById('dotPlotSplit');
+    const selfPlot = S.seqA === S.seqB && S.offA === S.offB && !revComp;
+    if (splitBox) {
+        splitBox.disabled = !selfPlot;
+        splitBox.parentElement.style.opacity = selfPlot ? '' : '0.55';
+    }
+    if (splitBox?.checked && selfPlot) {
+        const L = _dotReadLowerSettings();
+        try {
+            if (L.spinMode) {
+                const res = await _dotRunWorker('word', { seqA: S.seqA, seqB: S.seqB, wordSize: L.windowSize, unknown: S.unknown });
+                L.matchMap = new Uint8Array(res.matchMap); L.scores = null;
+            } else {
+                const res = await _dotRunWorker('window', { seqA: S.seqA, seqB: S.seqB, windowSize: L.windowSize, mode: 'identity', unknown: S.unknown });
+                L.scores = new Int16Array(res.scores); L.matchMap = null;
+            }
+            if (gen !== S.gen) return;
+            L.ready = true;
+            S.lower = L;
+        } catch (err) {
+            if (gen !== S.gen) return;
+            if (statusEl) statusEl.textContent = `Lower half: ${err.message}`;
+        }
+    }
+    const ms = performance.now() - t0;
+    S.computing = false;
+    _dotBuildImage();
+    S._autoFit = true;
+    _dotFitView();
+    _dotClearOverlay();
+    _dotDetectRegions();
+    _dotSyncSlideRanges();
+    if (S.slideRow >= 0) _dotSetSlide(S.slideRow, S.slideCol, { noScroll: true });
+    else _dotRedrawOverlay();
+    const halfDesc = H => H.spinMode ? `SPIN word ${H.windowSize}` : `Dotter window ${H.windowSize}, ${Math.round(H.threshold * 100)}%`;
+    if (statusEl) statusEl.textContent = `${S.seqA.length} x ${S.seqB.length} in ${ms < 1000 ? ms.toFixed(0) + ' ms' : (ms / 1000).toFixed(1) + ' s'}.` +
+        (S.lower ? `  Upper half: ${halfDesc(S)}; lower half: ${halfDesc(S.lower)}.` : '');
+}
+
+// Lower-half settings from its own controls
+function _dotReadLowerSettings() {
+    const spinMode = document.querySelector('input[name="dotPlotModeLower"]:checked')?.value === 'spin';
+    const [lo, hi] = spinMode ? DOT_WORD_RANGE : DOT_WINDOW_RANGE;
+    const wRaw = parseInt(document.getElementById('dotPlotWindowLower')?.value, 10);
+    const tRaw = parseInt(document.getElementById('dotPlotThresholdLower')?.value, 10);
+    return { spinMode, windowSize: Math.min(hi, Math.max(lo, Number.isFinite(wRaw) ? wRaw : (spinMode ? 6 : 11))),
+        threshold: (Number.isFinite(tRaw) ? tRaw : 55) / 100, matchMap: null, scores: null, runs: null, ready: false };
+}
+function _dotOnLowerModeChange() {
+    const spin = document.querySelector('input[name="dotPlotModeLower"]:checked')?.value === 'spin';
+    _dotSyncSliderRow(spin, 'dotPlotWindowLower', 'dotPlotWindowLowerLabel', 'dotPlotWindowValLower', 'dotPlotThreshLowerWrap', 'dotPlotThresholdLower', 'dotPlotThreshValLower');
+}
+
+async function _dotUnfreeze() {
+    const S = _dotPlotState;
+    S._frozen = false;
+    S._frozenRow = S._frozenCol = -1;
+    const bar = document.getElementById('dotPlotSpinScroll');
+    if (bar) bar.style.visibility = 'hidden';   // keeps its space: showing / hiding it resized the plot
+    const panelEl = document.getElementById('dotPlotAlignPanel');
+    if (panelEl) {
+        panelEl.style.borderColor = '#d8d8d8';
+        panelEl.style.boxShadow = 'none';
+        panelEl.style.background = '#f7f7f7';
+    }
+}
+
+function _dotSafeName(s) {
+    return String(s || 'seq').replace(/[^A-Za-z0-9._-]+/g, '_').slice(0, 60);
+}
+
+function _dotDownload(href, filename) {
+    const a = document.createElement('a');
+    a.href = href;
+    a.download = filename;
+    a.click();
+}
+
+// PNG of the whole plot (not just the visible part), at the current zoom
+// unless that would exceed 8000 px on a side
+function _dotExportPng() {
+    const S = _dotPlotState;
+    if (!S.overview) return;
+    // At least ~1600 px across (up to 4 px per position), at most 8000 px
+    const n = Math.max(S.rows, S.cols);
+    const z = Math.min((8000 - DOT_AXIS_PAD) / n, Math.max(S.zoom, Math.min(4, 1600 / n)));
+    const w = Math.ceil(DOT_AXIS_PAD + S.cols * z + 2), h = Math.ceil(DOT_AXIS_PAD + S.rows * z + 2);
+    const c = document.createElement('canvas');
+    c.width = w; c.height = h;
+    _dotPaint(c.getContext('2d'), z, 0, 0, w, h);
+    _dotDownload(c.toDataURL('image/png'), `dotplot_${_dotSafeName(S.nameA)}_vs_${_dotSafeName(S.nameB)}.png`);
+}
+
+// Vector SVG: every diagonal run of dots is one line segment, so the file
+// scales without pixels. Dotter runs are shaded by their mean identity.
+function _dotExportSvg() {
+    const S = _dotPlotState;
+    if (!S.overview) return;
+    const spin = S.spinMode && !!S.matchMap;
+    const MAX_RUNS = 300000;
+    const size = 800;
+    const z = size / Math.max(S.rows, S.cols);
+    const P = DOT_AXIS_PAD;
+    const W = P + S.cols * z + 2, H = P + S.rows * z + 2;
+    const esc = t => String(t).replace(/[&<>"]/g, ch => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[ch]));
+    const lines = [];
+    let runs = 0;
+    for (let d = -(S.rows - 1); d < S.cols && runs <= MAX_RUNS; d++) {
+        const Hd = _dotHalf(d < 0 ? 1 : 0, 0);        // below the diagonal: lower-half settings
+        const spin = Hd.spinMode && !!Hd.matchMap;
+        const startR = d < 0 ? -d : 0, endR = Math.min(S.rows, S.cols - d);
+        let rs = -1, sum = 0;
+        for (let r = startR; r <= endR; r++) {
+            const on = r < endR && _dotIsDot(r, r + d);
+            if (on) {
+                if (rs < 0) { rs = r; sum = 0; }
+                sum += spin ? 1 : _dotIdentityAt(r * S.cols + r + d);
+            } else if (rs >= 0) {
+                const len = r - rs;
+                const grey = spin ? 0 : Math.round((1 - sum / len) * 255);
+                const x1 = P + (rs + d) * z, y1 = P + rs * z;
+                lines.push(`<line x1="${x1.toFixed(2)}" y1="${y1.toFixed(2)}" x2="${(x1 + len * z).toFixed(2)}" y2="${(y1 + len * z).toFixed(2)}" stroke="rgb(${grey},${grey},${grey})"/>`);
+                runs++;
+                rs = -1;
+            }
+        }
+    }
+    if (runs > MAX_RUNS) {
+        showMessage(`Too many separate dots for a vector file (over ${MAX_RUNS.toLocaleString()} runs). Raise the word size or threshold, or export PNG.`, 6000);
+        return;
+    }
+    const ticks = [];
+    const stepX = _dotNiceStep(S.cols, 10), stepY = _dotNiceStep(S.rows, 10);
+    for (const t of _dotAxisTicks('B', stepX, 0, S.cols)) {   // the row's own residue numbers, as on screen
+        const x = (P + (t.idx + 0.5) * z).toFixed(2);
+        ticks.push(`<line x1="${x}" y1="${P}" x2="${x}" y2="${P - 5}" stroke="#333"/><text x="${x}" y="${P - 7}" text-anchor="middle">${t.num}</text>`);
+    }
+    for (const t of _dotAxisTicks('A', stepY, 0, S.rows)) {
+        const y = (P + (t.idx + 0.5) * z).toFixed(2);
+        ticks.push(`<line x1="${P}" y1="${y}" x2="${P - 5}" y2="${y}" stroke="#333"/><text x="${P - 7}" y="${y}" text-anchor="end" dominant-baseline="middle">${t.num}</text>`);
+    }
+    const svg = [
+        '<?xml version="1.0" encoding="UTF-8"?>',
+        `<svg xmlns="http://www.w3.org/2000/svg" width="${W.toFixed(0)}" height="${H.toFixed(0)}" viewBox="0 0 ${W.toFixed(2)} ${H.toFixed(2)}" font-family="sans-serif" font-size="11">`,
+        `<title>Dot plot: ${esc(S.nameA)} vs ${esc(S.nameB)} (${spin ? 'SPIN word ' + S.windowSize : 'Dotter window ' + S.windowSize + ', threshold ' + Math.round(S.threshold * 100) + '%'})</title>`,
+        `<rect width="100%" height="100%" fill="white"/>`,
+        `<g stroke-width="${Math.max(z, 0.5).toFixed(2)}" stroke-linecap="square">`,
+        ...lines,
+        '</g>',
+        `<rect x="${P}" y="${P}" width="${(S.cols * z).toFixed(2)}" height="${(S.rows * z).toFixed(2)}" fill="none" stroke="#333"/>`,
+        '<g fill="#555">', ...ticks, '</g>',
+        `<text x="${P + S.cols * z / 2}" y="12" text-anchor="middle" font-weight="bold">${esc(S.nameB + _dotRangeText('B'))}</text>`,
+        `<text transform="translate(12 ${P + S.rows * z / 2}) rotate(-90)" text-anchor="middle" font-weight="bold">${esc(S.nameA + _dotRangeText('A'))}</text>`,
+        '</svg>'
+    ].join('\n');
+    const url = URL.createObjectURL(new Blob([svg], { type: 'image/svg+xml' }));
+    _dotDownload(url, `dotplot_${_dotSafeName(S.nameA)}_vs_${_dotSafeName(S.nameB)}.svg`);
+    setTimeout(() => URL.revokeObjectURL(url), 2000);
+    showMessage(`Dot plot exported as SVG (${runs.toLocaleString()} diagonal runs).`, 2500);
+}
+
+// The height a horizontal scrollbar takes in this browser (0 for overlay scrollbars), measured once
+let _dotSbPx = -1;
+function _dotScrollbarPx() {
+    if (_dotSbPx >= 0) return _dotSbPx;
+    const d = document.createElement('div');
+    d.style.cssText = 'position:absolute;top:-200px;left:0;width:100px;height:100px;overflow:scroll;visibility:hidden;';
+    document.body.appendChild(d);
+    _dotSbPx = Math.max(0, d.offsetHeight - d.clientHeight);
+    d.remove();
+    return _dotSbPx;
+}
+

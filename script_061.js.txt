@@ -1,0 +1,402 @@
+[script.js lines 26131-26531 of ViewAlign fd8b8e4]
+function initTreeBuilderControls() {
+    const rebuildIfOpen = () => {
+        const modal = document.getElementById('treeBuilderModal');
+        if (modal && modal.style.display !== 'none') {
+            openTreeBuilder();
+        }
+    };
+    document.querySelectorAll('input[name="treeMethod"]').forEach(radio => {
+        radio.addEventListener('change', rebuildIfOpen);
+    });
+    // The distance-correction dropdown (p-distance/JC69/K80) had no listener at all - changing
+    // it silently did nothing while the modal was open, unlike the UPGMA/NJ method radios above.
+    const modelSelect = document.getElementById('treeDistanceModel');
+    if (modelSelect) modelSelect.addEventListener('change', rebuildIfOpen);
+}
+
+// ── MAFFT WASM (off main thread for large jobs) ─────────────────────────────
+let _activeMafftWorker = null;
+let _activeMafftReject = null;
+
+function _mafftFastaStats(fasta) {
+    let seqCount = 0;
+    let totalResidues = 0;
+    let maxLen = 0;
+    let curLen = 0;
+    let inSeq = false;
+    for (const raw of fasta.split('\n')) {
+        const line = raw.trim();
+        if (!line) continue;
+        if (line.startsWith('>')) {
+            if (inSeq) {
+                totalResidues += curLen;
+                maxLen = Math.max(maxLen, curLen);
+            }
+            seqCount++;
+            curLen = 0;
+            inSeq = true;
+        } else if (inSeq) {
+            curLen += line.replace(/[-.]/g, '').length;
+        }
+    }
+    if (inSeq) {
+        totalResidues += curLen;
+        maxLen = Math.max(maxLen, curLen);
+    }
+    return { seqCount, totalResidues, maxLen };
+}
+
+function _confirmMafftJob(stats, extraArgs) {
+    const { seqCount, totalResidues, maxLen } = stats;
+    if (totalResidues <= 250000) {
+        return { ok: true, extraArgs };
+    }
+
+    let estimate = 'several minutes';
+    if (totalResidues > 3000000) estimate = '30+ minutes (possibly much longer)';
+    else if (totalResidues > 1000000) estimate = '10–30 minutes';
+
+    const proceed = window.confirm(
+        `Align ${seqCount} sequences (${totalResidues.toLocaleString()} residues, longest ${maxLen.toLocaleString()} bp)?\n\n` +
+        `Alignment runs in the background — the viewer stays responsive.\n` +
+        `Rough estimate at default settings: ${estimate}.\n\n` +
+        `Continue?`
+    );
+    if (!proceed) return { ok: false };
+
+    const eIdx = extraArgs.indexOf('-E');
+    const treeRuns = eIdx >= 0 ? parseInt(extraArgs[eIdx + 1], 10) : 2;
+    if (totalResidues > 500000 && treeRuns > 1) {
+        const useFast = window.confirm(
+            `Large alignment — use the fast strategy (FFT-NS-1: build the guide tree once instead of ${treeRuns} times)?\n\n` +
+            `OK = faster (lower accuracy)\n` +
+            `Cancel = keep current settings`
+        );
+        if (useFast) {
+            // this run only: the Speed setting stays as the user chose it for later alignments
+            const fast = extraArgs.slice();
+            if (eIdx >= 0) fast[eIdx + 1] = '1'; else fast.push('-E', '1');
+            return { ok: true, extraArgs: fast };
+        }
+    }
+    return { ok: true, extraArgs };
+}
+
+function _cancelActiveMafftWorker() {
+    if (_activeMafftWorker) {
+        _activeMafftWorker.terminate();
+        if (_activeMafftWorker === _macseWorker) _macseWorker = null;
+        _activeMafftWorker = null;
+    }
+    if (_activeMafftReject) {
+        const reject = _activeMafftReject;
+        _activeMafftReject = null;
+        reject(new Error('MAFFT alignment cancelled'));
+    }
+}
+
+// A worker script that fails to load raises an ErrorEvent with no message
+function _workerStartError(err, what) {
+    if (err && err.message) return new Error(err.message);
+    const why = location.protocol === 'file:'
+        ? 'open the viewer over http(s), not as a file'
+        : 'the script could not be downloaded; check the connection and reload';
+    return new Error(`Could not start ${what} (${why})`);
+}
+
+function _runMafftInWorker(fasta, extraArgs) {
+    return new Promise((resolve, reject) => {
+        _cancelActiveMafftWorker();
+        const id = Date.now();
+        let worker;
+        try { worker = new Worker(`mafft-worker.js?v=${BUILD_TAG.replace(/^v/, '')}`); }
+        catch (_) { reject(_workerStartError(null, 'MAFFT')); return; }
+        _activeMafftWorker = worker;
+        _activeMafftReject = reject;
+        worker.onmessage = (ev) => {
+            if (ev.data?.id !== id) return;
+            _activeMafftWorker = null;
+            _activeMafftReject = null;
+            worker.terminate();
+            if (ev.data.ok) resolve(ev.data.result);
+            else reject(new Error(ev.data.error || 'MAFFT failed'));
+        };
+        worker.onerror = (err) => {
+            _activeMafftWorker = null;
+            _activeMafftReject = null;
+            worker.terminate();
+            reject(_workerStartError(err, 'MAFFT'));
+        };
+        worker.postMessage({ id, type: 'align', fasta, extraArgs, wasmPath: '' });
+    });
+}
+
+// ── Built-in codon aligners: macse-align.js (MACSE v2.07 port, default) and codon-align.js (fast) ──────────
+function _codonEngine() {
+    return el('codonEngine')?.value === 'fast' ? 'fast' : 'macse';
+}
+
+// While Realign all / selected / region run, rows go to the aligner as r<row index> (rows with the same name stay
+// apart); the codon reference and the codon statistics are translated between those ids and the row names.
+let _alignRowIds = false;
+function _alignIdRow(id) {
+    const m = _alignRowIds && /^r(\d+)$/.exec(String(id).split(/\s+/)[0]);
+    return m ? state.seqs[+m[1]] || null : null;
+}
+// Add & Align sends pasted rows too, which are no rows of the alignment yet: their names are kept here while it
+// runs, so that an error names a pasted row and not "r12" (GLM check 2026-11-11, Q16).
+let _alignIdNames = null;
+function _alignIdName(id) {
+    const key = String(id).split(/\s+/)[0];
+    if (_alignRowIds && _alignIdNames && _alignIdNames.has(key)) return _alignIdNames.get(key);
+    const r = _alignIdRow(id);
+    return r ? (r.fullHeader || r.header) : id;
+}
+
+function _codonAlignOpts(fasta) {
+    const num = (id, dflt) => { const v = parseFloat(el(id)?.value); return isNaN(v) ? dflt : v; };
+    // The genetic code of the Code menu (Display > Codon). Both aligners used the standard code whatever was chosen:
+    // in a mitochondrial gene MACSE put two frameshifts in every row to dodge TGA (Trp), the fast engine counted it as a stop.
+    const gc = parseInt(el('codonCode')?.value, 10) || 1;
+    if (_codonEngine() === 'macse') {
+        // MACSE's own cost parameters (-fs, -stop), MACSE defaults 30 and 50; -gc as the NCBI table number
+        return { engine: 'macse', gc, fs: Math.abs(num('macseFs', 30)), stop: Math.abs(num('macseStop', 50)), frameRestored: true };
+    }
+    const active = _getActiveCode();
+    const codeTable = [...'TCAG'].flatMap(a => [...'TCAG'].flatMap(b => [...'TCAG'].map(c => active[a + b + c] || 'X'))).join('');   // an unassigned codon is unknown, not a stop
+    const typed = (el('codonRef')?.value || '').trim();
+    let ref = typed;
+    const names = new Set(parseMafftOutput(fasta).map(r => r.name));
+    if (_alignRowIds) {
+        // rows are sent as r<index>: the reference is the id of the first row (typed: the first row of that name)
+        const isRef = (s) => !typed || s.header === typed || s.fullHeader === typed || String(s.header).split(/\s+/)[0] === typed;
+        const i = state.seqs.findIndex((s, k) => names.has('r' + k) && isRef(s));
+        if (i >= 0) ref = 'r' + i;
+        else if (!typed) ref = 0;
+    } else if (!ref) {
+        // Default reference: the first row as displayed among the sequences being aligned (not whatever comes
+        // first in the FASTA, which Reorder by similarity / Add at top can change).
+        const first = state.seqs.find(s => names.has(s.fullHeader || s.header) || names.has(s.header));
+        ref = first ? (first.fullHeader || first.header) : 0;
+    }
+    return {
+        engine: 'fast',
+        codeTable,
+        frameshift: -Math.abs(num('codonFs', 40)),
+        stop: -Math.abs(num('codonStop', 50)),
+        ref,
+        refTyped: typed,
+        // Missing nucleotides of a frameshifted codon are written as '-': the viewer treats only '-' and '.' as
+        // gaps, so MACSE's '!' would be counted as a residue (positions, case remapping, export, protein detection).
+        frameRestored: true
+    };
+}
+
+function _isCodonAlignMode() {
+    return el('mafftSeqType')?.value === 'codon';
+}
+
+// The MACSE worker (and the threads it starts) is kept for the next codon alignment, so the threads, the module
+// and the WebAssembly kernel are not set up again each time; it is freed after 2 idle minutes, on cancel or on error.
+let _macseWorker = null, _macseWorkerIdle = null;
+function _takeMacseWorker() {
+    if (_macseWorkerIdle) { clearTimeout(_macseWorkerIdle); _macseWorkerIdle = null; }
+    if (!_macseWorker) _macseWorker = new Worker(`macse-worker.js?v=${BUILD_TAG.replace(/^v/, '')}`);
+    return _macseWorker;
+}
+function _parkMacseWorker() {
+    if (_macseWorkerIdle) clearTimeout(_macseWorkerIdle);
+    _macseWorkerIdle = setTimeout(() => {
+        _macseWorkerIdle = null;
+        if (_macseWorker && _activeMafftWorker !== _macseWorker) { _macseWorker.terminate(); _macseWorker = null; }
+    }, 120000);
+}
+
+function _runCodonAlignInWorker(fasta, opts, onProgress) {
+    return new Promise((resolve, reject) => {
+        _cancelActiveMafftWorker();
+        const id = Date.now();
+        // MACSE port: macse-worker.js (CeCILL 2.1, may start nested workers); fast engine: codon-align-worker.js (MIT)
+        const macse = !!(opts && opts.engine === 'macse');
+        let worker;
+        try { worker = macse ? _takeMacseWorker() : new Worker(`codon-align-worker.js?v=${BUILD_TAG.replace(/^v/, '')}`); }
+        catch (_) { reject(_workerStartError(null, 'codon alignment')); return; }
+        _activeMafftWorker = worker;
+        _activeMafftReject = reject;
+        worker.onmessage = (ev) => {
+            if (ev.data?.id !== id) return;
+            if (ev.data.progress) { if (onProgress) onProgress(ev.data.progress); return; }
+            _activeMafftWorker = null;
+            _activeMafftReject = null;
+            if (macse) _parkMacseWorker(); else worker.terminate();
+            if (ev.data.ok) {
+                window._lastCodonAlignStats = ev.data.stats || null;
+                resolve(ev.data.result);
+            } else reject(new Error(ev.data.error || 'Codon alignment failed'));
+        };
+        worker.onerror = (err) => {
+            _activeMafftWorker = null;
+            _activeMafftReject = null;
+            worker.terminate();
+            if (worker === _macseWorker) _macseWorker = null;
+            reject(_workerStartError(err, 'codon alignment'));
+        };
+        worker.postMessage({ id, type: 'align', fasta, opts });
+    });
+}
+
+// Rows that are not coding from end to end (a gene with its flanks or introns): the codon aligners explain each
+// stop with frameshifts. On a 3 kb region with two genes MACSE put 21 frameshifts in each row. Measured as the
+// fewest frame changes that read the row without an internal stop (greedy, furthest reach): a coding sequence
+// needs 0 or 1 even with a frameshift (the 0.4-3.6 kb genes of tests/codon-align/fixtures: 0-1), the region 21.
+// "Stops in every frame" was not a test of it: a real gene with a frameshift has stops in all three frames.
+function _stopFreeSwitches(s, code) {
+    const L = s.length;
+    let cur = 0, n = 0;
+    while (cur + 3 <= L) {
+        let best = cur;
+        for (let f = 0; f < 3; f++) {
+            let q = cur + ((f - (cur % 3)) + 3) % 3;
+            while (q + 3 <= L && code[s.substr(q, 3)] !== '*') q += 3;
+            if (q > best) best = q;
+        }
+        if (best + 6 > L) break;            // the last codon may be the stop
+        n++; cur = best + 1;
+    }
+    return n;
+}
+function _nonCodingRows(fasta) {
+    const code = _getActiveCode(), out = [];
+    for (const r of parseMafftOutput(fasta)) {
+        const s = String(r.seq || '').replace(/[-.\s]/g, '').toUpperCase().replace(/U/g, 'T');
+        if (s.length < 60) continue;
+        const switches = _stopFreeSwitches(s, code);
+        if (switches > Math.max(5, s.length / 600)) out.push({ name: _alignIdName(r.name), switches });
+    }
+    return out;
+}
+
+async function _codonAlignWithUi(fasta, label) {
+    const nonCoding = _nonCodingRows(fasta);
+    if (nonCoding.length) {
+        const list = nonCoding.slice(0, 3).map(x => `${String(x.name).split(/\s+/)[0]} (${x.switches})`).join(', ') + (nonCoding.length > 3 ? ` and ${nonCoding.length - 3} more` : '');
+        const go = await _mafftAskYesNo({
+            message: `${nonCoding.length} sequence${nonCoding.length === 1 ? ' has' : 's have'} stop codons in every reading frame along most of their length: ${list} (frame changes needed to read it without a stop; a coding sequence needs 0 or 1).\n\n`
+                + 'They are not coding sequences from end to end (flanks, introns, or the wrong genetic code: Display > Code). '
+                + 'A codon aligner will explain each stop with frameshifts.\n\n'
+                + 'To align a gene: click it on the annotation track (selects its columns) and use Realign selected region.\n\nAlign anyway?',
+            defaultYes: false, dontAskKey: 'codonNonCodingAskOff', defaultKey: 'codonNonCodingDefault'
+        });
+        if (!go) { showMessage('Codon alignment not run: the sequences are not coding from end to end.', 5000); return null; }
+    }
+    const stats = _mafftFastaStats(fasta);
+    const opts = _codonAlignOpts(fasta);
+    let cancelled = false;
+    try {
+        const result = await runWithProgress(
+            label || 'Aligning coding sequences (codon-aware)...',
+            async (updateBusy) => {
+                const base = `${stats.seqCount} seqs, ${stats.totalResidues.toLocaleString()} nt, longest ${stats.maxLen.toLocaleString()}`;
+                updateBusy(base);
+                await yieldToPaint();
+                const stageText = { distances: 'distances', tree: 'progressive alignment', refine: 'refining' };
+                return _runCodonAlignInWorker(fasta, opts, (p) => {
+                    const it = p.stage === 'refine' && p.iter ? ` (round ${p.iter})` : '';
+                    updateBusy(`${base} · MACSE ${stageText[p.stage] || p.stage}${it} ${p.done}/${p.total}`);
+                });
+            },
+            '',
+            () => { cancelled = true; _cancelActiveMafftWorker(); }
+        );
+        if (cancelled) {
+            showMessage('Codon alignment cancelled.', 2500);
+            return null;
+        }
+        const st = window._lastCodonAlignStats;
+        if (st && _alignRowIds) {
+            if (st.ref != null) st.ref = _alignIdName(st.ref);
+            for (const list of [st.frameshifts, st.internalStops]) for (const x of (list || [])) x.name = _alignIdName(x.name);
+        }
+        if (st && st.frameshifts) {
+            const fsTot = st.frameshifts.reduce((a, x) => a + x.n, 0);
+            const stTot = (st.internalStops || []).reduce((a, x) => a + x.n, 0);
+            const macse = st.engine === 'macse';
+            const refShort = macse ? '' : String(st.ref).split(/\s+/)[0];
+            console.log(`Codon alignment (${macse ? 'MACSE v2.07 port' : 'fast, reference ' + st.ref}): ${st.columns} codon columns, ${fsTot} frameshifted codons, ${stTot} internal stops, ${Math.round(st.ms)} ms`, st);
+            const msgs = [];
+            if (!macse && opts.refTyped && st.refFound === false) msgs.push(`Reference "${opts.refTyped}" not found; used ${refShort}.`);
+            const what = macse ? 'MACSE' : `ref ${refShort}`;
+            if (fsTot || stTot) msgs.push(`Codon alignment (${what}): ${fsTot} frameshifted codon${fsTot === 1 ? '' : 's'}, ${stTot} internal stop${stTot === 1 ? '' : 's'}. Details in the console.`);
+            if (msgs.length) {
+                // The caller shows its own success message right after we return: append to it. If it shows none,
+                // show the note on its own.
+                _pendingAlignNote = msgs.join(' ');
+                setTimeout(() => {
+                    if (_pendingAlignNote) { const n = _pendingAlignNote; _pendingAlignNote = null; showMessage(n, 6000); }
+                }, 1500);
+            }
+        }
+        return result;
+    } catch (err) {
+        if (cancelled || String(err?.message || '').includes('cancelled')) return null;
+        // Report here (callers would label it as a MAFFT error) and return null, which callers treat as "no result".
+        const msg = String(err?.message || err).replace(/^codon-align:\s*/, '')
+            .replace(/"(r\d+)"/g, (m, id) => `"${_alignIdName(id)}"`);   // row ids back to names
+        showMessage('Codon alignment: ' + msg, 8000);
+        console.error('Codon alignment error:', err);
+        return null;
+    }
+}
+
+// The result of an aligner run belongs to the rows it was started on. If the rows change during the run (an
+// edit, an undo, a move, another file) the result is dropped and the callers treat it as "no result": written
+// back by row number it replaced one sequence with another's residues (audit 2026-11-10, H1 and H2).
+let _skipNextNoOpDrop = false;
+// set when the last run's result was dropped because the rows changed: the region/block realign callers then keep that
+// message instead of writing "cancelled" over it (GLM check 2026-11-10, #6)
+let _mafftResultStale = false;
+async function _mafftAlignWithUi(fasta, extraArgs, label) {
+    _mafftResultStale = false;
+    const startSeqs = state.seqs, startFp = _seqsFingerprint();
+    const undoTop = state.deletedHistory[state.deletedHistory.length - 1];   // the caller's own undo step, if it pushed one
+    const result = await _mafftAlignWithUiRun(fasta, extraArgs, label);
+    if (result == null) return result;
+    if (state.seqs !== startSeqs || _seqsFingerprint() !== startFp) {
+        // the callers take their undo step back on "no result": only if it is still the last one
+        if (state.deletedHistory[state.deletedHistory.length - 1] !== undoTop) { _skipNextNoOpDrop = true; setTimeout(() => { _skipNextNoOpDrop = false; }, 0); }   // the caller's continuation runs before the timer
+        _pendingAlignNote = null;
+        _mafftResultStale = true;
+        showMessage('The alignment changed while the aligner was running, so its result was not used. Run it again.', 7000);
+        return null;
+    }
+    return result;
+}
+// MAFFT drops "*" from its input (and may change other symbols). Sent as they were, a row came back one residue
+// short and the case of everything after the "*" moved by one, with a success message (audit 2026-11-10, H4).
+// So: "*" goes in as a placeholder letter, and every residue of the result is written back from the row that was
+// sent, position by position. A result with a different number of residues for a row is refused.
+function _alignerGuardInput(fasta) {
+    const recs = parseMafftOutput(fasta);
+    // Letters MAFFT does not know make it stop with "no output" (audit M11): protein U and O, and in
+    // nucleotide rows every letter that is no base code (I for inosine, E, F, J, L, O, P, Q, Z). They go
+    // out as the placeholder too, in rows without gaps only: those are the rows written back afterwards.
+    // Protein or nucleotide is judged the way MAFFT judges it (more than 75 % of the letters are
+    // A, C, G, T, U or N), not by isProteinAlignment(): one E in a DNA alignment makes the viewer say
+    // protein while MAFFT still reads DNA and stops at the E.
+    let acgt = 0, letters = 0;
+    for (const r of recs) for (let i = 0; i < r.seq.length; i++) {
+        const c = r.seq.charCodeAt(i) & ~32;
+        if (c < 65 || c > 90) continue;
+        letters++;
+        if (c === 65 || c === 67 || c === 71 || c === 84 || c === 85 || c === 78) acgt++;
+    }
+    const protein = !(letters && acgt / letters > 0.75);
+    const ph = protein ? 'X' : 'N';
+    const unknown = protein ? /[*?UOuo]/g : /[*?EFIJLOPQZefijlopqz]/g;
+    const swap = (seq) => /[-.]/.test(seq) ? seq.replace(/[*?]/g, ph) : seq.replace(unknown, ph);
+    let changed = false;
+    const sent = recs.map(r => { const t = swap(r.seq); if (t !== r.seq) changed = true; return t; });
+    if (!changed) return { fasta, recs };
+    return { fasta: recs.map((r, i) => `>${r.name}\n${sent[i]}\n`).join(''), recs };
+}

@@ -1,0 +1,314 @@
+[script.js lines 35334-35646 of ViewAlign fd8b8e4]
+// ---- Presets (owner, 2026-11-01): the settings, the colours and the selected stretches under a name ------------------
+const DOT_PRESETS_KEY = 'msaviewer_dotPresets';
+function _dotPresets() {
+    const p = safeLocalGet(DOT_PRESETS_KEY, {});
+    const out = Object.create(null);   // a preset named __proto__ is a key like any other
+    if (p && typeof p === 'object' && !Array.isArray(p)) Object.keys(p).forEach(k => { out[k] = p[k]; });
+    return out;
+}
+function _dotPresetCapture() {
+    const S = _dotPlotState, g = id => document.getElementById(id);
+    const num = (id, d) => { const v = parseInt(g(id)?.value, 10); return Number.isFinite(v) ? v : d; };
+    return {
+        version: 2,   // 2: the stretches and the slide are in whole-sequence PLOTTED coordinates (RevComp B: along the reverse complement of the whole row), as
+                      // before (pair.lenB was already kept); no version = a preset from before the numbering change (same coordinates). Never printed: numbers shown go through _dotBNum
+        savedAt: new Date().toISOString(),
+        settings: {
+            mode: document.querySelector('input[name="dotPlotMode"]:checked')?.value || 'spin',
+            window: num('dotPlotWindow', 6), threshold: num('dotPlotThreshold', 55), context: num('dotPlotContextRadius', 30),
+            revComp: !!g('dotPlotRevComp')?.checked, live: g('dotPlotLive')?.checked !== false, split: !!g('dotPlotSplit')?.checked,
+            lowerMode: document.querySelector('input[name="dotPlotModeLower"]:checked')?.value || 'doter',
+            lowerWindow: num('dotPlotWindowLower', 11), lowerThreshold: num('dotPlotThresholdLower', 55), stripLines: _dotStripLines()
+        },
+        colours: Object.assign({}, S.colours || {}),
+        stretches: {
+            pair: { nameA: S.nameA, nameB: _dotPlotNameB(), lenA: S.sourceSeqA.length, lenB: S.sourceSeqB.length, revB: _dotPlotRevB() },
+            list: (S._markList || []).map(r => ({ aStart: r.aStart, aEnd: r.aEnd, bStart: r.bStart, bEnd: r.bEnd })),   // the whole sequences' coordinates
+            slide: S.slideRow >= 0 ? { row: S.slideRow + S.offA, col: S.slideCol + S.dispOffB } : null
+        },
+        // the plotted part (1-based, inclusive, in the whole ungapped sequences; null = all), and whether a side was a
+        // pasted sequence: its text is NOT stored, only that it was external
+        range: {
+            a: S.seqA.length < S.fullLenA ? [S.offA + 1, S.offA + S.seqA.length] : null,
+            b: S.seqB.length < S.fullLenB ? [S.offB + 1, S.offB + S.seqB.length] : null
+        },
+        ext: S.ext ? { side: S.ext.side, name: S.ext.name, lenA: S.fullLenA, lenB: S.fullLenB, cons: !!S.ext.cons } : null
+    };
+}
+function _dotPresetList(selectName) {
+    const sel = document.getElementById('dotPresetSelect'); if (!sel) return;
+    const names = Object.keys(_dotPresets()).sort((a, b) => a.localeCompare(b));
+    const keep = selectName || sel.value;
+    sel.innerHTML = names.map(n => `<option value="${_escapeHtml(n)}">${_escapeHtml(n)}</option>`).join('');
+    if (keep && names.includes(keep)) sel.value = keep;
+    ['dotPresetLoad', 'dotPresetDelete'].forEach(id => document.getElementById(id)?.toggleAttribute('disabled', !names.length));
+}
+function _dotPresetSave() {
+    const inp = document.getElementById('dotPresetName');
+    const name = (inp?.value || '').trim().slice(0, 60);
+    if (!name) { showMessage('Type a name for the preset first.', 2500); return; }
+    const presets = _dotPresets(), replaced = !!presets[name];
+    presets[name] = _dotPresetCapture();
+    if (!safeLocalSet(DOT_PRESETS_KEY, JSON.stringify(presets), 'the dot plot preset')) return;
+    if (inp) inp.value = '';
+    _dotPresetList(name);
+    const n = presets[name].stretches.list.length;
+    showMessage(`Dot plot preset "${name}" ${replaced ? 'replaced' : 'saved'} (${n} stretch${n === 1 ? '' : 'es'}).`, 2500);
+}
+function _dotPresetDelete() {
+    const name = document.getElementById('dotPresetSelect')?.value;
+    const presets = _dotPresets();
+    if (!name) { showMessage('Choose a saved preset first.', 2500); return; }
+    if (!(name in presets)) { showMessage(`Preset "${name}" is no longer stored.`, 2500); _dotPresetList(); return; }
+    delete presets[name];
+    if (!safeLocalSet(DOT_PRESETS_KEY, JSON.stringify(presets), 'the dot plot presets')) return;
+    _dotPresetList();
+    showMessage(`Dot plot preset "${name}" removed.`, 2000);
+}
+async function _dotPresetLoad() {
+    const S = _dotPlotState, g = id => document.getElementById(id);
+    const name = g('dotPresetSelect')?.value;
+    const p = name ? _dotPresets()[name] : null;
+    const note = g('dotPresetNote');
+    if (note) note.textContent = '';
+    if (!name) { showMessage('Choose a saved preset first.', 2500); return; }
+    if (!p || typeof p !== 'object' || !p.settings || typeof p.settings !== 'object') { showMessage(`Preset "${name}" is unreadable (its stored data is damaged): delete it and save it again.`, 4000); return; }
+    if (!(S.sourceSeqA && S.sourceSeqB)) return;
+    const st = p.settings, clampInt = (v, lo, hi, d) => { v = parseInt(v, 10); return Number.isFinite(v) ? Math.min(hi, Math.max(lo, v)) : d; };
+    // 1. settings
+    const modeRadio = document.querySelector(`input[name="dotPlotMode"][value="${st.mode === 'doter' ? 'doter' : 'spin'}"]`);
+    if (modeRadio) modeRadio.checked = true;
+    _dotOnModeChange();
+    const set = (id, v) => { const i = g(id); if (i) i.value = v; };
+    const spin = st.mode !== 'doter';
+    set('dotPlotWindow', clampInt(st.window, ...(spin ? DOT_WORD_RANGE : DOT_WINDOW_RANGE), spin ? 6 : 11));
+    set('dotPlotThreshold', clampInt(st.threshold, 0, 100, 55));
+    set('dotPlotContextRadius', clampInt(st.context, 5, 500, 30));
+    const chk = (id, v) => { const i = g(id); if (i && typeof v === 'boolean') i.checked = v; };
+    chk('dotPlotRevComp', st.revComp); chk('dotPlotLive', st.live); chk('dotPlotSplit', st.split);
+    const lowRadio = document.querySelector(`input[name="dotPlotModeLower"][value="${st.lowerMode === 'spin' ? 'spin' : 'doter'}"]`);
+    if (lowRadio) lowRadio.checked = true;
+    _dotOnLowerModeChange();
+    set('dotPlotWindowLower', clampInt(st.lowerWindow, ...(st.lowerMode === 'spin' ? DOT_WORD_RANGE : DOT_WINDOW_RANGE), 11));
+    set('dotPlotThresholdLower', clampInt(st.lowerThreshold, 0, 100, 55));
+    set('dotPlotStripLines', clampInt(st.stripLines, 1, 12, 1));
+    const ex = g('dotPlotStripExpand'); if (ex) ex.textContent = _dotStripLines() > 1 ? 'Collapse' : 'Expand';
+    const out = (id, txt) => { const o = g(id); if (o) o.textContent = txt; };
+    out('dotPlotWindowVal', g('dotPlotWindow').value); out('dotPlotThreshVal', g('dotPlotThreshold').value + '%');
+    out('dotPlotWindowValLower', g('dotPlotWindowLower').value); out('dotPlotThreshValLower', g('dotPlotThresholdLower').value + '%');
+    // 2. colours
+    const cols = {};
+    DOT_COLOUR_KEYS.forEach(k => { if (p.colours && /^#[0-9a-f]{6}$/i.test(p.colours[k] || '')) cols[k] = p.colours[k].toLowerCase(); });
+    S.colours = Object.keys(cols).length ? cols : null;
+    // 3. recalculate with the settings (the plot is built with the colours), then the stretches
+    clearTimeout(_dotLiveTimer);
+    for (let i = 0; i < 400 && S.computing; i++) await new Promise(r => setTimeout(r, 50));
+    _dotMarkDirty(false);
+    // the range belongs to the pair it was saved on; a preset from before ranges has none (= the whole sequences)
+    const revAfter = typeof st.revComp === 'boolean' ? st.revComp : _dotPlotRevB();   // the strand the plot will have once the preset's RevComp B is applied (not the one it has now)
+    const pr = p.stretches && p.stretches.pair, list = p.stretches && Array.isArray(p.stretches.list) ? p.stretches.list : [];
+    const same = !!pr && pr.nameA === S.nameA && pr.nameB === _dotPlotNameB() && pr.lenA === S.sourceSeqA.length && pr.lenB === S.sourceSeqB.length && !!pr.revB === revAfter;
+    const rg = (same && p.range && typeof p.range === 'object') ? p.range : null;
+    const meta2 = !same ? S.meta : Object.assign({}, S.meta || {}, { rangeA: rg && Array.isArray(rg.a) ? rg.a : null, rangeB: rg && Array.isArray(rg.b) ? rg.b : null });   // another pair: the plot keeps its own range
+    await openDotPlot(S.sourceSeqA, S.sourceSeqB, S.nameA, _dotPlotNameB(), meta2);
+    _dotSyncColourInputs();
+    _dotApplyColours();
+    let msg = `Preset "${name}": settings and colours loaded.`;
+    if (rg && (rg.a || rg.b)) msg += ' Range restored (' + [rg.a ? `A ${rg.a[0]}-${rg.a[1]}` : '', rg.b ? `B ${_dotPlotRevB() ? rg.b[1] + '-' + rg.b[0] : rg.b[0] + '-' + rg.b[1]}` : ''].filter(Boolean).join(', ') + ').';
+    if (p.ext && typeof p.ext === 'object') {
+        const txt = p.ext.cons ? `This preset was saved with the consensus on side ${p.ext.side}. The consensus is not stored: it is computed from the rows when plotted, so plot it again with "Dot-plot vs consensus"`
+            : `This preset was saved with a pasted sequence on side ${p.ext.side} ("${p.ext.name}"). The pasted text is not stored: paste it again with "Compare with pasted..."`;
+        msg += ' ' + txt + '.';
+        if (note) note.textContent = txt;
+    }
+    if (same) {
+        const fresh = _dotCheckEdits();   // rows edited since the plot was made: nothing is marked from stale coordinates
+        const { rowA, rowB } = _dotRows();
+        const ok = !fresh ? [] : list.filter(r => r && [r.aStart, r.aEnd, r.bStart, r.bEnd].every(Number.isInteger) && r.aEnd > r.aStart && r.bEnd > r.bStart
+            && r.aStart >= S.offA && r.aEnd <= S.offA + S.rows && r.bStart >= S.dispOffB && r.bEnd <= S.dispOffB + S.cols);   // inside what is plotted now
+        _dotClearRegionMarks(true);
+        if (ok.length && (rowA >= 0 || rowB >= 0)) {
+            _dotMarkStretches(rowA, rowB, ok, _dotPlotRevB(), { dock: false });
+            msg += ` ${ok.length} stretch${ok.length === 1 ? '' : 'es'} restored.`;
+        } else if (!fresh && list.length) msg += ' Row changed since this plot: the stretches were not marked. Re-plot, then load the preset again.';
+        else if (ok.length) msg += ' The stretches could not be shown: this dot plot was not opened from alignment rows.';
+        const sl = p.stretches.slide;
+        if (sl && Number.isInteger(sl.row) && Number.isInteger(sl.col)) _dotSetSlide(sl.row - S.offA, sl.col - S.dispOffB);
+    } else if (list.length || p.stretches?.slide) {
+        const other = pr ? `${pr.nameA} vs ${pr.nameB}${pr.revB ? ' (RevComp)' : ''}` : 'another pair';
+        msg += ' The stretches belong to another pair (' + other + '): not restored.';
+        if (note) note.textContent = 'Stretches belong to another pair (' + other + ')';
+    }
+    showMessage(msg, 4000);
+}
+function _dotInitLookEvents() {
+    const g = id => document.getElementById(id);
+    g('dotPlotHighlightAll')?.addEventListener('click', _dotHighlightAll);
+    ['dotPlotClearMarks2', 'dotPlotDockClear'].forEach(id => g(id)?.addEventListener('click', () => _dotClearRegionMarks(true)));
+    g('dotPlotEditReplot')?.addEventListener('click', _dotEditReplot);
+    g('dotPlotDialog')?.addEventListener('pointerenter', () => _dotCheckEdits());   // the window regains attention (the rows are also compared when an action uses the plot, on hover (fast check), in Compare with pasted and when a plot opens)
+    window.addEventListener('focus', () => { if (document.getElementById('dotPlotModal')?.style.display !== 'none' && _dotPlotState.sourceSeqA) _dotCheckEdits(); });
+    g('dotPlotDockBtn')?.addEventListener('click', () => _dotDock(!g('dotPlotDialog')?.classList.contains('dot-docked')));
+    g('dotPlotTitleBar')?.addEventListener('dblclick', (e) => { if (g('dotPlotDialog')?.classList.contains('dot-docked')) { e.stopImmediatePropagation(); _dotDock(false); } }, true);
+    const ids = _dotColourInputs();
+    DOT_COLOUR_KEYS.forEach(k => g(ids[k])?.addEventListener('input', (e) => _dotSetColour(k, e.target.value)));
+    g('dotColReset')?.addEventListener('click', _dotResetColours);
+    g('dotPresetSave')?.addEventListener('click', _dotPresetSave);
+    g('dotPresetLoad')?.addEventListener('click', _dotPresetLoad);
+    g('dotPresetDelete')?.addEventListener('click', _dotPresetDelete);
+    g('dotPresetName')?.addEventListener('keydown', (e) => { if (e.key === 'Enter') _dotPresetSave(); });
+    _dotPresetList();
+    _dotSyncColourInputs();
+}
+
+function _dotClearHoverInfo() {
+    const S = _dotPlotState;
+    if (S._frozen) return;
+    const hoverEl = document.getElementById('dotPlotHover');
+    const metaEl = document.getElementById('dotPlotAlignMeta');
+    const panelEl = document.getElementById('dotPlotAlignPanel');
+    if (hoverEl) hoverEl.textContent = '';
+    if (metaEl) metaEl.textContent = '';
+    if (S.slideRow >= 0 && S.slideCol >= 0 && S.rows) { _dotUpdateHoverInfo(S.slideRow, S.slideCol, { force: true }); return; }   // the strip rests at the slider position
+    if (panelEl) panelEl.textContent = 'A: -\n   \nB: -';
+    _dotClearStripExtras();
+    S._copyRegion = null;   // Copy region then uses the pin, like the panel
+}
+
+// Grey level for one cell: SPIN = white dot on black; Dotter = darker = more identical
+function _dotCellValue(i) {
+    const S = _dotPlotState;
+    const row = Math.floor(i / (S.cols || 1)), H = _dotHalf(row, i - row * S.cols);
+    if (H.spinMode && H.matchMap) return H.matchMap[i] ? 255 : 0;
+    const n = _dotIdentityAt(i);
+    return n >= H.threshold ? Math.round((1 - n) * 255) : 255;
+}
+
+// Build the cached overview image. Plots wider than DOT_OVERVIEW_MAX are
+// max-pooled (the strongest cell in each bin wins) so no dot disappears.
+// Diagonal runs of dots (row, length, grey), grouped by diagonal and sorted by row, so a
+// frame draws only the runs in view. Drawn as anti-aliased lines through the cell centres:
+// the raster, scaled by non-integer zoom and screen scaling, made diagonals uneven staircases.
+const DOT_RUN_CAP = 3_000_000;          // more runs than this: keep the raster
+const DOT_RUN_FRAME_MAX = 600_000;      // runs drawn per frame before falling back to the raster
+function _dotBuildRuns() {
+    const S = _dotPlotState;
+    _dotBuildRunsFor(S);
+    if (S.lower && S.lower.ready) _dotBuildRunsFor(S.lower);
+}
+function _dotBuildRunsFor(H) {
+    const S = _dotPlotState;
+    H.runs = null;
+    if (!H.matchMap && !H.scores) return;
+    const rows = S.rows, cols = S.cols, nd = rows + cols - 1;
+    const spin = H.spinMode && !!H.matchMap;
+    const mm = H.matchMap, sc = H.scores, win = H.windowSize || 1;
+    const thr = H.threshold * win;
+    const diagStart = new Int32Array(nd + 1);
+    let cap = 1 << 16, n = 0;
+    let R = new Int32Array(cap), L = new Int32Array(cap), V = new Uint8Array(cap);
+    const grow = () => {
+        cap *= 2;
+        const R2 = new Int32Array(cap); R2.set(R); R = R2;
+        const L2 = new Int32Array(cap); L2.set(L); L = L2;
+        const V2 = new Uint8Array(cap); V2.set(V); V = V2;
+    };
+    for (let k = 0; k < nd; k++) {
+        const d = k - (rows - 1);
+        diagStart[k] = n;
+        const r0 = d < 0 ? -d : 0, r1 = Math.min(rows, cols - d);
+        let rs = -1, sum = 0;
+        for (let r = r0; r <= r1; r++) {
+            let on = false, v = 0;
+            if (r < r1) {
+                const i = r * cols + r + d;
+                if (spin) on = mm[i] === 1; else { v = sc[i]; on = v >= thr; }
+            }
+            if (on) { if (rs < 0) { rs = r; sum = 0; } sum += v; }
+            else if (rs >= 0) {
+                if (n === cap) { if (cap >= DOT_RUN_CAP) return; grow(); }
+                const len = r - rs;
+                R[n] = rs; L[n] = len;
+                V[n] = spin ? 255 : Math.max(0, Math.min(255, Math.round((1 - sum / (len * win)) * 255)));
+                n++; rs = -1;
+            }
+        }
+    }
+    diagStart[nd] = n;
+    H.runs = { R, L, V, n, diagStart };
+}
+
+// Draw the runs in view; false when there are too many for one frame (caller uses the raster)
+function _dotPaintRuns(ctx, z, sl, st, vw, vh, c0, c1, r0, r1) {
+    const S = _dotPlotState;
+    const split = !!(S.lower && S.lower.ready);
+    const halves = split ? [S, S.lower] : [S];
+    if (halves.some(H => !H.runs)) return false;
+    const P = DOT_AXIS_PAD, rows = S.rows;
+    const dpr = window.devicePixelRatio || 1;
+    const kLo = Math.max(0, c0 - r1 + (rows - 1)), kHi = Math.min(rows + S.cols - 2, c1 - r0 + (rows - 1));
+    const pathSets = halves.map(H => (H.spinMode && !!H.matchMap) ? [new Path2D()] : Array.from({ length: 17 }, () => new Path2D()));
+    let drawn = 0;
+    for (let k = kLo; k <= kHi; k++) {
+        const d = k - (rows - 1);
+        const hi_ = split && d < 0 ? 1 : 0;           // below the diagonal: lower-half settings
+        const runs = halves[hi_].runs, paths = pathSets[hi_];
+        const spin = paths.length === 1;
+        let lo = runs.diagStart[k], hi = runs.diagStart[k + 1];
+        // first run that ends after r0
+        while (lo < hi) { const m = (lo + hi) >> 1; if (runs.R[m] + runs.L[m] <= r0) lo = m + 1; else hi = m; }
+        for (let j = lo; j < runs.diagStart[k + 1] && runs.R[j] < r1; j++) {
+            if (++drawn > DOT_RUN_FRAME_MAX) return false;
+            const r = runs.R[j], len = runs.L[j];
+            const x = P + (r + d + 0.5) * z - sl, y = P + (r + 0.5) * z - st;
+            const e = (len - 1) * z;
+            const path = spin ? paths[0] : paths[Math.round(runs.V[j] / 16)];
+            path.moveTo(x, y); path.lineTo(x + e, y + e);
+        }
+    }
+    // Same visual weight as a cell: a cell-wide band, never thinner than one device pixel
+    ctx.lineWidth = Math.max(z * 0.9, 1 / dpr);
+    ctx.lineCap = 'round';
+    pathSets.forEach(paths => {
+        if (paths.length === 1) {
+            ctx.strokeStyle = _dotInk(true);
+            ctx.stroke(paths[0]);
+        } else {
+            paths.forEach((path, b) => {
+                const g = Math.min(255, b * 16);
+                ctx.strokeStyle = _dotDotterStroke(g);
+                ctx.stroke(path);
+            });
+        }
+    });
+    return true;
+}
+
+// ---- Custom dot plot colours (owner, 2026-11-01). S.colours: { dot, bg, stretch, marker, tint } as '#rrggbb', a missing
+// key = the default. The default ink and paper depend on the method (SPIN: white dots on black; Dotter: dark dots on
+// white), so a custom colour replaces the ink / paper of both and a grey level becomes a blend of the two.
+const DOT_COLOUR_KEYS = ['dot', 'bg', 'stretch', 'marker', 'tint'];
+const DOT_MARKER_DEFAULT = '#ff8c00', DOT_STRETCH_DEFAULT = '#64e6a0', DOT_TINT_DEFAULT = '#4a9eff';
+function _dotCustomColours() { const c = _dotPlotState.colours; return !!(c && (c.dot || c.bg)); }
+function _dotHexRgb(h) { const m = /^#([0-9a-f]{6})$/i.exec(h || ''); const n = m ? parseInt(m[1], 16) : 0; return [n >> 16 & 255, n >> 8 & 255, n & 255]; }
+// The dot (ink) and background (paper) colours of a method, as [ink, paper] hex, with their RGB, worked out once per
+// S.colours object (every change makes a new one): the raster loops below run per cell and used to parse the hex strings
+// and allocate arrays each time. Ink equal to paper (white dots chosen on SPIN's white-default background, or the colours
+// kept across a switch of method) would draw nothing, so the ink then turns to whichever of black / white contrasts.
+function _dotInkPaper(spin) {
+    const c = _dotPlotState.colours;
+    let m = _dotInkPaper._m;
+    if (!m || m.c !== c) m = _dotInkPaper._m = { c, spin: null, doter: null };
+    const k = spin ? 'spin' : 'doter';
+    if (!m[k]) {
+        let ink = c?.dot || (spin ? '#ffffff' : '#000000');
+        const paper = c?.bg || (spin ? '#000000' : '#ffffff');
+        const pr = _dotHexRgb(paper);
+        if (ink.toLowerCase() === paper.toLowerCase()) ink = (0.299 * pr[0] + 0.587 * pr[1] + 0.114 * pr[2]) > 127 ? '#000000' : '#ffffff';
+        m[k] = { ink, paper, ir: _dotHexRgb(ink), pr };
+    }
+    return m[k];
+}
+function _dotInk(spin) { return _dotInkPaper(spin).ink; }
+function _dotPaper(spin) { return _dotInkPaper(spin).paper; }

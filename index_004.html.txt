@@ -1,0 +1,333 @@
+[index.html lines 783-1114 of ViewAlign fd8b8e4]
+                    <div class="section-header" data-section="groups">
+                        <span>Groups</span>
+                        <span class="toggle-icon">v</span>
+                    </div>
+                    <div class="control-group" id="groups-controls">
+                    </div>
+                </div>
+                <div class="menu-section sel-menu-off" id="selections-menu-section">
+                    <div class="section-header" data-section="selections" title="Everything selected or highlighted: switch each on/off, go to it, remove it">
+                        <span>Selections <span id="selectionsBadge" class="sel-badge"></span></span>
+                        <span class="toggle-icon">v</span>
+                    </div>
+                    <div class="control-group" id="selections-controls">
+                        <div class="sel-toolbar">
+                            <button id="selectionsClearSelBtn" title="Clear the selected rows, columns and residues (Esc); highlights stay">Clear selection</button>
+                            <button id="selectionsClearBtn" title="Remove every selection and highlight in the list (Undo brings them back)">Clear all</button>
+                            <button id="selectionsToggleAllBtn" title="Switch every item off, or all back on">Hide all</button>
+                            <button id="selectionsUndoBtn" hidden>Undo</button>
+                        </div>
+                        <div id="selectionsList" class="sel-list"></div>
+                        <div class="sel-hint">Unchecked = kept but not shown, and not used by Copy, Delete, Realign. Saved with snapshots.</div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Controls of the current mode (view switch, letter case, codon
+                 frame, reads), shown only when one is visible: on the menu line when they fit,
+                 else on a line of their own (syncModeRow), so they never crowd the menus. -->
+            <div class="mode-row" id="modeRow" hidden>
+                <div class="quick-mode-switch view-switch" id="quickModeSwitch" title="View: Block / Canvas / Reads"></div>   <!-- built from QUICK_VIEW_OPTIONS (script.js) -->
+                <div class="quick-mode-switch case-switch" id="caseSwitch" title="Letter case of the residues on screen; the sequences themselves are not changed (the consensus row keeps its own case)">
+                    <input type="radio" name="caseQuick" id="csLower" value="lower"><label for="csLower" title="Show every residue in lower case">aa</label>
+                    <input type="radio" name="caseQuick" id="csAsIs" value="asis" checked><label for="csAsIs" title="Residues as they are in the file">Aa</label>
+                    <input type="radio" name="caseQuick" id="csUpper" value="upper"><label for="csUpper" title="Show every residue in UPPER CASE">AA</label>
+                </div>
+
+
+                <div class="codon-mode-panel" id="codonModePanel" hidden title="Reading frame: which alignment column starts the first codon (Pos 1 = column 1)">
+                    <span class="codon-panel-label">Codon</span>
+                    <div class="codon-frame-switch" id="codonFrameSwitch">
+                        <input type="radio" name="codonFrameQuick" id="cfPos1" value="0" title="Read codons starting at alignment column 1"><label for="cfPos1" title="Read codons starting at alignment column 1">Pos 1</label>
+                        <input type="radio" name="codonFrameQuick" id="cfPos2" value="1" title="Read codons starting at alignment column 2"><label for="cfPos2" title="Read codons starting at alignment column 2">Pos 2</label>
+                        <input type="radio" name="codonFrameQuick" id="cfPos3" value="2" title="Read codons starting at alignment column 3"><label for="cfPos3" title="Read codons starting at alignment column 3">Pos 3</label>
+                        <input type="radio" name="codonFrameQuick" id="cfAuto" value="auto" checked title="Auto: the genes of the annotation track when it has CDS features, else the frame with most ATG starts and fewest stops"><label for="cfAuto" title="Auto: the genes of the annotation track when it has CDS features, else the frame with most ATG starts and fewest stops">Auto</label>
+                        <input type="radio" name="codonFrameQuick" id="cfGenes" value="genes" hidden title="Each annotated CDS in its own frame and strand"><label for="cfGenes" hidden title="Each annotated CDS in its own frame and strand">Genes</label>
+                    </div>
+                    <button type="button" class="codon-panel-btn" id="aaOnlyButton" aria-pressed="false" title="Show the translation in place of the nucleotides, one amino-acid line per sequence (blocks without a CDS keep their nucleotides). Click again for the nucleotides.">AA only</button>
+                <button type="button" class="codon-panel-btn" onclick="copyAATranslation()" title="Copy amino acid translation(s) as FASTA">Copy AA</button>
+                    <button type="button" class="codon-panel-btn" onclick="downloadAATranslation()" title="Download amino acid translation(s) as FASTA">Save AA</button>
+                    <button type="button" class="codon-panel-btn" onclick="openMacsePreset()" title="Realign as codons with MACSE v2.07 (frameshift-aware), in the Alignment menu">MACSE…</button>
+                </div>
+            </div>
+
+            <div id="finderBox"><input id="finderInput" type="search" role="combobox" aria-expanded="false" aria-autocomplete="list" aria-label="Find a function" placeholder="Find a function…" autocomplete="off" spellcheck="false" title="Every function of the program: type a name, Enter runs it (Ctrl+K)"></div>
+
+            <div class="menu-section menu-align-right" id="shortcuts-section">
+                <div class="section-header" data-section="shortcuts">
+                    <span title="Keyboard shortcuts (hover to view)">Keys</span>
+                    <span class="toggle-icon">v</span>
+                </div>
+                <div class="control-group" id="shortcuts-controls">
+                    <div class="keys-grid">
+                        <div class="keys-cat">Selection &amp; clipboard</div>
+                        <strong>Ctrl+A</strong><span>Select/deselect all</span>
+                        <strong>Ctrl+C</strong><span>Copy bases, or rows as FASTA</span>
+                        <strong>Alt+C</strong><span>Copy selected (as Copy Sel)</span>
+                        <strong>Ctrl+Shift+V</strong><span>Copy columns</span>
+                        <div class="keys-cat">Sequences</div>
+                        <strong>Ctrl+Del</strong><span>Delete selected</span>
+                        <strong>Ctrl+U</strong><span>Duplicate</span>
+                        <strong>Ctrl+R</strong><span>Reverse complement</span>
+                        <strong>Ctrl+Up/Down</strong><span>Move selected</span>
+                        <strong>Ctrl+Home/End</strong><span>Move to top/bottom</span>
+                        <strong>Alt+T</strong><span>Open selected in new tab</span>
+                        <div class="keys-cat">Columns &amp; editing</div>
+                        <strong>Ctrl+Shift+R</strong><span>Realign selected block</span>
+                        <strong>Ctrl+Shift+D</strong><span>Delete columns (asks)</span>
+                        <strong>Ctrl+D</strong><span>Delete columns (no prompt)</span>
+                        <strong>Ctrl+Z / Ctrl+Y</strong><span>Undo / Redo (Ctrl+Shift+Z redoes too)</span>
+                        <div class="keys-cat">Consensus</div>
+                        <strong>Ctrl+B</strong><span>Consensus below</span>
+                        <strong>Ctrl+Shift+K</strong><span>Copy consensus</span>
+                        <strong>Alt+J</strong><span>Copy selected consensus</span>
+                        <strong>Alt+H / Alt+U</strong><span>Hide / show columns (Alt+Shift+H: keep selected)</span>
+                        <div class="keys-cat">Search</div>
+                        <strong>Ctrl+F</strong><span>Find motif</span>
+                        <strong>Ctrl+Shift/Alt+F</strong><span>Clear last / all searches</span>
+                        <div class="keys-cat">View</div>
+                        <strong>Ctrl++ / -</strong><span>Zoom in/out</span>
+                        <strong>Ctrl+0</strong><span>Reset zoom</span>
+                        <strong>PgUp / PgDn</strong><span>Scroll one page</span>
+                        <strong>Ctrl+H</strong><span>Hide/show menu</span>
+                        <strong>Esc</strong><span>Close popups/menus; with none open, clear selection</span>
+                        <div class="keys-cat">Presets &amp; help</div>
+                        <strong>Ctrl+Shift+S</strong><span>Save preset</span>
+                        <strong>Ctrl+O</strong><span>Load preset</span>
+                        <strong>Ctrl+K</strong><span>Find a function</span>
+                        <strong>Ctrl+L</strong><span>Load pasted input</span>
+                        <strong>Ctrl+I</strong><span>Full info</span>
+                    </div>
+                </div>
+            </div>
+
+            <div class="menu-section side-section" id="actions-section">
+                <div class="section-header" data-section="actions">
+                    <span>Actions</span>
+                    <span class="toggle-icon">v</span>
+                </div>
+                <div class="control-group" id="actions-controls">
+                    <div class="actions-menu-body">
+                        <div class="action-section action-section-selection">
+                            <div class="action-section-label">Selection</div>
+                            <div class="button-group">
+                                <button id="selectAllButton" title="Select/deselect all sequences (Ctrl+A)">Select All</button>
+                                <button id="copySelectedButton" title="Copy selected sequences (Alt+C)">Copy Sel</button>
+                                <button id="copyAlignmentButton" title="Copy entire alignment as FASTA">Copy Align</button>
+                                <button id="deleteSelectedButton" title="Delete selected sequences (Ctrl+Del)">Delete Sel</button>
+                                <button id="openInNewTabButton" title="Open selected in new tab (Alt+T)">New Tab</button>
+                                <button id="openViewInNewTabButton" title="Open the whole alignment in a new tab exactly as it is here: view, zoom and position, letter case, shading, Display toggles, searches, selections and marks, name colours, trim, annotation">Clone Tab</button>
+                            </div>
+                        </div>
+                        <div class="action-section action-section-order">
+                            <div class="action-section-label">Order</div>
+                            <div class="button-group">
+                                <button id="moveUpButton" title="Move selected up (Ctrl+Up)">Up</button>
+                                <button id="moveDownButton" title="Move selected down (Ctrl+Down)">Down</button>
+                                <button id="moveToTopButton" title="Move selected to top (Ctrl+Home)">To Top</button>
+                                <button id="moveToBottomButton" title="Move selected to bottom (Ctrl+End)">To Bottom</button>
+                                <button id="sortByNameButton" title="Sort all sequences alphabetically" onclick="sortByName()">A→Z</button>
+                                <button id="sortByLengthButton" title="Sort by sequence length (longest first)" onclick="sortByLength()">Len↓</button>
+                                <button id="sortBySimButton" title="Sort by similarity to 1st sequence" onclick="sortBySimilarity()">Sim↓</button>
+                                <button id="exportOrderButton" title="Export current sequence order as JSON" onclick="exportOrder()">Export</button>
+                                <button id="importOrderButton" title="Import sequence order from JSON file" onclick="importOrder()">Import</button>
+                            </div>
+                        </div>
+                        <div class="action-section action-section-editing">
+                            <div class="action-section-label">Editing</div>
+                            <div class="button-group">
+                                <button id="reverseComplementButton" title="Reverse complement selected (Ctrl+R)">RevComp</button>
+                                <button id="reverseComplementAllButton" title="Reverse complement the entire alignment, every sequence">RevComp All</button>
+                                <button id="duplicateButton" title="Duplicate selected (Ctrl+U)">Duplicate</button>
+                                <button id="seqEditButton" title="Open sequence in text editor">SeqEdit</button>
+                            </div>
+                        </div>
+                        <div class="action-section action-section-columns">
+                            <div class="action-section-label">Columns</div>
+                            <div class="button-group">
+                                <button id="copyColumnsButton" title="Copy selected columns as FASTA (Ctrl+Shift+V)">Copy Cols</button>
+                                <button id="hideColumnsButton" title="Hide the selected columns (or the columns of the selected residues), Alt+H: each run folds into one marker cell; click the marker to show it again">Hide Cols</button>
+                                <button id="hideUnselectedColumnsButton" title="Hide every column except the selected ones, so the selected regions sit next to each other (Alt+Shift+H)">Only Sel</button>
+                                <span class="fold-gappy" title="Hide the columns where at least this percentage of the rows has a gap"><button id="hideGappyColumnsButton">Hide Gappy</button>&ge;<input type="number" id="hideGappyPct" aria-label="Hide Gappy: minimum percentage of rows with a gap" title="Minimum percentage of rows with a gap" min="1" max="100" step="1" value="100">%</span>
+                                <button id="revealColumnsButton" title="Show every hidden column again (Alt+U)" disabled>Reveal</button>
+                                <span id="foldStatus" class="fold-status"></span>
+                                <label class="fold-visonly" title="Copy Align, Copy Sel, the toolbar Copy and Save, and the tree leave the hidden columns out (off: they use the whole alignment)"><input type="checkbox" id="foldVisibleOnly" disabled> Copy, Save, Tree: visible columns only</label>
+                            </div>
+                        </div>
+                        <div class="action-section action-section-analysis">
+                            <div class="action-section-label">Analysis</div>
+                            <div class="button-group">
+                                <button id="buildTreeButton" title="Build a phylogenetic tree from selected sequences">Tree</button>
+                                <button id="statsButton" title="Alignment statistics: distance matrix, pairwise identity, summary">Statistics</button>
+                                <button id="repeatFinderMenuButton" title="Find tandem/direct/inverted repeats or SINE target-site duplications (TSD)">Repeats</button>
+                            </div>
+                        </div>
+                        <div class="action-section action-section-link">
+                            <div class="action-section-label">Linked views</div>
+                            <div class="link-views-row">
+                                <label title="Follow the scrolling of the other ViewAlign tabs and windows that have Link on (same browser). Open a second tab with Clone Tab or load another file there."><input type="checkbox" id="linkViewsOn"> Link</label>
+                                <label title="Keep the same sequence at the top: by name, by row number where the name is not there"><input type="checkbox" id="linkRows" checked> rows</label>
+                                <label title="Keep the same place along the alignment at the left edge"><input type="checkbox" id="linkCols" checked> columns</label>
+                                <select id="linkColsBy" title="How columns correspond between the views. By column number: the same column index. By anchor sequence: the column holding the same residue of one sequence both alignments contain, which keeps two alignments of the same sequences lined up when their gaps differ. One setting for all linked views.">
+                                    <option value="column">by column number</option>
+                                    <option value="anchor">by anchor sequence</option>
+                                </select>
+                                <select id="linkAnchor" hidden></select>
+                                <span id="linkViewsStatus" class="link-views-status"></span>
+                            </div>
+                            <div class="link-views-row">
+                                <button id="paneSplitRight" title="Open this whole view again in a pane to the right, inside this page. The pane starts linked by rows, columns free, so two areas of one alignment can be read at once. It starts as a mirror: it reloads from this view after you edit here; an edit in the pane makes it its own copy (the button in its header switches back).">Split right</button>
+                                <button id="paneSplitBelow" title="Open this whole view again in a pane below, inside this page (same as Split right, stacked)">Split below</button>
+                                <button id="paneOpenFile" title="Open another alignment file in a pane. The pane is linked by rows and, by anchor sequence, by columns, so two alignments of the same sequences stay lined up.">Open file in pane</button>
+                                <button id="paneRefresh" title="Refresh the panes from this view now">Refresh panes</button>
+                            </div>
+                        </div>
+                        <div class="action-section action-section-settings">
+                            <div class="action-section-label">Presets &amp; Help</div>
+                            <div class="button-group">
+                                <button id="savePresetButton" title="Save current settings (Ctrl+Shift+S)">Save Preset</button>
+                                <button id="loadPresetButton" title="Load saved settings (Ctrl+O)">Load Preset</button>
+                                <button id="infoButton" title="Show info and shortcuts (Ctrl+I)">Info</button>
+                                <button id="manualButton" title="Open comprehensive manual in new tab" onclick="window.open('manual.html','_blank')">Manual</button>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="actions-menu-footer">
+                        <button id="minimizeBtn" class="actions-hide-menu-btn" title="Hide menu (Ctrl+H)">Hide Menu</button>
+
+                    </div>
+                </div>
+            </div>
+            <div id="headerInfoPanel">
+                <!-- Static fallback shown before script.js runs; script.js overwrites it
+                     from BUILD_TAG. Keep in sync with BUILD_TAG or it silently rots. -->
+                <div id="versionIndicator">version v319</div>
+                <div id="sourceInfo">No file loaded</div>
+            </div>
+        </div>
+        <div id="editToolPanel" class="edit-tool-panel" hidden>
+            <button id="editMoveNoGapsButton" class="edit-tool-button" data-edit-tool="moveNoGaps" title="Drag a residue left or right: residues move, the gaps they pass are not kept">Move NoGaps</button>
+            <button id="editSlideKeepGapsButton" class="edit-tool-button" data-edit-tool="slideKeepGaps" title="Drag a stretch left or right: its gaps slide along with it">Slide KeepGaps</button>
+            <label class="edit-live-conservation" title="Update the conservation shading while a Move or Slide drag is going on (every edit updates it when it ends)">
+                <input id="editLiveConservationToggle" type="checkbox">
+                Shade while dragging
+            </label>
+            <button id="editRecalcConsButton" class="edit-command-button" title="Recalculate the conservation shading now" style="font-size:10px;" onclick="_recalcConservation()">R Cons</button>
+            <span class="edit-tool-separator"></span>
+            <button id="editInsertGapButton" class="edit-tool-button" data-edit-tool="insertGapSeq" title="Click a position: insert a gap there in that sequence">Ins Gap Seq</button>
+            <button id="editDeleteGapButton" class="edit-tool-button" data-edit-tool="deleteGapSeq" title="Click a gap: delete it from that sequence">Del Gap Seq</button>
+            <button id="editInsertGapOtherButton" class="edit-tool-button" data-edit-tool="insertGapOther" title="Click a position: insert a gap there in every other sequence">Ins Gap Other</button>
+            <button id="editDeleteGapOtherButton" class="edit-tool-button" data-edit-tool="deleteGapOther" title="Click a gap: delete it from every other sequence (each of them must have a gap there)">Del Gap Other</button>
+            <button id="editInsertGapAllButton" class="edit-tool-button" data-edit-tool="insertGapAll" title="Click a position: insert a gap column there">Ins Gap All</button>
+            <button id="editDeleteGapAllButton" class="edit-tool-button" data-edit-tool="deleteGapAll" title="Click a gap column: delete that one column (Clear Gap Cols removes all gap-only columns)">Del Gap All</button>
+            <span class="edit-tool-separator"></span>
+            <button id="editResidueButton" class="edit-tool-button" data-edit-tool="residue" title="Click a cell, then type residues, or - for a gap; Backspace, Delete and the arrow keys work">Type</button>
+            <button id="editSelectColumnButton" class="edit-tool-button" data-edit-tool="selectColumn" title="Click or drag to select columns">Select Col</button>
+            <button id="editDeleteColumnsButton" class="edit-command-button" title="Delete the selected columns">Delete Cols</button>
+            <button id="editClearGapColumnsButton" class="edit-command-button" title="Remove every column that holds only gaps">Clear Gap Cols</button>
+            <button id="editSeqEditorButton" class="edit-command-button" title="Open the sequence text editor">SeqEdit</button>
+        </div>
+        <div class="status-row header-info-row">
+            <div id="sourcePathLine"></div>
+        </div>
+    </div>
+    
+    <div id="minimizeBar" style="display: none; position: sticky; top: 0; height: 16px; background: #ccc; cursor: pointer; z-index: 100; text-align: center; line-height: 16px;" title="Click to show menu (Ctrl+H)" onclick="expandMenu()">
+        <span style="font-size: 10px; color: #666; user-select: none;">v menu</span>
+    </div>
+    
+    <div id="viewer-container" role="main" aria-label="Alignment">
+        <h1 class="visually-hidden">ViewAlign multiple sequence alignment viewer</h1>
+        <div id="alignmentContainer">Paste MSF or FASTA into the box and click Load, or drop a file.</div>
+        <div class="vertical-scrollbar">
+            <div class="vertical-scrollbar-thumb"></div>
+        </div>
+        <div class="horizontal-scrollbar">
+            <div class="horizontal-scrollbar-thumb"></div>
+        </div>
+    </div>
+    <div id="statusMessage"></div>
+    <div id="tooltip" class="tooltip"></div>
+
+    <!-- SSH mini-console: shows fetch progress, auto-closes on success -->
+    <div id="sshConsole">
+        <div id="sshConsoleHeader">
+            <span id="sshConsoleTitle">SSH</span>
+            <button type="button" onclick="document.getElementById('sshConsole').style.display='none'" title="Close">×</button>
+        </div>
+        <div id="sshConsoleBody"></div>
+    </div>
+    
+    <div id="infoModal" style="display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.5); z-index: 10001; overflow: auto;">
+        <div style="background: white; margin: 20px auto; padding: 20px; max-width: 600px; border-radius: 8px; box-shadow: 0 4px 20px rgba(0,0,0,0.3);">
+            <h2 style="margin-top: 0;">ViewAlign - Keyboard Shortcuts</h2>
+            <div style="display: grid; grid-template-columns: auto 1fr; gap: 4px 20px; font-family: monospace; font-size: 12px;">
+                <strong>Ctrl+A</strong><span>Select/deselect all sequences</span>
+                <strong>Ctrl+C, Alt+C</strong><span>Copy selected bases or sequences (Alt+C: as Copy Sel)</span>
+                <strong>Ctrl+Del</strong><span>Delete selected sequences</span>
+                <strong>Ctrl+Z / Ctrl+Y</strong><span>Undo / Redo</span>
+                <strong>Ctrl+R</strong><span>Reverse complement selected</span>
+                <strong>Ctrl+Shift+R</strong><span>Realign selected block</span>
+                <strong>Ctrl+U</strong><span>Duplicate selected</span>
+                <strong>Ctrl+B</strong><span>Insert consensus below</span>
+                <strong>Alt+T</strong><span>Open selected in new tab</span>
+                <strong>Ctrl+F</strong><span>Find motif</span>
+                <strong>Ctrl+Shift/Alt+F</strong><span>Clear last / all searches</span>
+                <strong>Ctrl+Shift+S</strong><span>Save preset</span>
+                <strong>Ctrl+O</strong><span>Load preset</span>
+                <strong>Ctrl+Up / Ctrl+Down</strong><span>Move selected up/down</span>
+                <strong>Ctrl+Home / End</strong><span>Move to top/bottom</span>
+                <strong>Ctrl+Shift+V</strong><span>Copy selected columns</span>
+                <strong>Ctrl+Shift+D</strong><span>Delete selected columns (asks first)</span>
+                <strong>Ctrl+D</strong><span>Delete selected columns (no prompt)</span>
+                <strong>Ctrl+Shift+K</strong><span>Copy consensus</span>
+                <strong>Alt+J</strong><span>Copy consensus of selected</span>
+                <strong>Alt+H / Alt+Shift+H / Alt+U</strong><span>Hide selected columns / all but them / show all</span>
+                <strong>Ctrl+L</strong><span>Load pasted input</span>
+                <strong>Ctrl++ / Ctrl+-</strong><span>Zoom in/out</span>
+                <strong>Ctrl+0</strong><span>Reset zoom to 100%</span>
+                <strong>Ctrl+K</strong><span>Find a function</span>
+                <strong>Ctrl+H</strong><span>Hide/show menu</span>
+                <strong>Ctrl+I</strong><span>Show this dialog</span>
+                <strong>Esc</strong><span>Close popups/menus</span>
+                <strong>PgUp / PgDn</strong><span>Scroll alignment page</span>
+            </div>
+            <div style="margin-top: 20px; text-align: right;">
+                <button onclick="window.open('manual.html','_blank')" style="padding: 8px 16px; cursor: pointer; margin-right: 8px;" title="Open the full user manual in a new tab">Full Manual</button>
+                <button onclick="document.getElementById('infoModal').style.display='none'" style="padding: 8px 16px; cursor: pointer;" title="Close this dialog">Close</button>
+            </div>
+        </div>
+    </div>
+    
+    <!-- Color Inspector Modal -->
+    <div id="colourInspectorModal" style="display: none; position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%); background: white; border: 2px solid #333; border-radius: 4px; max-width: 500px; width: 90%; max-height: 60vh; overflow: auto; z-index: 10000; box-shadow: 0 4px 6px rgba(0,0,0,0.3);">
+        <div style="background: #f5f5f5; padding: 12px; border-bottom: 1px solid #ccc; display: flex; justify-content: space-between; align-items: center; position: sticky; top: 0;">
+            <h3 style="margin: 0; font-size: 14px;">Color Assignment History</h3>
+            <button type="button" class="win-close" title="Close" onclick="document.getElementById('colourInspectorModal').style.display='none'">×</button>
+        </div>
+        <div id="colourHistoryContent" style="padding: 12px; font-size: 11px;">
+            <!-- Populated by JavaScript -->
+        </div>
+    </div>
+
+    <!-- Group explorer -->
+    <div id="clusteringModal" class="group-explorer" style="display: none; position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%); z-index: 10000;">
+        <div id="clusteringModalHeader" class="ge-header">
+            <h3>Group explorer</h3>
+            <div class="ge-header-actions" id="geHeaderActions">
+                <button type="button" id="geDockBtn" class="panel-dock-btn ge-dock-btn" title="Dock Group explorer into the Groups menu">&#9875;</button>
+                <button type="button" id="geClearBtn" class="ge-text-btn" title="Clear all group colours and membership data">Clear all</button>
+                <div class="ge-window-btns">
+                    <button type="button" id="clusteringModalClose" class="ge-win-btn" title="Close">×</button>
+                </div>
+            </div>
+        </div>
+        <div class="ge-toolbar" id="geToolbar">
+            <div class="ge-find">
+                <input type="search" id="geSearch" placeholder="Find a sequence…" autocomplete="off" spellcheck="false" title="Type to find sequences. Suggestions list nearest names; .* treats the query as a regular expression. Click a name to select, click again to unselect.">
+                <label class="ge-find-re" title="Treat the query as a regular expression"><input type="checkbox" id="geSearchRegex"> .*</label>
+                <div id="geSuggest" class="ge-suggest" hidden></div>
+            </div>
+            <span id="geSearchHit" class="ge-search-hit"></span>
+            <button type="button" id="geColoursBtn" class="ge-text-btn" title="Switch all group colours off for now, and on again. The groups are kept.">Hide colours</button>

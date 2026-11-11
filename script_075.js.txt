@@ -1,0 +1,617 @@
+[script.js lines 33126-33741 of ViewAlign fd8b8e4]
+// the appropriate scroll state for the active mode.
+(function setupPersistentVerticalScrollbar() {
+    const alignment = document.getElementById('alignmentContainer');
+    const bar = document.querySelector('.vertical-scrollbar');
+    const thumb = document.querySelector('.vertical-scrollbar-thumb');
+    if (!alignment || !bar || !thumb) return;
+
+    // (isCanvasMode(): Canvas or Block, both drawn by the Canvas renderer)
+    let syncing = false;
+    const barInput = makeBarInputGuard(bar);
+    const grip = _attachScrollbarGrip(bar, false);
+
+    function syncVisibilityAndSize() {
+        // As for the horizontal bar, the bar's range (thumb - bar height) equals the view's: the bar
+        // is the alignment's full height, its viewport 1px less (the bottom border).
+        if (isCanvasMode()) {
+            bar.style.display = 'flex';
+            const rect = alignment.getBoundingClientRect();
+            bar.style.top = alignment.offsetTop + 'px';
+            bar.style.height = rect.height + 'px';
+            syncing = true;
+            const canvas = document.getElementById('alignmentCanvas');
+            const viewH = (canvas && parseFloat(canvas.style.height)) || alignment.clientHeight;
+            const h = _canvasState.totalContentH || viewH;
+            // shown only when the content (Canvas: the rows; Block: the stack of bands with their rulers,
+            // consensus rows and gaps) does not fit, like the horizontal bar (visibility, so the layout does not jump)
+            const scrollable = h > viewH + 1;
+            if (bar.style.visibility !== (scrollable ? '' : 'hidden')) _canvasState.invalidateInsets?.();   // Canvas reserves only a shown bar
+            bar.style.visibility = scrollable ? '' : 'hidden';
+            // the range clampOffsets allows: the horizontal bar over the canvas' bottom shortens the view, and
+            // without it the thumb stopped that far (a row) short of the end (GLM audit cblk #37)
+            const insB = scrollable ? (_canvasState.scrollInsets?.().b || 0) : 0;
+            thumb.style.height = (scrollable ? h - viewH + insB + bar.clientHeight : 0) + 'px';
+            bar.scrollTop = _canvasState.offsetY || 0;
+            syncing = false;
+        } else if (alignment.scrollHeight > alignment.clientHeight) {
+            bar.style.display = 'flex';
+            bar.style.visibility = '';
+            const rect = alignment.getBoundingClientRect();
+            bar.style.top = alignment.offsetTop + 'px';
+            bar.style.height = rect.height + 'px';
+            syncing = true;
+            thumb.style.height = (alignment.scrollHeight - alignment.clientHeight) + bar.clientHeight + 'px';
+            bar.scrollTop = alignment.scrollTop;
+            syncing = false;
+        } else {
+            bar.style.display = 'none';
+            return;
+        }
+        grip.update();
+    }
+
+    function onBarScroll() {
+        if (syncing || !barInput.active()) return;   // our own mirror write: not user input
+        syncing = true;
+        if (isCanvasMode()) {
+            _canvasState.offsetY = bar.scrollTop;
+            _canvasState.scheduleDrawMoved?.();   // only the view moved: frame copy, not a full redraw
+        } else {
+            alignment.scrollTop = bar.scrollTop;
+        }
+        syncing = false;
+    }
+
+    // Registered alongside the horizontal bar's onOffsetChange; Canvas's
+    // draw() calls both after every repaint so wheel-scroll/drag-pan inside
+    // the canvas keeps this thumb's position in sync too.
+    const prevOnOffsetChange = _canvasState.onOffsetChange;
+    _canvasState.onOffsetChange = () => {
+        prevOnOffsetChange?.();
+        if (syncing || !isCanvasMode()) return;
+        if (Math.abs(bar.scrollTop - (_canvasState.offsetY || 0)) < 0.5) return;
+        syncing = true;
+        bar.scrollTop = _canvasState.offsetY || 0;
+        syncing = false;
+    };
+
+    // DOM mode: keep the bar in sync when the alignment scrolls natively
+    function onAlignmentScroll() {
+        if (syncing || isCanvasMode()) return;
+        if (Math.abs(bar.scrollTop - alignment.scrollTop) < 0.5) return;
+        syncing = true;
+        bar.scrollTop = alignment.scrollTop;
+        syncing = false;
+    }
+
+    syncVisibilityAndSize();
+    window._syncVerticalScrollbar = syncVisibilityAndSize;
+    bar.addEventListener('scroll', onBarScroll, { passive: true });
+    alignment.addEventListener('scroll', onAlignmentScroll, { passive: true });
+    window.addEventListener('resize', () => window.requestAnimationFrame(syncVisibilityAndSize));
+    // Only watch direct children (blocks/spacers). subtree:true used to fire
+    // once per virtualized row insert/remove and force a layout read of the
+    // bar during the already-expensive scroll refresh.
+    const mo = new MutationObserver(() => window.requestAnimationFrame(syncVisibilityAndSize));
+    mo.observe(alignment, { childList: true, subtree: false, characterData: false, attributes: false });
+    // Mode radios don't fire a DOM mutation on alignmentContainer by
+    // themselves - listen directly so switching into/out of Canvas mode
+    // shows/hides this bar immediately, not just on the next resize/render.
+    document.querySelectorAll('input[name="mode"]').forEach((r) => {
+        r.addEventListener('change', () => window.requestAnimationFrame(syncVisibilityAndSize));
+    });
+
+    // Same drag as the horizontal bar: anywhere on the bar, pointer captured, last move kept,
+    // a press on the track pages.
+    let isDown = false, startY = 0, startScroll = 0, moved = false, page = 0;
+    let dragRaf = null, lastDy = 0;
+    const scrollTo = (y) => {
+        syncing = true;
+        bar.scrollTop = y;
+        const newScroll = bar.scrollTop;   // clamped by the browser
+        if (isCanvasMode()) {
+            _canvasState.offsetY = newScroll;
+            _canvasState.scheduleDrawMoved?.();   // only the view moved: frame copy, not a full redraw
+        } else {
+            alignment.scrollTop = newScroll;
+        }
+        syncing = false;
+    };
+    const applyDrag = () => {
+        dragRaf = null;
+        scrollTo(startScroll + lastDy * _scrollbarDragRatio(bar.clientHeight, bar.scrollHeight));
+    };
+    bar.addEventListener('pointerdown', (e) => {
+        if (e.button !== 0) return;
+        isDown = true; moved = false;
+        page = grip.isTrackPress(e);
+        try { bar.setPointerCapture(e.pointerId); } catch {}
+        bar.classList.add('grabbing');
+        document.body.classList.add('no-select');
+        startY = e.clientY;
+        lastDy = 0;
+        startScroll = bar.scrollTop;
+        e.preventDefault();
+    });
+    bar.addEventListener('pointermove', (e) => {
+        if (!isDown) return;
+        lastDy = e.clientY - startY;
+        if (Math.abs(lastDy) > 2) moved = true;
+        if (!dragRaf && moved) dragRaf = window.requestAnimationFrame(applyDrag);
+        e.preventDefault();
+    }, { passive: false });
+    const endDrag = () => {
+        if (!isDown) return;
+        isDown = false;
+        bar.classList.remove('grabbing');
+        document.body.classList.remove('no-select');
+        if (dragRaf) { cancelAnimationFrame(dragRaf); applyDrag(); }
+        else if (!moved && page) scrollTo(bar.scrollTop + page * Math.max(1, bar.clientHeight * 0.9));
+    };
+    bar.addEventListener('pointerup', endDrag);
+    bar.addEventListener('pointercancel', endDrag);
+    bar.addEventListener('lostpointercapture', endDrag);
+    window.addEventListener('mouseup', endDrag);
+})();
+
+// ============ BLAST SEARCH FUNCTIONS ============
+let blastResultsModal = null;
+// ── Worker pool for sharded DP (speed round 3) ──────────────────
+// Round 1 shipped: k-mer-count DP cap + banded DP (verified, in production).
+// Round 2 (Web Worker pool sharding) was reverted after real-browser testing
+// found it made the actual common case WORSE: Web Workers share no memory,
+// so each worker must independently index a database, and eagerly priming
+// the whole pool in the background made a fresh session's first search
+// across the 4 bundled databases take ~32.5s instead of the ~15-18s it took
+// before any sharding existed (12 concurrent full index-builds competing
+// with the 4 real foreground searches for the same CPU/network).
+//
+// This round's fix: priming is fully SERIAL and only ever runs when NO
+// foreground search is in flight anywhere — one background index-build at a
+// time, started only in genuine idle time between searches, never
+// overlapping with real user-visible work. A database gains one additional
+// primed worker per idle gap after it's actually been searched (never
+// speculatively for databases nobody asked about), so parallelism grows
+// organically across a session with zero contention cost. The very first
+// search of any database is always single-worker — byte-identical cost to
+// no-sharding-at-all.
+let blastWorkerPool = [];
+const MAX_SHARD_WORKERS = 4; // matches the diminishing-returns point measured in bench Test D
+let workerPrimed = [];        // parallel to blastWorkerPool: Set of dbName already indexed on that worker
+let activeSearchCount = 0;    // real foreground searches currently in flight, across all databases
+let primingInFlight = false;  // at most one background index-build running at any time
+const primingWanted = new Set(); // dbName -> true once a real search has happened for it this session
+
+function getBlastWorkerPool() {
+    const hc = (typeof navigator !== 'undefined' && navigator.hardwareConcurrency) || 4;
+    const n = Math.max(1, Math.min(MAX_SHARD_WORKERS, hc));
+    while (blastWorkerPool.length < n) {
+        blastWorkerPool.push(new Worker(`./blast-worker.js?v=${BUILD_TAG.replace(/^v/, '')}`));
+        workerPrimed.push(new Set());
+    }
+    return blastWorkerPool.slice(0, n);
+}
+
+function primedWorkersFor(dbName) {
+    return blastWorkerPool.filter((_, i) => workerPrimed[i].has(dbName));
+}
+
+// Serial background priming, only when idle. Picks ONE (worker, database)
+// pair to index next — a database that's actually been searched
+// (`primingWanted`) and has at least one pool worker not yet primed for it —
+// and does nothing else until that single job resolves, then tries again.
+function maybeAdvancePriming() {
+    if (primingInFlight || activeSearchCount > 0) return; // never overlap with foreground work or another prime
+    for (const dbName of primingWanted) {
+        const dbUrl = primingDbUrls.get(dbName);
+        if (!dbUrl) continue;
+        const target = blastWorkerPool.findIndex((_, i) => !workerPrimed[i].has(dbName));
+        if (target === -1) continue; // already primed on every pool worker
+        primingInFlight = true;
+        const worker = blastWorkerPool[target];
+        const requestId = `prime-${dbName}-${Date.now()}-${Math.random()}`;
+        const handler = (e) => {
+            const d = e.data;
+            if (d.requestId !== requestId || d.type !== 'primed') return;
+            worker.removeEventListener('message', handler);
+            if (d.success) workerPrimed[target].add(dbName);
+            primingInFlight = false;
+            maybeAdvancePriming(); // continue the queue if still idle
+        };
+        worker.addEventListener('message', handler);
+        worker.postMessage({ type: 'prime', requestId, dbName, dbUrl });
+        return; // only ever start one job per call
+    }
+}
+const primingDbUrls = new Map(); // dbName -> url, recorded whenever a real search uses it
+
+function showBlastDialog(sequenceHeader, sequenceSeq) {
+    // Create modal for database selection
+    const modal = document.createElement('div');
+    modal.className = 'blast-modal-backdrop';
+
+    const dialog = document.createElement('div');
+    dialog.className = 'blast-dialog';
+
+    const title = document.createElement('div');
+    title.className = 'blast-dialog-title';
+    title.textContent = 'BLAST Search';
+
+    const content = document.createElement('div');
+    content.className = 'blast-dialog-content';
+
+    const seqLabel = document.createElement('div');
+    seqLabel.innerHTML = `<strong>Sequence:</strong> ${_escapeHtml(sequenceHeader)}`;
+    seqLabel.style.marginBottom = '12px';
+    seqLabel.style.fontSize = '12px';
+    seqLabel.style.wordBreak = 'break-word';
+    content.appendChild(seqLabel);
+
+    const dbLabel = document.createElement('div');
+    dbLabel.innerHTML = '<strong>Search databases:</strong>';
+    dbLabel.style.marginBottom = '8px';
+    content.appendChild(dbLabel);
+
+    // Database checkboxes (fetched from server)
+    const dbCheckboxes = {};
+    const dbContainer = document.createElement('div');
+    dbContainer.style.marginBottom = '16px';
+
+    // Loading indicator
+    const dbLoading = document.createElement('div');
+    dbLoading.textContent = 'Loading databases...';
+    dbLoading.style.fontSize = '11px';
+    dbLoading.style.color = '#888';
+    dbLoading.style.marginBottom = '8px';
+    dbContainer.appendChild(dbLoading);
+
+    let databases = [];
+
+    fetchDatabases().then(dbs => {
+        databases = dbs;
+        dbLoading.remove();
+        if (dbs.length === 0) {
+            const empty = document.createElement('div');
+            empty.textContent = 'No databases configured. Add one below.';
+            empty.style.fontSize = '11px';
+            empty.style.color = '#888';
+            empty.style.marginBottom = '8px';
+            dbContainer.prepend(empty);
+            return;
+        }
+        for (const db of dbs) {
+            const label = document.createElement('label');
+            label.style.display = 'flex';
+            label.style.alignItems = 'center';
+            label.style.marginBottom = '6px';
+            label.style.cursor = 'pointer';
+            const checkbox = document.createElement('input');
+            checkbox.type = 'checkbox';
+            checkbox.checked = db.checked !== false;
+            checkbox.style.marginRight = '8px';
+            dbCheckboxes[db.name] = checkbox;
+            const span = document.createElement('span');
+            span.textContent = db.label || db.name;
+            span.title = db.description || '';
+            span.style.fontSize = '12px';
+            if (!db.available) {
+                span.style.color = '#999';
+                checkbox.disabled = true;
+                checkbox.checked = false;
+                span.textContent += ' (file not found)';
+            }
+            label.appendChild(checkbox);
+            label.appendChild(span);
+            dbContainer.appendChild(label);
+        }
+    }).catch(() => {
+        dbLoading.textContent = 'Server not available - no BLAST databases';
+    });
+
+    // Manage databases button
+    const manageBtn = document.createElement('button');
+    manageBtn.textContent = '+ Manage Databases';
+    manageBtn.style.padding = '3px 10px';
+    manageBtn.style.fontSize = '10px';
+    manageBtn.style.marginTop = '4px';
+    manageBtn.style.marginBottom = '8px';
+    manageBtn.style.cursor = 'pointer';
+    manageBtn.addEventListener('click', (e) => {
+        e.preventDefault();
+        modal.remove();
+        showDbManagementModal();
+    });
+    dbContainer.appendChild(manageBtn);
+
+    content.appendChild(dbContainer);
+
+    // E-value setting
+    const evalueLabel = document.createElement('div');
+    evalueLabel.innerHTML = '<strong>E-value threshold:</strong>';
+    evalueLabel.style.marginBottom = '6px';
+    evalueLabel.style.fontSize = '12px';
+    content.appendChild(evalueLabel);
+
+    const evalueInput = document.createElement('input');
+    evalueInput.type = 'text';
+    evalueInput.value = '1e-5';
+    evalueInput.style.width = '100px';
+    evalueInput.style.padding = '4px';
+    evalueInput.style.marginBottom = '16px';
+    evalueInput.style.fontSize = '12px';
+    content.appendChild(evalueInput);
+
+    // Buttons
+    const buttonContainer = document.createElement('div');
+    buttonContainer.style.display = 'flex';
+    buttonContainer.style.gap = '8px';
+    buttonContainer.style.justifyContent = 'flex-end';
+
+    const cancelBtn = document.createElement('button');
+    cancelBtn.textContent = 'Cancel';
+    cancelBtn.style.padding = '6px 16px';
+    cancelBtn.style.fontSize = '12px';
+    cancelBtn.style.cursor = 'pointer';
+    cancelBtn.addEventListener('click', () => {
+        modal.remove();
+    });
+
+    const searchBtn = document.createElement('button');
+    searchBtn.textContent = 'Search';
+    searchBtn.style.padding = '6px 16px';
+    searchBtn.style.fontSize = '12px';
+    searchBtn.style.cursor = 'pointer';
+    searchBtn.style.backgroundColor = '#4CAF50';
+    searchBtn.style.color = 'white';
+    searchBtn.style.border = 'none';
+    searchBtn.style.borderRadius = '4px';
+    searchBtn.addEventListener('click', async () => {
+        const selectedDbs = [];
+        for (const db of databases) {
+            if (dbCheckboxes[db.name]?.checked && db.url) selectedDbs.push({ name: db.name, url: db.url });
+        }
+
+        if (selectedDbs.length === 0) {
+            alert('Please select at least one database');
+            return;
+        }
+
+        modal.remove();
+        await runBlastSearch(sequenceHeader, sequenceSeq, selectedDbs, evalueInput.value);
+    });
+
+    buttonContainer.appendChild(cancelBtn);
+    buttonContainer.appendChild(searchBtn);
+    content.appendChild(buttonContainer);
+
+    dialog.appendChild(title);
+    dialog.appendChild(content);
+    modal.appendChild(dialog);
+    document.body.appendChild(modal);
+
+    // Close on backdrop click
+    modal.addEventListener('click', (e) => {
+        if (e.target === modal) {
+            modal.remove();
+        }
+    });
+}
+
+// Dynamic BLAST database helpers
+//
+// `info.url` (below) is REQUIRED — it's the only thing that lets runBlastSearch's
+// Web Worker (blast-worker.js) know where to fetch each database's raw FASTA from.
+// This is a client-side JS search engine, not real blastn; there is no other way
+// for it to find the data. If this ever silently drops again (as it did once, in
+// commit c38abf2), search fails with "HTTP 404 fetching undefined" and no other clue.
+async function fetchDatabases() {
+    try {
+        const resp = await fetch('/api/blast-db');
+        if (!resp.ok) throw new Error('Server returned ' + resp.status);
+        const data = await resp.json();
+        const dbs = [];
+        for (const [name, info] of Object.entries(data.databases || {})) {
+            dbs.push({
+                name,
+                label: info.description || name,
+                description: info.description || '',
+                url: info.url || null,  // REQUIRED by the client-side search worker — do not drop
+                checked: true,
+                available: info.available !== false && !!info.exists && !!info.url
+            });
+        }
+        dbs.sort((a, b) => a.label.localeCompare(b.label));
+        return dbs;
+    } catch (e) {
+        console.warn('Failed to fetch BLAST databases:', e.message);
+        return [];
+    }
+}
+
+function showDbManagementModal() {
+    const overlay = document.createElement('div');
+    overlay.className = 'blast-results-modal-backdrop';
+    overlay.style.zIndex = '10001';
+    const dialog = document.createElement('div');
+    dialog.className = 'blast-results-dialog-text';
+    dialog.style.maxWidth = '640px';
+    const titleBar = document.createElement('div');
+    titleBar.className = 'blast-text-title-bar';
+    titleBar.innerHTML = '<span>Manage BLAST Databases</span>';
+    const closeBtn = document.createElement('button');
+    closeBtn.className = 'blast-close-btn';
+    closeBtn.textContent = '×';
+    closeBtn.title = 'Close';
+    closeBtn.onclick = () => overlay.remove();
+    titleBar.appendChild(closeBtn);
+    dialog.appendChild(titleBar);
+    // Database list
+    const listSection = document.createElement('div');
+    listSection.style.padding = '16px';
+    listSection.style.maxHeight = '40vh';
+    listSection.style.overflowY = 'auto';
+    listSection.style.borderBottom = '1px solid #ddd';
+    const listTitle = document.createElement('div');
+    listTitle.textContent = 'Current databases:';
+    listTitle.style.fontWeight = 'bold';
+    listTitle.style.marginBottom = '8px';
+    listTitle.style.fontSize = '13px';
+    listSection.appendChild(listTitle);
+    const refreshDbList = () => {
+        listSection.querySelectorAll('.db-row').forEach(r => r.remove());
+        fetchDatabases().then(dbs => {
+            if (dbs.length === 0) {
+                const empty = document.createElement('div');
+                empty.textContent = 'No databases configured.';
+                empty.style.color = '#888';
+                empty.style.fontSize = '12px';
+                empty.className = 'db-row';
+                listSection.appendChild(empty);
+                return;
+            }
+            for (const db of dbs) {
+                const row = document.createElement('div');
+                row.className = 'db-row';
+                row.style.display = 'flex';
+                row.style.alignItems = 'center';
+                row.style.justifyContent = 'space-between';
+                row.style.padding = '4px 0';
+                row.style.borderBottom = '1px solid #eee';
+                row.style.fontSize = '12px';
+                const info = document.createElement('span');
+                info.innerHTML = '<strong>' + _escapeHtml(db.label) + '</strong>' +
+                    (db.available ? '' : ' <span style="color:#c00;font-size:10px;">(unavailable)</span>') +
+                    (db.description && db.description !== db.name ? ' <span style="color:#666;font-size:10px;">' + _escapeHtml(db.description) + '</span>' : '');
+                const delBtn = document.createElement('button');
+                delBtn.textContent = 'Delete';
+                delBtn.style.padding = '1px 8px';
+                delBtn.style.fontSize = '10px';
+                delBtn.style.background = '#e53935';
+                delBtn.style.color = 'white';
+                delBtn.style.border = 'none';
+                delBtn.style.borderRadius = '3px';
+                delBtn.style.cursor = 'pointer';
+                delBtn.onclick = async () => {
+                    if (!confirm('Delete database "' + db.name + '"? This removes it from the list, with its copy and indexes in the server\'s blast_dbs folder. A FASTA file registered from another folder is kept.')) return;
+                    try {
+                        const resp = await fetch('/api/blast-db/' + encodeURIComponent(db.name), { method: 'DELETE' });
+                        if (resp.ok) {
+                            showMessage('Database "' + db.name + '" deleted', 2000);
+                            refreshDbList();
+                        } else {
+                            const err = await resp.json();
+                            showMessage('Delete failed: ' + (err.error || resp.status), 3000);
+                        }
+                    } catch (e) { showMessage('Delete error: ' + e.message, 3000); }
+                };
+                row.appendChild(info);
+                row.appendChild(delBtn);
+                listSection.appendChild(row);
+            }
+        }).catch(() => {
+            const err = document.createElement('div');
+            err.textContent = 'Server not available.';
+            err.style.color = '#c00';
+            err.style.fontSize = '12px';
+            err.className = 'db-row';
+            listSection.appendChild(err);
+        });
+    };
+    refreshDbList();
+    dialog.appendChild(listSection);
+    // Add new database form
+    const addSection = document.createElement('div');
+    addSection.style.padding = '16px';
+    const addTitle = document.createElement('div');
+    addTitle.textContent = 'Add new database:';
+    addTitle.style.fontWeight = 'bold';
+    addTitle.style.marginBottom = '8px';
+    addTitle.style.fontSize = '13px';
+    addSection.appendChild(addTitle);
+    const dbNameInput = document.createElement('input');
+    dbNameInput.type = 'text';
+    dbNameInput.placeholder = 'Database name (e.g. my_SINEs)';
+    dbNameInput.style.cssText = 'width:100%;padding:6px;margin-bottom:8px;font-size:12px;box-sizing:border-box';
+    addSection.appendChild(dbNameInput);
+    const dbDescInput = document.createElement('input');
+    dbDescInput.type = 'text';
+    dbDescInput.placeholder = 'Description (e.g. Snake SINEs from RepBase)';
+    dbDescInput.style.cssText = 'width:100%;padding:6px;margin-bottom:8px;font-size:12px;box-sizing:border-box';
+    addSection.appendChild(dbDescInput);
+    let fastaContent = null;
+    let fastaFileName = '';
+    const fileRow = document.createElement('div');
+    fileRow.style.cssText = 'display:flex;gap:8px;margin-bottom:12px;align-items:center';
+    const fileBtn = document.createElement('button');
+    fileBtn.textContent = 'Select FASTA file...';
+    fileBtn.style.cssText = 'padding:4px 12px;font-size:12px;cursor:pointer';
+    fileBtn.onclick = () => {
+        const inp = document.createElement('input');
+        inp.type = 'file';
+        inp.accept = '.fa,.fasta,.fas,.bnk,.txt';
+        inp.onchange = () => {
+            const file = inp.files[0];
+            if (!file) return;
+            fastaFileName = file.name;
+            const reader = new FileReader();
+            reader.onload = () => {
+                fastaContent = reader.result;
+                const n = fastaContent.split('\n').filter(l => l.startsWith('>')).length;
+                if (!dbNameInput.value) dbNameInput.value = fastaFileName.replace(/\.[^.]+$/, '').replace(/[^a-zA-Z0-9._-]/g, '_');
+                fileStatus.textContent = fastaFileName + ' (' + n + ' sequences)';
+                fileStatus.style.color = '#4CAF50';
+            };
+            reader.readAsText(file);
+        };
+        inp.click();
+    };
+    fileRow.appendChild(fileBtn);
+    const fileStatus = document.createElement('span');
+    fileStatus.textContent = 'No file selected';
+    fileStatus.style.cssText = 'font-size:11px;color:#888';
+    fileRow.appendChild(fileStatus);
+    addSection.appendChild(fileRow);
+    const addBtn = document.createElement('button');
+    addBtn.textContent = 'Create Database';
+    addBtn.style.cssText = 'padding:6px 20px;font-size:13px;background:#4CAF50;color:white;border:none;border-radius:4px;cursor:pointer';
+    addBtn.onclick = async () => {
+        const name = dbNameInput.value.trim();
+        if (!name) { showMessage('Enter a database name', 2000); return; }
+        if (!fastaContent) { showMessage('Select a FASTA file first', 2000); return; }
+        addBtn.disabled = true;
+        addBtn.textContent = 'Creating...';
+        try {
+            const resp = await fetch('/api/blast-db', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ name, description: dbDescInput.value.trim(), fasta: fastaContent })
+            });
+            const result = await resp.json();
+            if (resp.ok) {
+                showMessage('Database "' + name + '" created!', 2000);
+                dbNameInput.value = '';
+                dbDescInput.value = '';
+                fastaContent = null;
+                fastaFileName = '';
+                fileStatus.textContent = 'No file selected';
+                fileStatus.style.color = '#888';
+                refreshDbList();
+            } else {
+                showMessage('Error: ' + (result.error || resp.status), 4000);
+            }
+        } catch (e) {
+            showMessage('Creation failed: ' + e.message, 4000);
+        }
+        addBtn.disabled = false;
+        addBtn.textContent = 'Create Database';
+    };
+    addSection.appendChild(addBtn);
+    dialog.appendChild(addSection);
+    overlay.appendChild(dialog);
+    document.body.appendChild(overlay);
+    overlay.addEventListener('click', (e) => {
+        if (e.target === overlay) overlay.remove();
+    });
+}
+

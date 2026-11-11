@@ -1,0 +1,357 @@
+[script.js lines 25003-25358 of ViewAlign fd8b8e4]
+// Matrix strings for the chosen identity definition (the tables and exports read these)
+function _statsBuildStrings() {
+    const d = state._statsData, n = d.n, pid = d.pid[d.mode];
+    d.identity = Array.from({ length: n }, (_, i) => Array.from({ length: n }, (_, j) => pid[i * n + j].toFixed(1)));
+    d.distance = Array.from({ length: n }, (_, i) => Array.from({ length: n }, (_, j) => (i === j ? 0 : 1 - pid[i * n + j] / 100).toFixed(2)));   // two decimals (owner, 2026-10-24)
+    // the shown matrix (owner, 2026-10-24): identity % above the diagonal, distance below it, the diagonal empty
+    d.combined = Array.from({ length: n }, (_, i) => Array.from({ length: n }, (_, j) => j > i ? d.identity[i][j] : j < i ? d.distance[i][j] : ''));
+}
+// The heat map and the pair filter work on identity or distance; the shown matrix is both
+function _statsHeatKind() { const k = _statsCurrentKind(); return k === 'combined' ? 'identity' : k; }
+
+function _statsIdentitySummary(mode) {
+    const d = state._statsData, n = d.n, pid = d.pid[mode];
+    let min = Infinity, max = -Infinity, sum = 0, pairs = 0, minP = [], maxP = [];
+    for (let i = 0; i < n; i++) for (let j = i + 1; j < n; j++) {
+        const v = pid[i * n + j];
+        sum += v; pairs++;
+        if (v < min - 1e-9) { min = v; minP = [[i, j]]; } else if (Math.abs(v - min) <= 1e-9) minP.push([i, j]);
+        if (v > max + 1e-9) { max = v; maxP = [[i, j]]; } else if (Math.abs(v - max) <= 1e-9) maxP.push([i, j]);
+    }
+    return { mean: pairs ? sum / pairs : 0, min, max, minP, maxP, pairs };
+}
+
+function _statsRenderIdCard() {
+    const card = document.getElementById('statsIdCard');
+    const d = state._statsData;
+    if (!card || !d) return;
+    const s = _statsIdentitySummary(d.mode);
+    const names = d.names, esc = _escStats;
+    const pairLinks = (pairs) => {
+        const link = ([i, j]) => `<a data-i="${i}" data-j="${j}" title="Find this pair in the matrix">${esc(names[i])} × ${esc(names[j])}</a>`;
+        let html = pairs.slice(0, 2).map(link).join('; ');
+        if (pairs.length > 2) {
+            const list = pairs.slice(0, 40).map(([i, j]) => `${names[i]} × ${names[j]}`).join('\n') + (pairs.length > 40 ? `\n… ${pairs.length - 40} more` : '');
+            html += ` <span class="more" title="${esc(list)}">+${pairs.length - 2} more</span>`;
+        }
+        return `<span class="pair">${html}</span>`;
+    };
+    const zero = d.mode === 'esl' ? d.counts.emptyPairs : d.counts.noSharedCols;
+    const row = (key, label, value) => `<tr><td><span class="tip" data-tip="${key}">${label}</span></td><td>${value}</td></tr>`;
+    card.innerHTML = `<b>Pairwise identity${d.mode === 'esl' ? ' <span class="src">esl-alipid</span>' : ''}</b><table>` +   // the shared-columns definition is not esl-alipid's
+        row(d.mode === 'esl' ? 'defEsl' : 'defCols', 'Identity', d.mode === 'esl' ? 'identical ÷ shorter sequence' : 'identical ÷ shared columns') +
+        row('mean', 'Mean', `${s.mean.toFixed(1)}%`) +
+        row('min', 'Min', `${s.min.toFixed(1)}% &nbsp;${pairLinks(s.minP)}`) +
+        row('max', 'Max', `${s.max.toFixed(1)}% &nbsp;${pairLinks(s.maxP)}`) +
+        row('pairs', 'Pairs compared', s.pairs.toLocaleString()) +
+        (zero ? row(d.mode === 'esl' ? 'zeroEsl' : 'zeroCols', d.mode === 'esl' ? 'Empty sequences' : 'Pairs sharing no column', `${zero.toLocaleString()} pair${zero > 1 ? 's' : ''}, counted as 0%`) : '') +
+        `</table>`;
+}
+
+// Tooltip texts: one-line summary, then what the program's documentation or source says.
+// Quotes are from the Easel man pages (esl-alistat, esl-alipid) and source files
+// (esl-alistat.c, esl_distance.c) in github.com/EddyRivasLab/easel, read 2026-09-27.
+const _STATS_TIPS = {
+    nseq: { sum: 'Sequences used here: all rows, or only the selected rows when two or more are selected.',
+        src: 'esl-alistat man page', doc: 'esl-alistat summarizes the contents of the multiple sequence alignment(s) in msafile, such as the alignment name, format, alignment length (number of aligned columns), number of sequences, average pairwise % identity, and mean, smallest, and largest raw (unaligned) lengths of the sequences.' },
+    alen: { sum: 'Number of alignment columns (the longest row; shorter rows count as gap-padded).',
+        src: 'esl-alistat man page', doc: 'alignment length (number of aligned columns)' },
+    nres: { sum: 'All residues in the sequences, i.e. the sum of their unaligned lengths. A residue is a letter (canonical or IUPAC code); gaps and "*" are not residues, as in Easel (esl_abc_dsqrlen).',
+        src: 'esl-alistat.c', doc: 'For each sequence: rlen = esl_abc_dsqrlen(...) (its raw, unaligned length); nres += rlen. Printed as "Total # residues".' },
+    small: { sum: 'Length of the shortest sequence without gaps.',
+        src: 'esl-alistat man page', doc: '...mean, smallest, and largest raw (unaligned) lengths of the sequences.' },
+    large: { sum: 'Length of the longest sequence without gaps.',
+        src: 'esl-alistat man page', doc: '...mean, smallest, and largest raw (unaligned) lengths of the sequences.' },
+    avglen: { sum: 'Total # residues ÷ number of sequences.',
+        src: 'esl-alistat.c', doc: 'printf("Average length: %.1f\\n", (double) nres / (double) nseq);' },
+    avgid: { sum: 'Mean pairwise identity, esl-alipid definition (identical residues ÷ shorter unaligned length), over every pair. esl-alistat itself averages 1,000 random pairs when there are more than 1,000 pairs, and prints a whole percent, so its value can differ slightly.',
+        src: 'esl_distance.c, esl_dst_XAverageId (esl-alistat sets max_comparisons = 1000)', doc: 'If an exhaustive calculation would require more than <max_comparisons> pairwise comparisons, then instead of looking at all pairs, calculate the average over a stochastic sample of <max_comparisons> random pairs. [...] Each fractional pairwise identity (range [0..pid..1]) is calculated using esl_dst_XPairId().' },
+    gaps: { sum: 'Not an esl-alistat value (ViewAlign addition): cells without a residue ("-", "." or "*"), including the implied padding of shorter rows; the percentage is of all cells (sequences × columns).', src: '', doc: '' },
+    defEsl: { sum: 'Identity = identical residues ÷ the shorter of the two unaligned sequence lengths, as esl-alipid. Identical IUPAC codes (e.g. N/N) count as identities, as in esl_dst_XPairId; case is ignored; in a nucleotide alignment U equals T (the Easel DNA alphabet); "*" is not a residue.',
+        src: 'esl-alipid man page', doc: '<%id> is the percent identity, <nid> is the number of identical aligned pairs, and <denomid> is the denominator used for the calculation: the shorter of the two (unaligned) sequence lengths. The %identity is defined as 100*nid/denomid. [...] alignments of a gap character in both sequences, --, aren\'t counted.' },
+    defCols: { sum: 'Identity = identical residues ÷ columns where both sequences have a residue (not esl-alipid\'s definition; switch "over" to shorter sequence for it). Useful to compare the aligned parts only, but fragments that barely overlap can score very high.',
+        src: 'esl-alipid man page, on this definition', doc: 'Several ways to calculate %identity, such as ignoring columns with gaps (100* n_identities / (n_identities + n_mismatches)) , or dividing by the total alignment length (100 * n_identities / ali_len), are not robust to having overlapping fragments or long indels, because you can get spuriously high or low %id\'s.' },
+    mean: { sum: 'Mean of the pairwise identities over all pairs, with the definition chosen under the matrix ("over").', src: '', doc: '' },
+    min: { sum: 'Lowest pairwise identity and the pair(s) that have it. Click a pair to find it in the matrix.', src: '', doc: '' },
+    max: { sum: 'Highest pairwise identity and the pair(s) that have it. Click a pair to find it in the matrix.', src: '', doc: '' },
+    pairs: { sum: 'n × (n − 1) ÷ 2: every pair, as esl-alipid outputs one line per pair.',
+        src: 'esl-alipid man page', doc: 'For each sequence pair, it outputs a line of <seqname1> <seqname2> <%id> <nid> <denomid> <%match> <nmatch> <denommatch>' },
+    zeroEsl: { sum: 'Pairs where one sequence has no residues at all; their identity is 0%.',
+        src: 'esl-alipid man page', doc: 'if the denominator is zero [...], the resulting % is defined to be 0.' },
+    zeroCols: { sum: 'Pairs with no column where both have a residue (fragments that do not overlap); their identity is 0% here. With the esl-alipid definition they are compared over the shorter sequence instead.', src: '', doc: '' },
+};
+
+function _statsTipShow(target) {
+    const card = document.getElementById('statsTipCard');
+    const t = _STATS_TIPS[target.dataset.tip];
+    const win = document.getElementById('statsModal');
+    if (!card || !t || !win) return;
+    card.innerHTML = `<div class="sum">${_escStats(t.sum)}</div>` +
+        (t.doc ? `<div class="doc"><div class="from">From ${_escStats(t.src)}:</div>“${_escStats(t.doc)}”</div>` : '');
+    card.hidden = false;
+    const r = target.getBoundingClientRect(), w = win.getBoundingClientRect();
+    const cw = Math.min(420, w.width - 20);
+    card.style.width = cw + 'px';
+    card.style.left = Math.max(8, Math.min(r.left - w.left, w.width - cw - 8)) + 'px';
+    const below = r.bottom - w.top + 6;
+    card.style.top = below + 'px';
+    const ch = card.getBoundingClientRect().height;
+    if (w.top + below + ch > window.innerHeight - 8) card.style.top = Math.max(8, r.top - w.top - ch - 6) + 'px';
+}
+
+function _statsTipHide() {
+    const card = document.getElementById('statsTipCard');
+    if (card) card.hidden = true;
+}
+
+// ── Statistics window: floating (drag, resize from any edge or corner, minimize,
+// maximize) or docked on the right ──
+let _statsDockW = 460;
+let _statsFloatRect = null;
+let _statsPreMaxRect = null;
+
+function _statsPrefs() {
+    try { return JSON.parse(localStorage.getItem('msaviewer_statsWin') || '{}') || {}; } catch (e) { return {}; }
+}
+function _statsSavePrefs(patch) {
+    try { localStorage.setItem('msaviewer_statsWin', JSON.stringify({ ..._statsPrefs(), ...patch })); } catch (e) {}
+}
+
+function _statsShow() {
+    const w = document.getElementById('statsModal');
+    if (!w) return;
+    const prefs = _statsPrefs();
+    const dockW = +prefs.dockW;   // a corrupt entry (a string, NaN) used to give the pane a NaN width
+    if (Number.isFinite(dockW) && dockW > 0) _statsDockW = Math.max(280, Math.min(dockW, 4000));
+    w.style.display = 'flex';
+    if (!w._init) {
+        w._init = true;
+        _statsSetFloatRect(_statsDefaultRect());
+        makeModalDraggableResizable('statsModal', 'statsHeader', 'statsContent');
+        const btns = w.querySelector('.ge-window-btns');
+        btns.querySelectorAll('button').forEach(b => { if (!['statsDockBtn', 'statsCloseBtn', 'statsMaxBtn'].includes(b.id)) b.classList.add('stats-min-btn'); });
+        _statsInitDockResizer(w);
+        _statsInitEdgeResizers(w);
+        document.getElementById('statsMaxBtn')?.addEventListener('click', (e) => { e.stopPropagation(); _statsToggleMax(); });
+        document.getElementById('statsHeader')?.addEventListener('dblclick', (e) => {
+            if (e.target.closest('button') || w.classList.contains('stats-docked')) return;
+            _statsToggleMax();
+        });
+        window.addEventListener('resize', () => {
+            if (w.style.display === 'none') return;
+            if (w.classList.contains('stats-docked')) {
+                w.style.top = _statsDockTop() + 'px';
+                // the pane keeps at least 300 px for the alignment when the browser window shrinks
+                const width = Math.min(_statsDockW, window.innerWidth - 300);
+                if (parseInt(w.style.width, 10) !== width) { w.style.width = width + 'px'; document.body.style.paddingRight = width + 'px'; _statsRelayout(); }
+            }
+            else if (w.classList.contains('stats-max')) _statsApplyMaxRect();
+        });
+    }
+    if (prefs.docked) _statsApplyDock();
+    else _statsUpdateDockBtn(false);
+}
+
+function _statsDefaultRect() {
+    const width = Math.min(1000, window.innerWidth - 40);
+    const height = Math.min(800, window.innerHeight - 80);
+    return { left: Math.max(10, (window.innerWidth - width) / 2), top: 50, width, height };
+}
+
+function _statsSetFloatRect(r) {
+    const w = document.getElementById('statsModal');
+    Object.assign(w.style, { left: r.left + 'px', top: r.top + 'px', width: r.width + 'px', height: r.height + 'px',
+        right: '', bottom: '', transform: 'none', margin: '0', maxHeight: 'none', maxWidth: 'none' });
+}
+
+function _statsRect() {
+    const r = document.getElementById('statsModal').getBoundingClientRect();
+    return { left: r.left, top: r.top, width: r.width, height: r.height };
+}
+
+function _statsDockTop() {
+    const c = document.getElementById('controls');
+    return c ? Math.max(0, Math.round(c.getBoundingClientRect().bottom)) : 0;
+}
+
+// Maximize: fill the window below the menu bar; the same button (or a double-click on the
+// title bar) restores the previous size and place
+function _statsApplyMaxRect() {
+    const top = _statsDockTop() + 4;
+    _statsSetFloatRect({ left: 4, top, width: window.innerWidth - 8, height: window.innerHeight - top - 4 });
+}
+function _statsToggleMax() {
+    const w = document.getElementById('statsModal');
+    if (w.classList.contains('stats-docked')) _statsUndock();
+    const content = document.getElementById('statsContent');
+    if (content && content.style.display === 'none') w.querySelector('.stats-min-btn')?.click();
+    const btn = document.getElementById('statsMaxBtn');
+    if (w.classList.contains('stats-max')) {
+        w.classList.remove('stats-max');
+        _statsSetFloatRect(_statsPreMaxRect || _statsDefaultRect());
+        if (btn) { btn.innerHTML = '&#9633;'; btn.title = 'Maximize (or double-click the title bar)'; }
+    } else {
+        _statsPreMaxRect = _statsRect();
+        w.classList.add('stats-max');
+        _statsApplyMaxRect();
+        if (btn) { btn.innerHTML = '&#10064;'; btn.title = 'Restore the previous size (or double-click the title bar)'; }
+    }
+}
+
+// Resize from any edge or corner (the shared helper only had a lower-right grip)
+function _statsInitEdgeResizers(w) {
+    let drag = null;
+    const MIN_W = 380, MIN_H = 220;
+    w.querySelectorAll('.stats-rz').forEach(h => h.addEventListener('mousedown', (e) => {
+        if (w.classList.contains('stats-docked') || w.classList.contains('stats-max')) return;
+        e.preventDefault(); e.stopPropagation();
+        drag = { dir: h.dataset.dir, x: e.clientX, y: e.clientY, r: _statsRect() };
+        document.body.style.userSelect = 'none';
+    }));
+    document.addEventListener('mousemove', (e) => {
+        if (!drag) return;
+        const dx = e.clientX - drag.x, dy = e.clientY - drag.y, r = drag.r, d = drag.dir;
+        let { left, top, width, height } = r;
+        if (d.includes('e')) width = Math.max(MIN_W, r.width + dx);
+        if (d.includes('s')) height = Math.max(MIN_H, r.height + dy);
+        if (d.includes('w')) { width = Math.max(MIN_W, r.width - dx); left = r.left + r.width - width; }
+        if (d.includes('n')) { height = Math.max(MIN_H, r.height - dy); top = Math.max(0, r.top + r.height - height); height = r.top + r.height - top; }
+        _statsSetFloatRect({ left, top, width, height });
+    });
+    document.addEventListener('mouseup', () => {
+        if (!drag) return;
+        drag = null;
+        document.body.style.userSelect = '';
+    });
+}
+
+function _statsUpdateDockBtn(docked) {
+    const b = document.getElementById('statsDockBtn');
+    if (!b) return;
+    b.innerHTML = docked ? '&#10697;' : '&#9707;';
+    b.title = docked ? 'Undock into a floating window' : 'Dock to the right side of the window';
+}
+
+// Lets the alignment reflow into the narrower space (it re-renders on resize)
+function _statsRelayout() {
+    window.dispatchEvent(new Event('resize'));
+}
+
+function _statsApplyDock() {
+    const w = document.getElementById('statsModal');
+    const content = document.getElementById('statsContent');
+    if (content && content.style.display === 'none') w.querySelector('.stats-min-btn')?.click();   // restore if minimized
+    if (w.classList.contains('stats-max')) {
+        w.classList.remove('stats-max');
+        const btn = document.getElementById('statsMaxBtn');
+        if (btn) { btn.innerHTML = '&#9633;'; btn.title = 'Maximize (or double-click the title bar)'; }
+    }
+    w.classList.add('stats-docked', 'ge-docked');
+    const width = Math.min(_statsDockW, window.innerWidth - 300);
+    Object.assign(w.style, { left: 'auto', right: '0', top: _statsDockTop() + 'px', bottom: '0', width: width + 'px',
+        height: 'auto', transform: 'none', margin: '0', maxHeight: 'none', maxWidth: 'none' });
+    document.body.style.paddingRight = width + 'px';
+    _statsUpdateDockBtn(true);
+    _statsRelayout();
+}
+
+function _statsDock() {
+    const w = document.getElementById('statsModal');
+    _statsFloatRect = w.classList.contains('stats-max') ? (_statsPreMaxRect || _statsDefaultRect()) : _statsRect();
+    _statsSavePrefs({ docked: true });
+    _statsApplyDock();
+}
+
+function _statsUndock() {
+    const w = document.getElementById('statsModal');
+    _statsSavePrefs({ docked: false });
+    w.classList.remove('stats-docked', 'ge-docked');
+    document.body.style.paddingRight = '';
+    _statsSetFloatRect(_statsFloatRect || _statsDefaultRect());
+    _statsUpdateDockBtn(false);
+    _statsRelayout();
+}
+
+function _statsInitDockResizer(w) {
+    const grip = w.querySelector('.stats-dock-resizer');
+    if (!grip) return;
+    let dragging = false;
+    grip.addEventListener('mousedown', (e) => { dragging = true; e.preventDefault(); document.body.style.userSelect = 'none'; });
+    document.addEventListener('mousemove', (e) => {
+        if (!dragging) return;
+        const width = Math.round(Math.min(window.innerWidth - 300, Math.max(280, window.innerWidth - e.clientX)));
+        w.style.width = width + 'px';
+        document.body.style.paddingRight = width + 'px';
+    });
+    document.addEventListener('mouseup', () => {
+        if (!dragging) return;
+        dragging = false;
+        document.body.style.userSelect = '';
+        _statsDockW = parseInt(w.style.width, 10) || _statsDockW;
+        _statsSavePrefs({ dockW: _statsDockW });
+        _statsRelayout();
+    });
+}
+
+function closeStats() {
+    const w = document.getElementById('statsModal');
+    if (!w) return;
+    w.style.display = 'none';
+    _statsTipHide();
+    if (w.classList.contains('stats-docked')) {
+        w.classList.remove('stats-docked', 'ge-docked');   // the docked preference is kept for next time
+        document.body.style.paddingRight = '';
+        _statsRelayout();
+    }
+}
+
+// ── Output ──
+function _statsDownload(blob, name) {
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = name;
+    a.click();
+    setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+    showMessage(`Saved ${name}`, 1800);
+}
+
+function _statsMatrixGrid(kind, cols) {
+    const d = state._statsData;
+    const js = cols && cols.length ? cols : d.names.map((_, j) => j);
+    return [[''].concat(js.map(j => d.names[j]))].concat(d[kind].map((r, i) => [d.names[i]].concat(js.map(j => r[j]))));
+}
+
+function _statsFileBase(kind) {
+    const d = state._statsData;
+    return (state.currentFilename || 'alignment').replace(/\.[^.]+$/, '') + (kind === 'distance' ? '_distance' : kind === 'identity' ? '_identity' : '_matrix') + (d && d.mode === 'cols' ? '_sharedcols' : '');
+}
+
+function _statsCurrentKind() {
+    return document.querySelector('#statsSummaryTab .stats-mx-body')?.dataset.kind || 'combined';
+}
+
+function _statsSelectedCols() {
+    return [...(state._statsSelCols || [])].sort((a, b) => a - b);
+}
+
+// Copy: the selected columns if any are selected, else the whole matrix
+function copyStatsMatrix(kind) {
+    kind = kind || _statsCurrentKind();
+    if (!state._statsData?.[kind]) {
+        showMessage('No statistics matrix available to copy.', 2200);
+        return;
+    }
+    const cols = _statsSelectedCols();
+    const clean = v => String(v).replace(/[\t\r\n]+/g, ' ');
+    const text = _statsMatrixGrid(kind, cols).map(r => r.map(clean).join('\t')).join('\n') + '\n';
+    const what = cols.length ? `${cols.length} column${cols.length > 1 ? 's' : ''}` : (kind === 'distance' ? 'Distance matrix' : kind === 'identity' ? 'Identity matrix' : 'Matrix (identity above, distance below)');
+    if (!navigator.clipboard?.writeText) {   // e.g. a page served over plain http
+        showMessage('Copying needs a secure page (https or localhost); use Save matrix instead.', 3500);
+        return;
+    }
+    navigator.clipboard.writeText(text)
+        .then(() => showMessage(`${what} copied (tab-separated, full names).`, 1800))
+        .catch(() => showMessage('Failed to copy statistics matrix.', 2500));
+}
+

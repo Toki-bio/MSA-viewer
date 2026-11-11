@@ -1,0 +1,355 @@
+[script.js lines 39259-39612 of ViewAlign fd8b8e4]
+function _finishRepeatJob(job) {
+    if (_repeatJob !== job) return;
+    _repeatJob = null;
+    _setRepeatRunning(false);
+    _repeatJobStats = { slices: job.slices, maxSliceMs: Math.round(job.maxSliceMs * 10) / 10, ms: Math.round(performance.now() - job.t0) };
+    const { resultsEl, mode, minLen, maxDiv, unit, targets, scope, allResults } = job;
+    const notes = job.notes.slice();
+    const searched = job.done + (job.partial ? 1 : 0);
+    if (job.cancelled && job.M > 1) notes.unshift(`stopped by you after ${job.done} of ${job.M} sequences${job.partial ? ' (and part of the next)' : ''}`);
+    else if (job.cancelled && !job.partial && !job.done) notes.unshift('stopped by you before the search began');
+    _carryRepeatHighlights(mode, allResults);
+    if (allResults.length === 0) {
+        // forget the previous table, or Clear highlights brings it back
+        _repeatResultsShown = null;
+        _lastRepeatResults = [];
+        _lastRepeatView = null;
+        resultsEl.textContent = `No ${mode} repeats found (min ${mode === 'tandem' ? 'array length ' : ''}${minLen} ${unit}, max ${maxDiv}% divergence)${notes.length ? '; ' + notes.join('; ') : ''}.`;
+        return;
+    }
+    _lastRepeatResults = allResults;
+    const name = targets.length === 1 ? job.displayName : `${job.cancelled ? searched : targets.length} sequences`;
+    // obj: the sequence a One-sequence table is about, so reopening on another sequence does not keep it
+    _lastRepeatView = { mode, name, totalLen: job.totalLen, unit, note: notes.join('; '), obj: scope === 'single' && targets.length === 1 ? targets[0].obj : null,
+        // B2: microsatellite groups (each { id, unit, n, longest, bp, arrays: [[col, endCol)], seqIndex, obj }) and the
+        // pairs each shows when opened (20 at a time)
+        groups: job.groups, groupedPairs: job.groupedPairs || 0, ungroupedTotal: job.ungroupedTotal || 0, expanded: new Map() };
+    _renderRepeatResultsHTML(resultsEl, allResults, mode, name, job.totalLen, _lastRepeatView);
+}
+
+function runTsdAnalysis() {
+    const resultsEl = document.getElementById('repeatResults');
+    if (!resultsEl) return;
+    const tsdMode = document.querySelector('input[name="tsdMode"]:checked')?.value || 'auto';
+    const params = _readTsdParams();
+    const aliLen = _maxOf(state.seqs, s => s.seq.length);
+    // a search that stops with a message forgets the previous results: Mark, Copy table and the faint preview still
+    // worked on the last run's TSDs under "Invalid pre-SINE region" (GLM db2 #9)
+    const fail = (msg) => {
+        _lastTsdResults = [];
+        _repeatResultsShown = null;
+        _syncTsdResultTools(true);
+        _clearTsdPreview();
+        resultsEl.textContent = msg;
+    };
+
+    if (tsdMode === 'manual') {
+        if (params.upStart < 1 || params.upEnd < params.upStart) {
+            fail('Invalid pre-SINE region: check start/end columns.');
+            return;
+        }
+        if (params.downStart < 1 || params.downEnd < params.downStart) {
+            fail('Invalid post-SINE region: check start/end columns.');
+            return;
+        }
+        if (params.upEnd >= params.downStart) {
+            fail('Pre-SINE and post-SINE regions must not overlap (leave room for the SINE body between them).');
+            return;
+        }
+        if (params.downEnd > aliLen) {
+            fail(`Post-SINE end column exceeds alignment length (${aliLen}).`);
+            return;
+        }
+    }
+
+    resultsEl.textContent = `Searching TSDs in ${state.seqs.length} sequence(s)...`;
+    setTimeout(() => {
+        try {
+            const results = _findTSD(state.seqs, tsdMode, params);
+            _lastTsdResults = results;
+            _renderTsdResultsHTML(resultsEl, results, tsdMode, params);
+            _setTsdPreview(results);
+        } catch (e) {
+            fail(`Error: ${e.message}`);
+        }
+    }, 30);
+}
+
+function _renderTsdResultsHTML(el, results, tsdMode, params) {
+    const esc = _escapeHtml;
+    _repeatResultsShown = 'tsd';
+    _syncTsdResultTools(true);
+    const misses = results.misses || [];
+    const tested = results.length + misses.length;
+    const b = results.boundaries;
+    // never silent: rows left out of the search, and a Reference row search that had no reference row
+    const skipped = results.skipped || [];
+    // every note is about the reference row and names it itself ("Reference row: no row named consensus ..." said
+    // the opposite of what followed; GLM d305 #18, #27)
+    const notesHtml = (b?.note ? `<div class="rf-hint rf-note">Note: ${esc(b.note)}.</div>` : '') +
+        (b?.flankNote ? `<div class="rf-hint rf-flanknote">No flanks: ${esc(b.flankNote)}.</div>` : '') +
+        (skipped.length ? `<div class="rf-hint rf-skipped">${skipped.map(s => `${esc(s.seqName)}: ${esc(s.reason)}`).join('<br>')}</div>` : '');
+    const bodyChip = (b && Number.isInteger(b.leftBoundary) && Number.isInteger(b.rightBoundary) && tsdMode !== 'manual')
+        ? `<span class="rf-chip" title="${esc(b.label || '')}">SINE body: columns ${b.leftBoundary + 1}–${b.rightBoundary + 1}</span>` : '';
+    const missesHtml = misses.length ? `<details class="rf-misses"><summary>${misses.length} cop${misses.length === 1 ? 'y' : 'ies'} without a TSD</summary><ul>` +
+        misses.map((m, mi) => `<li><a href="#" data-mi="${mi}" class="rf-goto">${esc(m.seqName)}</a>: ${esc(m.reason)}</li>`).join('') + '</ul></details>' : '';
+
+    if (!results.length) {
+        let hint = 'Try a wider search window, a higher mismatch limit, or another way of finding the SINE body.';
+        if (tsdMode === 'manual') hint = `Columns ${params.upStart}–${params.upEnd} (5′) against ${params.downStart}–${params.downEnd} (3′). ` + hint;
+        el.innerHTML = `<div class="rf-summary"><span class="rf-big">No TSD found</span><span class="rf-chip">${tested} copies searched</span>${bodyChip}</div>` +
+            `<div class="rf-hint">${esc(hint)}</div>${notesHtml}${missesHtml}`;
+        _wireTsdGoto(el);
+        return;
+    }
+
+    const lens = results.map(r => r.tsdLen).sort((x, y) => x - y);
+    // the mean of the two middle lengths for an even count (lens[n / 2] gave 9 for 7, 7, 9, 9)
+    const mid = lens.length >> 1;
+    const median = lens.length % 2 ? lens[mid] : (lens[mid - 1] + lens[mid]) / 2;
+    const exact = results.filter(r => Number(r.mismatches) === 0).length;
+    const counts = new Map();
+    lens.forEach(n => counts.set(n, (counts.get(n) || 0) + 1));
+    const maxCount = Math.max(...counts.values());
+    let histo = '<span class="rf-histo" title="Number of copies per TSD length">';
+    for (let n = lens[0]; n <= lens[lens.length - 1]; n++) {
+        const c = counts.get(n) || 0;
+        histo += `<span style="height:${c ? Math.max(3, Math.round(24 * c / maxCount)) : 1}px" title="${n} bp: ${c}"></span>`;
+    }
+    histo += '</span>';
+    const pct = Math.round(100 * results.length / Math.max(1, tested));
+    let html = `<div class="rf-summary"><span class="rf-big">TSD in ${results.length} of ${tested} copies (${pct}%)</span>` +
+        `<span class="rf-chip">length ${lens[0]}–${lens[lens.length - 1]} bp, median ${median}</span>${histo}` +
+        `<span class="rf-chip">${exact} identical pair${exact === 1 ? '' : 's'}</span>${bodyChip}</div>` +
+        '<div class="rf-hint">Each row shows the 5′ copy above the 3′ copy; mismatches are red; the small grey letters are the 3 bases on each side of a copy (if they match across the two rows, the TSD may be longer). Click a row to show it in the alignment. Click a column title to sort.</div>' +
+        '<table class="rf-table"><colgroup><col style="width:30px"><col><col style="width:27%"><col style="width:48px"><col style="width:62px"><col style="width:92px"></colgroup>' +
+        '<thead><tr><th data-sort="order">#</th><th data-sort="name">Sequence</th><th>TSD (5′ / 3′)</th>' +
+        '<th data-sort="len" class="rf-num-cell">Length</th><th data-sort="mm" class="rf-num-cell">Mismatch</th><th>Columns</th></tr></thead><tbody></tbody></table>' + notesHtml + missesHtml;
+    el.innerHTML = html;
+
+    // 3 bases outside each copy, small and grey; padded to 3 so the two rows stay in register
+    const flank = (t, left) => {
+        t = t || '';
+        const pad = ' '.repeat(Math.max(0, 3 - t.length));
+        return `<span class="rf-flank" title="next to the TSD, not part of it">${left ? pad + esc(t) : esc(t) + pad}</span>`;
+    };
+    const pair = (up, down, upF, downF) => {
+        let a = '', c = '';
+        for (let k = 0; k < Math.max(up.length, down.length); k++) {
+            const x = up[k] || '', y = down[k] || '';
+            // an N (either copy) counts 0.5 in the Mismatch column, so it is marked here too (N against N was not)
+            const mm = x.toUpperCase() !== y.toUpperCase() || x.toUpperCase() === 'N';
+            a += mm ? `<span class="rf-mm">${esc(x)}</span>` : esc(x);
+            c += mm ? `<span class="rf-mm">${esc(y)}</span>` : esc(y);
+        }
+        return `<div class="rf-pair"><span class="rf-tag">5′</span>${flank(upF?.before, true)}${a}${flank(upF?.after, false)}<br>` +
+            `<span class="rf-tag">3′</span>${flank(downF?.before, true)}${c}${flank(downF?.after, false)}</div>`;
+    };
+    const rows = results.map((r, i) => ({ r, i }));
+    const tbody = el.querySelector('tbody');
+    const draw = (key, dir) => {
+        const cmp = { order: (a, z) => a.i - z.i, name: (a, z) => a.r.seqName.localeCompare(z.r.seqName),
+            len: (a, z) => a.r.tsdLen - z.r.tsdLen, mm: (a, z) => a.r.mismatches - z.r.mismatches }[key];
+        rows.sort((a, z) => dir * cmp(a, z) || a.i - z.i);
+        tbody.innerHTML = rows.map(({ r, i }) =>
+            `<tr data-ri="${i}">` +
+            `<td class="rf-num-cell">${i + 1}</td>` +
+            `<td class="rf-name" title="${esc(r.seqName)}">${esc(r.seqName)}</td>` +
+            `<td>${pair(r.upTSD, r.downTSD, r.upFlank, r.downFlank)}</td>` +
+            `<td class="rf-num-cell">${r.tsdLen}</td>` +
+            `<td class="rf-num-cell" title="${r.divergence}%">${r.mismatches}/${r.tsdLen}</td>` +
+            `<td class="rf-cols">${esc(r.upCols)}<br>${esc(r.downCols)}</td></tr>`).join('');
+    };
+    let sortKey = 'order', sortDir = 1;
+    draw(sortKey, sortDir);
+    el.querySelectorAll('th[data-sort]').forEach(th => th.addEventListener('click', () => {
+        sortDir = (sortKey === th.dataset.sort) ? -sortDir : 1;
+        sortKey = th.dataset.sort;
+        draw(sortKey, sortDir);
+    }));
+    tbody.addEventListener('click', (ev) => {
+        const tr = ev.target.closest('tr[data-ri]');
+        if (!tr) return;
+        tbody.querySelectorAll('tr.rf-active').forEach(x => x.classList.remove('rf-active'));
+        tr.classList.add('rf-active');
+        // where that sequence and TSD are now (rows and columns may have changed since the search)
+        const r = results[parseInt(tr.dataset.ri, 10)];
+        const row = r?.obj ? _seqObjResolver()(r.obj) : -1;
+        if (row >= 0) _showRowInAlignment(row, _columnOfResidue(row, r.upRes?.[0]));
+    });
+    _wireTsdGoto(el);
+}
+
+// Scroll the alignment to a row (if it is drawn) and a column, and flash the row name
+// (bandCol: Block view only, when col is not given: the band to show the row in, e.g. the SINE body's
+// first column for a TSD miss; without it the band now in the middle of the view)
+function _showRowInAlignment(row, col, bandCol) {
+    const container = document.getElementById('alignmentContainer');
+    // Block view (Canvas Block): the band holding the column, the row's line in it (it set the strip's
+    // offsetY = row * pitch, which is band 0's rows, and panned offsetX, which Block holds at 0)
+    if (isBlockLayout() && _canvasState.layout) {
+        if (Number.isInteger(col)) _foldRevealCol(col);
+        const c = Number.isInteger(col) ? col : (Number.isInteger(bandCol) ? bandCol : null);
+        if (_canvasBlockReveal(row, c)) return;
+    }
+    if (document.getElementById('modeCanvas')?.checked && _canvasState.canvas) {
+        // Canvas: the row a third of the way down (as _geScrollToSeq), then the column
+        const rowPitch = _canvasState.rowPitch || _canvasState.metrics?.charH || 16;
+        const cv = _canvasState.canvas;
+        const viewH = (parseInt(cv.style.height) || cv.clientHeight || container?.clientHeight || 240);
+        const maxY = Math.max(0, (_canvasState.totalContentH || 0) - viewH);   // not past the content's end (GLM audit)
+        _canvasState.offsetY = Math.min(maxY, Math.max(0, row * rowPitch - Math.min(viewH / 3, rowPitch * 4)));
+        _canvasState.scheduleDraw?.();
+        _canvasState.onOffsetChange?.();
+        if (Number.isInteger(col)) _scrollToColumn(col);
+        return;
+    }
+    // Block mode draws a row once per block: go to the block that holds the column
+    const cell = Number.isInteger(col) ? container?.querySelector(`.seq-line[data-seq-index="${row}"] .seq-data > span[data-pos="${col}"]`) : null;
+    if (cell) {
+        cell.scrollIntoView({ block: 'center', inline: 'center' });
+        const name = cell.closest('.seq-line')?.querySelector('.seq-name');
+        if (name) { name.classList.remove('rf-flash'); void name.offsetWidth; name.classList.add('rf-flash'); }
+        return;
+    }
+    const line = container?.querySelector(`.seq-line[data-seq-index="${row}"]`);
+    if (line) {
+        line.scrollIntoView({ block: 'center', inline: 'nearest' });
+        const name = line.querySelector('.seq-name');
+        if (name) { name.classList.remove('rf-flash'); void name.offsetWidth; name.classList.add('rf-flash'); }
+    }
+    if (Number.isInteger(col)) requestAnimationFrame(() => _scrollToColumn(col));
+}
+function _wireTsdGoto(el) {
+    el.querySelectorAll('a.rf-goto').forEach(a => a.addEventListener('click', (ev) => {
+        ev.preventDefault();
+        const m = _lastTsdResults?.misses?.[parseInt(a.dataset.mi, 10)];
+        const row = m?.obj ? _seqObjResolver()(m.obj) : -1;
+        // Block view: the band of the SINE body's first column (a miss has no column of its own)
+        if (row >= 0) _showRowInAlignment(row, null, _lastTsdResults?.boundaries?.leftBoundary);
+    }));
+}
+function _copyTsdTable() {
+    const res = _lastTsdResults || [];
+    if (!res.length && !res.misses?.length) { showMessage('Run the TSD search first.', 2000); return; }
+    const lines = ['sequence\ttsd_length\tmismatches\ttsd_5prime\ttsd_3prime\tcolumns_5prime\tcolumns_3prime\tnote'];
+    res.forEach(r => lines.push([r.seqName, r.tsdLen, r.mismatches, r.upTSD, r.downTSD, r.upCols, r.downCols, ''].join('\t')));
+    (res.misses || []).forEach(m => lines.push([m.seqName, '', '', '', '', '', '', m.reason].join('\t')));
+    const text = lines.join('\n') + '\n';
+    if (navigator.clipboard?.writeText) {
+        navigator.clipboard.writeText(text).then(() => showMessage(`Copied ${res.length} TSDs${res.misses?.length ? ` and ${res.misses.length} cop${res.misses.length === 1 ? 'y' : 'ies'} without one` : ''}`, 1800), () => showMessage('Clipboard not available', 2500));
+    } else showMessage('Clipboard not available', 2500);
+}
+
+// The columns a result row highlights, "start-end[;start-end]" (end exclusive)
+function _repeatResultSegs(r, mode) {
+    if (mode === 'tandem') return `${r.start}-${r.end}`;
+    const endA = r.alignEnd != null ? r.alignEnd : (r.posA + r.length);
+    const endB = r.alignEndB != null ? r.alignEndB : (r.posB + r.length);
+    return `${r.posA}-${endA};${r.posB}-${endB}`;
+}
+// A new search of a mode replaces that mode's table, and its highlights were keyed by place in the old table
+// ("direct-3"): the new row 3 came up highlighted while the old repeat stayed painted, and clicking it removed the
+// old paint. A highlighted repeat the new search finds again keeps its highlight under its new place; the others go.
+function _carryRepeatHighlights(mode, results) {
+    const hl = state.repeatHighlights;
+    const old = [...hl.entries()].filter(([k]) => k.startsWith(mode + '-'));
+    if (!old.length) return;
+    const prev = _lastRepeatView?.mode === mode ? (_lastRepeatResults || []) : [];
+    old.forEach(([k]) => hl.delete(k));
+    old.forEach(([k, info]) => {
+        const was = prev[parseInt(k.split('-').pop(), 10)];
+        if (!was) return;
+        const segs = _repeatResultSegs(was, mode);
+        const j = results.findIndex(r => r.obj === was.obj && _repeatResultSegs(r, mode) === segs);
+        if (j >= 0 && !hl.has(mode + '-' + j)) hl.set(mode + '-' + j, { ...info, color: _repeatColorPalette[j % _repeatColorPalette.length] });
+    });
+    _paintRepeatHighlight(null, false);
+}
+
+function _renderRepeatResultsHTML(el, results, mode, seqName, seqLength, view = {}) {
+    _repeatResultsShown = mode;
+    const unit = view.unit || _repeatUnitWord();
+    const esc = _escapeHtml;
+    const colors = _repeatColorPalette;
+    const hl = state.repeatHighlights;
+    const tools = document.getElementById('tsdResultTools');
+    if (tools) tools.hidden = true;
+    const multi = new Set(results.map(r => r.seqIndex)).size > 1;
+    const kind = { tandem: 'tandem', direct: 'direct', inverted: 'inverted' }[mode] || mode;
+    const noun = mode === 'tandem' ? 'array' : 'repeat';
+    // B2 (owner 2026-10-31): Direct/Inverted pairs inside microsatellites shown as one row per unit and sequence
+    const groups = mode !== 'tandem' && view.groups?.length ? view.groups : null;
+    const fmt = (x) => Number(x).toLocaleString('en-US');
+    const big = groups
+        ? `${view.ungroupedTotal ? `${fmt(view.ungroupedTotal)} ${kind} repeat${view.ungroupedTotal === 1 ? '' : 's'} and ` : ''}${groups.length} microsatellite group${groups.length === 1 ? '' : 's'} (${fmt(view.groupedPairs)} ${kind} pairs)`
+        : `${results.length} ${kind} ${noun}${results.length === 1 ? '' : 's'}`;
+    let html = `<div class="rf-summary"><span class="rf-big">${big}</span>` +
+        `<span class="rf-chip">${esc(seqName || '')}${seqLength ? `, ${seqLength} ${unit}` : ''}</span>` +
+        (view.note ? `<span class="rf-chip">${esc(view.note)}</span>` : '') + '</div>' +
+        '<div class="rf-hint">Click a row to highlight the repeat in its sequence; click again to remove.' +
+        (groups ? ' Click a ▸ microsatellite row to list its pairs and highlight its arrays.' : '') + '</div>';
+    const head = mode === 'tandem'
+        ? '<th style="width:26px"></th>' + (multi ? '<th>Sequence</th>' : '') + '<th class="rf-num-cell">Columns</th><th class="rf-num-cell" title="Unit length (period)">Unit</th><th class="rf-num-cell" title="Array length / unit length; a partial last unit counts">Copies</th><th class="rf-num-cell" title="Array length, all copies together">Length</th><th class="rf-num-cell" title="Mismatches against the consensus unit, per base of the array">Div.</th><th>Consensus unit</th><th style="width:22px"></th>'
+        : '<th style="width:26px"></th>' + (multi ? '<th>Sequence</th>' : '') + '<th class="rf-num-cell">Copy A</th><th class="rf-num-cell">Copy B</th><th class="rf-num-cell">Length</th><th class="rf-num-cell">Div.</th><th>Sequence of copy A</th><th style="width:22px"></th>';
+    html += `<table class="rf-table"><thead><tr>${head}</tr></thead><tbody>`;
+    const pairRow = (r, i, cls) => {
+        const color = colors[i % colors.length];
+        const rid = mode + '-' + i;
+        const active = hl.has(rid);
+        const segs = _repeatResultSegs(r, mode);
+        let cells;
+        if (mode === 'tandem') {
+            cells = `<td class="rf-num-cell">${r.start + 1}–${r.end}</td><td class="rf-num-cell">${r.unitLen} ${unit}</td><td class="rf-num-cell">${r.copies}×</td><td class="rf-num-cell">${r.length ?? (r.end - r.start)}</td>` +
+                `<td class="rf-num-cell">${r.divergence}%</td><td class="rf-name rf-pair" title="${esc(r.unit)}">${esc(r.unit)}</td>`;
+        } else {
+            const endA = r.alignEnd != null ? r.alignEnd : (r.posA + r.length);
+            const endB = r.alignEndB != null ? r.alignEndB : (r.posB + r.length);
+            cells = `<td class="rf-num-cell">${r.posA + 1}–${endA}</td><td class="rf-num-cell">${r.posB + 1}–${endB}</td><td class="rf-num-cell">${r.length}</td>` +
+                `<td class="rf-num-cell">${r.divergence}%</td><td class="rf-name rf-pair" title="${esc(r.seqA)}">${esc(r.seqA)}</td>`;
+        }
+        // anchor to the sequence and residues now, while the columns are still the ones searched
+        if (!r._info && Number.isInteger(r.seqIndex) && state.seqs[r.seqIndex]) {
+            r._info = { segs: segs.split(';').map(x => x.split('-').map(Number)), row: r.seqIndex, color: null };
+            _anchorRepeat(r._info);
+        }
+        html += `<tr${cls ? ` class="${cls}"` : ''} data-repeat-id="${rid}" data-row="${r.seqIndex ?? ''}" data-segs="${segs}" data-color="${color}" data-active="${active ? '1' : ''}"` +
+            `${active ? ` style="background:${color}55"` : ''} onclick="_toggleRepeatHighlight(this)">` +
+            `<td><span class="rf-swatch" style="background:${color}"></span></td>` +
+            (multi ? `<td class="rf-name" title="${esc(r.seqName || '')}">${esc(r.seqName || '')}</td>` : '') + cells +
+            `<td><button class="rf-x repeat-remove-btn" title="Remove this highlight" onclick="event.stopPropagation();_removeRepeatHighlight(this.closest('tr'))">×</button></td></tr>`;
+    };
+    if (!groups) results.forEach((r, i) => pairRow(r, i));
+    else {
+        // rows of each sequence: its groups and its other pairs, longest first (a group by its longest pair); the pairs of
+        // an opened group under it, 20 at a time
+        const members = new Map(groups.map(g => [g.id, []]));
+        const order = [];   // [seqIndex, length, isGroup, payload]
+        results.forEach((r, i) => { if (r.group != null && members.has(r.group)) members.get(r.group).push(i); else order.push([r.seqIndex, r.length, 0, i]); });
+        groups.forEach(g => order.push([g.seqIndex, g.longest, 1, g]));
+        const seqOrder = [...new Set(results.map(r => r.seqIndex))];
+        order.sort((x, y) => (seqOrder.indexOf(x[0]) - seqOrder.indexOf(y[0])) || (y[1] - x[1]) || (y[2] - x[2]));
+        for (const [, , isGroup, x] of order) {
+            if (!isGroup) { pairRow(results[x], x); continue; }
+            const g = x, rid = `${mode}-g${g.id}`, open = view.expanded?.has(g.id), active = hl.has(rid);
+            const color = colors[g.id % colors.length];
+            const segs = g.arrays.map(([a, z]) => `${a}-${z}`).join(';');
+            const label = `(${esc(g.unit.length > 24 ? g.unit.slice(0, 24) + '…' : g.unit)})n, ${fmt(g.n)} pair${g.n === 1 ? '' : 's'}`;
+            html += `<tr class="rf-group" data-group="${g.id}" data-repeat-id="${rid}" data-row="${g.seqIndex ?? ''}" data-segs="${segs}" data-color="${color}" data-active="${active ? '1' : ''}"` +
+                `${active ? ` style="background:${color}55"` : ''} onclick="_toggleRepeatGroup(this)" title="${open ? 'Close the list of' : 'List'} the pairs of this microsatellite unit${open ? '' : ' and highlight its arrays'}">` +
+                `<td><span class="rf-caret">${open ? '▾' : '▸'}</span></td>` +
+                (multi ? `<td class="rf-name" title="${esc(g.seqName || '')}">${esc(g.seqName || '')}</td>` : '') +
+                `<td colspan="2"><strong>${label}</strong> (in ${g.arrays.length} tandem array${g.arrays.length === 1 ? '' : 's'}, ${fmt(g.bp)} ${unit})</td>` +
+                `<td class="rf-num-cell">${g.longest}</td><td></td><td class="rf-name">longest pair</td>` +
+                `<td><button class="rf-x repeat-remove-btn" title="Remove this highlight" onclick="event.stopPropagation();_removeRepeatHighlight(this.closest('tr'))">×</button></td></tr>`;
+            if (!open) continue;
+            const list = members.get(g.id), shown = Math.min(list.length, view.expanded.get(g.id) || 20);
+            for (let k = 0; k < shown; k++) pairRow(results[list[k]], list[k], 'rf-member');
+            if (shown < list.length) html += `<tr class="rf-more" onclick="_moreRepeatGroup(${g.id})"><td></td><td colspan="${multi ? 7 : 6}">show ${Math.min(20, list.length - shown)} more of this group (${fmt(list.length - shown)} left)</td></tr>`;
+        }
+    }
+    html += '</tbody></table>';
+    el.innerHTML = html;
+}
+

@@ -1,0 +1,535 @@
+[script.js lines 1235-1768 of ViewAlign fd8b8e4]
+// Row-indexed selection state (residue selection, the Type-tool cell) follows its sequence
+// when rows are deleted, moved, sorted or restored by undo: every such operation ends in a
+// render, which compares the row order with the one it last drew.
+let _lastRenderedRowObjs = null;
+// The selected rows as sequences, noted by pushUndo (every reorder pushes one first). If the rows were
+// reordered and the selection still names the positions it had then (a Sort leaves it alone; a row drag
+// selects the moved rows itself), it is moved onto the same sequences. Undo/Redo restore their own.
+let _rowSelAtPush = null;
+const _rowSelKey = () => [...state.selectedRows].sort((a, b) => a - b).join(',');
+function _noteRowSelectionForReorder() {
+    _rowSelAtPush = state.selectedRows.size
+        ? { key: _rowSelKey(), objs: [...state.selectedRows].map(i => state.seqs[i]).filter(Boolean) }
+        : null;
+}
+function _remapRowKeyedSelections() {
+    const prev = _lastRenderedRowObjs;
+    _lastRenderedRowObjs = state.seqs.slice();
+    const sel = _rowSelAtPush;
+    if (!prev || (prev.length === state.seqs.length && prev.every((o, i) => o === state.seqs[i]))) return;
+    _rowSelAtPush = null;
+    if (sel && _rowSelKey() === sel.key) {
+        const at = new Map(state.seqs.map((o, i) => [o, i]));
+        const next = sel.objs.map(o => at.get(o)).filter(i => i !== undefined);
+        state.selectedRows.clear();
+        next.forEach(i => state.selectedRows.add(i));
+    }
+    const find = _seqObjResolver();
+    const newIndex = oldRow => (prev[oldRow] ? find(prev[oldRow]) : -1);
+    if (state.selectedNucs?.size) {
+        const next = new Map();
+        state.selectedNucs.forEach((set, row) => {
+            if (row < 0) { next.set(row, set); return; }   // consensus row
+            const r = newIndex(row);
+            if (r >= 0) next.set(r, set);
+        });
+        state.selectedNucs = next;
+    }
+    if (state.pendingNucStart && state.pendingNucStart.row >= 0) {
+        const r = newIndex(state.pendingNucStart.row);
+        state.pendingNucStart = r >= 0 ? { ...state.pendingNucStart, row: r } : null;
+    }
+    if (state.editCell) {
+        const r = newIndex(state.editCell.row);
+        state.editCell = r >= 0 ? { ...state.editCell, row: r } : null;
+    }
+}
+
+function _rebuildClusterCharMap() {
+    state._clusterCharMap = null;
+    if (!state.clusterResults || !state.clusterResults.clusters) return;
+    const colOffset = _clusterAlignmentColumnOffset();
+    const colors = (typeof SINEClusterer !== 'undefined' && SINEClusterer.getClusterColors)
+        ? SINEClusterer.getClusterColors() : ['#e41a1c', '#377eb8', '#4daf4a', '#984ea3', '#ff7f00'];
+    const map = Object.create(null);
+    const liveSeq = new Map(state.seqs.map(q => [q.header, q.seq]));
+    state.clusterResults.clusters.forEach((cluster, clusterIdx) => {
+        if (cluster.paintOff || state.clusterPaintSuspended) return;
+        const color = cluster.color || colors[clusterIdx % colors.length];
+        const headers = new Set((cluster.sequences || []).map(s => s.id));
+        const firstId = cluster.sequences && cluster.sequences[0] && cluster.sequences[0].id;
+        const name = (firstId && state.clusterMap && state.clusterMap[firstId] && state.clusterMap[firstId].name)
+            || cluster._typeName || ('Group ' + (clusterIdx + 1));
+        const addFeats = (feats, isPerfect, isCloudy) => {
+            (feats || []).forEach(feature => {
+                const pos0 = feature.pos - 1 + colOffset;
+                if (!map[pos0]) map[pos0] = [];
+                // How many sequences of the other groups share this letter (tooltip), read from the
+                // live alignment (the clusters' own copies are from clustering time)
+                let leak = 0, others = 0;
+                state.clusterResults.clusters.forEach((other, oi) => {
+                    if (oi === clusterIdx) return;
+                    (other.sequences || []).forEach(sq => { const live = liveSeq.get(sq.id); if (live === undefined) return; others++; if (live[pos0] === feature.char) leak++; });   // rows deleted since are not counted
+                });
+                map[pos0].push({
+                    color, char: feature.char, headers, isPerfect, isCloudy, clusterName: name,
+                    leak: others ? { count: leak, total: others, percent: Math.round(leak / others * 100) } : null
+                });
+            });
+        };
+        addFeats(cluster.perfectFeatures, true, false);
+        addFeats(cluster.cloudyFeatures, false, true);
+        addFeats(cluster.imperfectFeatures, false, false);
+    });
+    state._clusterCharMap = map;
+}
+
+// The SNP-letter mark of one residue, or null: { bg, fg, bold, color, title }
+function _clusterCharDiag(header, pos, base) {
+    const list = state._clusterCharMap && state._clusterCharMap[pos];
+    if (!list || !list.length) return null;
+    const bu = String(base || '').toUpperCase();
+    if (!bu || bu === '-' || bu === '.') return null;
+    let diag = null;
+    for (let i = 0; i < list.length; i++) {
+        const d = list[i];
+        if (!d.headers.has(header)) continue;
+        if (String(d.char || '').toUpperCase() !== bu) continue;
+        if (!diag || (d.isPerfect && !diag.isPerfect)) diag = d;
+    }
+    if (!diag) return null;
+    const rgb = hexToRgb(diag.color);
+    const alpha = diag.isPerfect ? 1 : 0.72;
+    const kind = diag.isPerfect ? 'diagnostic' : (diag.isCloudy ? 'shared' : 'partial');
+    let title = `${diag.clusterName}: ${kind} ${diag.char}`;
+    if (diag.leak) title += ` [leaks to ${diag.leak.count}/${diag.leak.total} in other clusters (${diag.leak.percent}%)]`;
+    return { bg: `rgba(${rgb.r},${rgb.g},${rgb.b},${alpha})`, fg: diag.isPerfect ? '#fff' : '#333',
+        bold: diag.isPerfect, color: diag.color, title };
+}
+
+function applyClusterVisualsFromState() {
+    if (isCanvasMode() || document.getElementById('modeReads')?.checked) return;
+    paintNameCells();
+}
+
+function _syncSelectionDomFromState() {
+    updateRowSelections();
+    updateColumnSelections();
+    scheduleNucSelectionRefresh();
+    updateEditActiveCell();
+}
+// ASCII-safe UI symbols (avoid emoji / special Unicode in source files)
+const SYM = {
+    sep: '|',
+    dot: '.',
+    times: 'x',
+    fileTag: '[F]',
+    pasteTag: '[P]',
+    ok: '[OK]',
+    err: '[ERR]',
+    close: 'x',
+    loaded: '*',
+    fwd: '>',
+    rev: '<',
+    del: '-',
+    arrow: '->',
+    menu: 'v',
+};
+// ============================================================================
+//
+// EXTERNAL CODE & ATTRIBUTION
+// ===========================
+// Included or invoked (not reimplemented):
+// - MAFFT v7.525, compiled to WebAssembly (disttbfast.js, disttbfast.wasm).
+//   Katoh K, Standley DM (2013) Mol Biol Evol 30:772-780. BSD.
+//   MAFFT's own copyright applies to that binary.
+// - samtools and BLAST+ are optional programs on the server. They are not
+//   in this repository. Li H et al. (2009); Camacho C et al. (2009).
+//
+// Reimplemented here. No source from these projects is included:
+// - GeneDoc editing gestures, tiered shading, and shaded RTF.
+//   Nicholas KB et al. (1997) EMBNEW.NEWS 4:14.
+// - SPIN word-match dot plot (Staden package) and Dotter window scoring.
+//   Staden R, Beal KF, Bonfield JK (2000) Methods Mol Biol 132:115-130.
+//   Sonnhammer ELL, Durbin R (1995) Gene 167:GC1-GC10.
+// - EMBOSS water / EDNAFULL match and gap numbers, as one scoring preset
+//   in blast-worker.js. Rice P, Longden I, Bleasby A (2000) Trends Genet
+//   16:276-277. Not EMBOSS source.
+// - esl-alistat summary counts and an esl-alipid-style pairwise identity.
+//   Easel (Sean Eddy; distributed with HMMER). Eddy SR (2011) PLoS Comput
+//   Biol 7:e1002195. Identity here is identical residues over columns where
+//   both sequences are non-gap. esl-alipid divides by the shorter unaligned
+//   length. Not Easel or HMMER source.
+// - Stockholm format read by HMMER and Pfam. Sonnhammer ELL et al. (1998)
+//   Proc ISMB 6:175-182. Not HMMER source.
+// - IGV-style read packing. Robinson JT et al. (2011) Nat Biotechnol 29:24-26.
+// - MACSE-style codon marks. Ranwez V et al. (2011) PLoS ONE 6:e22594.
+// - Clustal shading scheme and .aln parser. Sievers F et al. (2011) Mol Syst Biol 7:539.
+// - BLOSUM62. Henikoff S, Henikoff JG (1992) PNAS 89:10915-10919.
+//
+// The remainder is original work, released under the MIT license.
+// ============================================================================
+
+// DEFAULTS & STATE
+const DEBUG = false;
+const debugLog = (...args) => { if (DEBUG) console.log(...args); };
+
+const DEFAULTS = {
+    consensusThreshold: 50,
+    groupConsensusThreshold: 50,
+    nameLength: 25,
+    minCoverage: 30,
+    colorScheme: 'monochrome'
+};
+
+const state = {
+    seqs: [],
+    ab1Traces: {},
+    selectedRows: new Set(),
+    selectedColumns: new Set(),
+    selectedNucs: new Map(),
+    pendingNucStart: null,
+    spanCache: new Map(),
+    domSelectedNucs: new Map(),
+    domPendingNuc: null,
+    lastSelectedIndex: null,
+    lastSelectedColumn: null,
+    consensusSeq: '',
+    consensusCache: null,
+    conservationDataCache: null,
+    alignmentIndex: null, // { nSeqs, maxLen, totalResidues, mode, flags } from pre-parse scan
+    _needsWindowedDom: false, // computed in renderAlignment from TOTAL_RESIDUES directly
+    blockMask: null, // 2D block-mask overlay JSON (see renderBlockMaskOverlay)
+    deletedHistory: [],
+    redoHistory: [],
+    currentFilename: '',
+    currentFilePath: '',
+    _pendingFileHandle: null,
+    searchHistory: [],
+    isDragging: false,
+    dragStartRow: null,
+    dragStartCol: null,
+    dragMode: null,
+    ctrlPressed: false,
+    altPressed: false,
+    lastAction: null,
+    draggingGroup: null,
+    slideDragStartX: null,
+    slideDragStartPos: null,
+    slideSeqIndex: null,
+    editModeActive: false,
+    editTool: 'moveNoGaps', residueCase: 'asis',
+    editLiveConservation: false,
+    editDrag: null,
+    editCell: null,
+    _tsdMarks: null,   // ResidueMarks, through the tsdMarks accessor below
+    tsdMarkStyle: 'color',
+    tsdMarkColor: '#ffd54f',
+    tsdMarkUndo: null,
+    tsdPreview: null,   // ResidueMarks: TSDs found by the last run and not yet marked, shown faintly (owner, 2026-10-23)
+    dotRegionMarks: null,   // ResidueMarks: a dot-plot stretch shown in the alignment (owner, 2026-10-23)
+    dotBookmarks: [],       // the collection of starred dot-plot stretches (localStorage, snapshots; owner, 2026-10-23)
+    nameLength: DEFAULTS.nameLength,
+    uiListenersAttached: false,
+    panning: {
+        active: false,
+        startX: 0,
+        startY: 0,
+        scrollLeft: 0,
+        scrollTop: 0,
+        started: false
+    },
+    trimBoundaries: null,
+    trimManualLeft: false,
+    trimManualRight: false,
+    trimBackup: null,
+    softTrimBoundaries: null, // { leftTrimEnd, rightTrimStart } - excluded from clustering only
+    groupConsensusCount: 0,
+    _statsMatrices: null
+};
+
+// Assigning a plain row -> Set(column) Map (snapshots, undo, the TSD finder) converts it to
+// residue anchors in the current layout; reading gives the current row -> columns view.
+Object.defineProperty(state, 'tsdMarks', {
+    get() { return this._tsdMarks || (this._tsdMarks = new ResidueMarks()); },
+    set(v) { this._tsdMarks = v instanceof ResidueMarks ? v : ResidueMarks.fromRowCols(v || new Map()); },
+    enumerable: false
+});
+
+// -- Reusable file handles for Recent Files, via the File System Access API --
+// A dropped/picked file's real path is never exposed to JS (a deliberate
+// browser security boundary, not something any app code can work around),
+// so a File object alone can never be re-read later. Chromium browsers'
+// File System Access API instead hands back a FileSystemFileHandle that CAN
+// be stored (structured-clone-able, so it goes straight into IndexedDB) and
+// reused to re-read the file's current content on demand - no server, no
+// cached/stale copy. Firefox/Safari don't support this API; for them
+// state._pendingFileHandle simply never gets set, and Recent Files falls
+// back to the existing "re-open the file" message exactly as before.
+const _fileHandleStore = {
+    _dbPromise: null,
+    _openDb() {
+        if (this._dbPromise) return this._dbPromise;
+        this._dbPromise = new Promise((resolve, reject) => {
+            const req = indexedDB.open('msaviewer_filehandles', 1);
+            req.onupgradeneeded = () => { req.result.createObjectStore('handles'); };
+            req.onsuccess = () => resolve(req.result);
+            req.onerror = () => reject(req.error);
+        });
+        return this._dbPromise;
+    },
+    async put(id, handle) {
+        try {
+            const db = await this._openDb();
+            await new Promise((resolve, reject) => {
+                const tx = db.transaction('handles', 'readwrite');
+                tx.objectStore('handles').put(handle, id);
+                tx.oncomplete = resolve;
+                tx.onerror = () => reject(tx.error);
+            });
+        } catch (e) { console.warn('Could not store file handle for Recent Files reopen', e); }
+    },
+    async get(id) {
+        try {
+            const db = await this._openDb();
+            return await new Promise((resolve, reject) => {
+                const tx = db.transaction('handles', 'readonly');
+                const req = tx.objectStore('handles').get(id);
+                req.onsuccess = () => resolve(req.result || null);
+                req.onerror = () => reject(req.error);
+            });
+        } catch (e) { return null; }
+    },
+    // Returns true if this call fully handled the click (either succeeded or
+    // showed its own specific error message) - false only means "no stored
+    // handle at all," so the caller should fall back to the generic message.
+    async tryReopen(id, expectedName) {
+        const handle = await this.get(id);
+        if (!handle) return false;
+        try {
+            let perm = await handle.queryPermission({ mode: 'read' });
+            if (perm !== 'granted') perm = await handle.requestPermission({ mode: 'read' });
+            if (perm !== 'granted') {
+                showMessage('Permission to re-read this file was not granted.', 3500);
+                return true;
+            }
+            const file = await handle.getFile();
+            const text = await file.text();
+            _setInputText(text);
+            state.currentFilename = file.name || expectedName;
+            state.currentFilePath = '';
+            parseAndRender(true);
+            return true;
+        } catch (e) {
+            showMessage('Could not reopen the file - it may have been moved, renamed, or deleted since.', 4500);
+            return true;
+        }
+    }
+};
+
+// -- Recent Files & Clipboard History --
+const _historyManager = {
+    maxItems: 10,
+    items: [],
+
+    load() {
+        try {
+            const raw = localStorage.getItem('msaviewer_history');
+            if (raw) {
+                const parsed = JSON.parse(raw);
+                if (Array.isArray(parsed)) {
+                    // Legacy format from before this fix: JSON.stringify on an
+                    // array silently drops non-index properties, so a tacked-on
+                    // "_max" was never actually persisted - only the items
+                    // array itself survived. Treat it as items with the default max.
+                    this.items = parsed;
+                } else if (parsed && Array.isArray(parsed.items)) {
+                    this.items = parsed.items;
+                    this.maxItems = parsed.max || 10;
+                }
+            }
+        } catch(e) { this.items = []; }
+        if (!Array.isArray(this.items)) this.items = [];
+        // An entry that is not a record with a name used to throw when Recent was opened (audit U2)
+        this.items = this.items.filter(e => e && typeof e === 'object' && typeof e.name === 'string');
+        if (!Number.isFinite(this.maxItems) || this.maxItems < 1) this.maxItems = 10;
+    },
+
+    save() {
+        const store = this.items.slice(0, this.maxItems);
+        try { localStorage.setItem('msaviewer_history', JSON.stringify({ max: this.maxItems, items: store })); } catch(e) {}
+    },
+
+    add(type, data) {
+        this.load();
+        const entry = {
+            type, // 'file' or 'clipboard'
+            name: data.name || 'Untitled',
+            timestamp: Date.now(),
+            nSeqs: data.nSeqs || 0,
+            length: data.length || 0,
+            preview: data.preview || '',
+            source: data.source || '',
+            text: data.text || null, // stored for clipboard items (small), null for files
+            tooLarge: !!data.tooLarge, // a paste too long to keep
+            handleId: data.handleId || null // File System Access handle in IndexedDB, if captured (Chromium only)
+        };
+        // Remove duplicate (same name + source)
+        this.items = this.items.filter(e => !(e.name === entry.name && e.source === entry.source));
+        this.items.unshift(entry);
+        if (this.items.length > this.maxItems + 20) this.items.length = this.maxItems + 20;
+        this.save();
+    },
+
+    setMax(n) {
+        this.maxItems = Math.max(1, Math.min(50, n));
+        this.save();
+    },
+
+    renderDropdown() {
+        this.load();
+        const menu = document.getElementById('recentDropdown');
+        if (!menu) return;
+        if (this.items.length === 0) {
+            menu.innerHTML = '<div style="padding:8px;color:#999;font-size:11px;">No recent files</div>';
+            return;
+        }
+        const timeFmt = (ts) => {
+            const d = new Date(ts);
+            const now = new Date();
+            const diffMin = Math.floor((now - d) / 60000);
+            if (diffMin < 1) return 'just now';
+            if (diffMin < 60) return diffMin + 'm ago';
+            if (diffMin < 1440) return Math.floor(diffMin / 60) + 'h ago';
+            return d.toLocaleDateString();
+        };
+        const ICON_FILE = SYM.fileTag;
+        const ICON_CLIP = SYM.pasteTag;
+        const MIDDOT = SYM.sep;
+        const TIMES = SYM.times;
+        let html = '';
+        for (const e of this.items.slice(0, this.maxItems)) {
+            const icon = e.type === 'file' ? ICON_FILE : ICON_CLIP;
+            const label = e.name.length > 35 ? e.name.substring(0, 32) + '...' : e.name;
+            const meta = e.nSeqs ? `${e.nSeqs} seq ${TIMES} ${e.length} col` : '';
+            // Full source path shown as its own line (not just in a native
+            // title tooltip, which was easy to miss) - only when it exists
+            // and isn't just a repeat of the name (clipboard entries have no
+            // source path).
+            const pathLine = (e.source && e.source !== e.name)
+                ? `<div style="color:#aaa;font-size:9px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;" title="${this._escapeHtml(e.source)}">${this._escapeHtml(e.source)}</div>`
+                : '';
+            html += `<div class="recent-item" data-idx="${this.items.indexOf(e)}"
+                style="padding:5px 10px;cursor:pointer;font-size:11px;border-bottom:1px solid #eee;overflow:hidden;">
+                <div style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${icon} <b>${this._escapeHtml(label)}</b>
+                <span style="color:#999;font-size:10px;">${meta ? ` ${MIDDOT} ${meta}` : ''} ${MIDDOT} ${timeFmt(e.timestamp)}</span></div>
+                ${pathLine}
+            </div>`;
+        }
+        html += `<div style="padding:4px 10px;font-size:10px;color:#999;border-top:1px solid #eee;display:flex;justify-content:space-between;">
+            <span>Showing ${Math.min(this.items.length, this.maxItems)} of ${this.items.length}</span>
+            <span style="display:inline-flex;align-items:center;gap:2px;">Max:
+                <input type="number" id="historyMaxInput" value="${this.maxItems}" min="1" max="50"
+                    style="width:28px;height:20px;font-size:10px;padding:0;text-align:center;-moz-appearance:textfield;"
+                    onchange="_historyManager.setMax(parseInt(this.value)||10);_historyManager.renderDropdown();">
+                <span style="display:inline-flex;flex-direction:column;">
+                    <button type="button" title="Increase"
+                        style="width:14px;height:11px;line-height:9px;font-size:8px;padding:0;border:1px solid #ccc;background:#f5f5f5;cursor:pointer;"
+                        onclick="_historyManager.setMax(_historyManager.maxItems+1);_historyManager.renderDropdown();">&#9650;</button>
+                    <button type="button" title="Decrease"
+                        style="width:14px;height:11px;line-height:9px;font-size:8px;padding:0;border:1px solid #ccc;border-top:none;background:#f5f5f5;cursor:pointer;"
+                        onclick="_historyManager.setMax(_historyManager.maxItems-1);_historyManager.renderDropdown();">&#9660;</button>
+                </span>
+            </span>
+        </div>`;
+        menu.innerHTML = html;
+
+        // Click + hover-preview handlers
+        menu.querySelectorAll('.recent-item').forEach(el => {
+            el.addEventListener('click', async () => {
+                const idx = parseInt(el.dataset.idx);
+                const entry = this.items[idx];
+                if (!entry) return;
+                document.getElementById('recentDropdown').style.display = 'none';
+                // entries from before v256 kept only the first 100,000 characters of a long paste
+                if (entry.tooLarge || (entry.type === 'clipboard' && entry.text && entry.text.length >= 100000)) {
+                    showMessage('This paste was too large to keep in Recent (over 100,000 characters) - paste it again.', 4500);
+                    return;
+                }
+                if (entry.text) {
+                    _setInputText(entry.text);
+                    state.currentFilename = entry.name;
+                    state.currentFilePath = entry.source || '';
+                    // a paste reopened from Recent is recorded again as that paste (with its text),
+                    // not as a 'file' without text, which lost the paste from Recent
+                    state._reopenedPaste = entry.type === 'clipboard' ? entry.name : null;
+                    parseAndRender(false);
+                    return;
+                }
+                if (entry.handleId) {
+                    const handled = await _fileHandleStore.tryReopen(entry.handleId, entry.name);
+                    if (handled) return;
+                }
+                showMessage('Original file not available - re-open the file to load it.', 3000);
+            });
+            el.addEventListener('mouseenter', () => {
+                const idx = parseInt(el.dataset.idx);
+                const entry = this.items[idx];
+                if (entry) this._showPreview(el, entry);
+            });
+            el.addEventListener('mouseleave', () => this._hidePreview());
+        });
+    },
+
+    // Custom hover-preview panel, replacing the plain OS title tooltip -
+    // shows the full path, stats, and an actual formatted sequence preview
+    // rather than a single-line plain-text browser tooltip.
+    _getPreviewEl() {
+        let el = document.getElementById('recentItemPreview');
+        if (!el) {
+            el = document.createElement('div');
+            el.id = 'recentItemPreview';
+            el.style.cssText = 'display:none;position:fixed;z-index:10004;max-width:420px;background:#2b2b2b;color:#eee;'
+                + 'border-radius:6px;box-shadow:0 4px 16px rgba(0,0,0,0.3);padding:8px 10px;font-size:11px;'
+                + 'pointer-events:none;white-space:normal;';
+            document.body.appendChild(el);
+        }
+        return el;
+    },
+
+    _showPreview(itemEl, entry) {
+        const el = this._getPreviewEl();
+        const TIMES = SYM.times;
+        const statsLine = entry.nSeqs ? `${entry.nSeqs} sequence${entry.nSeqs === 1 ? '' : 's'} ${TIMES} ${entry.length} columns` : '';
+        const pathLine = entry.source ? `<div style="color:#999;font-size:10px;margin-top:2px;word-break:break-all;">${this._escapeHtml(entry.source)}</div>` : '';
+        const previewBlock = entry.preview
+            ? `<div style="font-family:'Courier New',monospace;font-size:10px;color:#9cdcfe;margin-top:6px;white-space:pre-wrap;word-break:break-all;border-top:1px solid #444;padding-top:6px;">${this._escapeHtml(entry.preview)}</div>`
+            : '';
+        el.innerHTML = `<div style="font-weight:bold;">${this._escapeHtml(entry.name)}</div>`
+            + pathLine
+            + (statsLine ? `<div style="color:#bbb;margin-top:2px;">${statsLine}</div>` : '')
+            + previewBlock;
+        const rect = itemEl.getBoundingClientRect();
+        el.style.display = 'block';
+        // Position to the left of the dropdown by default (dropdown itself
+        // sits near the right edge of the screen); flip to the right if
+        // there isn't enough room on the left.
+        const previewWidth = 420;
+        let left = rect.left - previewWidth - 8;
+        if (left < 4) left = rect.right + 8;
+        el.style.left = Math.max(4, left) + 'px';
+        el.style.top = Math.max(4, rect.top) + 'px';
+    },
+
+    _hidePreview() {
+        const el = document.getElementById('recentItemPreview');
+        if (el) el.style.display = 'none';
+    },
+
+    _escapeHtml(s) {
+        if (!s) return '';
+        return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+    }
+};
+

@@ -1,0 +1,246 @@
+[macse-align.js lines 3246-3491 of ViewAlign fd8b8e4]
+        const testedCut = [];
+        let improve = true, nbIter = 0, nbTest = 0, conservedScore = null, gen = 0;
+        let set = setIn;
+        let currentScore = spScoreLinear(frameSet(toAminosSet(set, ctx), 1), ctx);
+        let localReal = f32(ctx.localRealignInit);
+        while ((ctx.maxRefines < 0 || nbIter < ctx.maxRefines) && improve) {
+            let conserved;
+            if (nbIter > 0) { conserved = new Uint8Array(conservedScore.length); for (let i = 0; i < conserved.length; i++) conserved[i] = conservedScore[i] === nbTest ? 1 : 0; }
+            else conserved = new Uint8Array(set.sites());
+            conservedScore = new Int32Array(set.sites());
+            nbTest = 0; improve = false;
+            const framed = frameSet(toAminosSet(set, ctx), 1);
+            const nf = framed.size, dist = Array.from({ length: nf }, () => new Array(nf).fill(0));
+            for (let i = 0; i < nf; i++) for (let j = i + 1; j < nf; j++) { dist[i][j] = memOverlDist(framed.arr[i], framed.arr[j], ctx); dist[j][i] = dist[i][j]; }
+            const postOrder = refineTreePostOrder(set, dist).reverse();
+            ++nbIter;
+            let idx = 0;
+            while (idx < postOrder.length) {
+                // the cuts the sequential loop would test from here on if none of them were accepted
+                const seen = new Set(testedCut), cands = [];
+                for (let j = idx; j < postOrder.length; j++) {
+                    const inClade = new Set(javaSplitComma(postOrder[j].label.replace(/\(/g, '').replace(/\)/g, '')));
+                    const s1 = new SeqSet(), s2 = new SeqSet();
+                    for (const sq of set.arr) (inClade.has(sq.name) ? s1 : s2).add(sq);
+                    if (s1.size === 0 || s2.size === 0) continue;
+                    const sig = x => x.arr.map(q => q.name + ',').join('');
+                    const g1 = sig(s1), g2 = sig(s2);
+                    const signature = s1.size < s2.size || (s1.size === s2.size && g1 < g2) ? g1 + '  |  ' + g2 : g2 + '  |  ' + g1;
+                    if (seen.has(signature)) continue;
+                    seen.add(signature);
+                    cands.push({ j, s1, s2, signature });
+                }
+                if (!cands.length) break;
+                const myGen = ++gen, conservedNow = conserved, real = localReal;
+                const dispatch = c => {
+                    const k1 = keptColumnsNT(c.s1, true), k2 = keptColumnsNT(c.s2, true);
+                    const c1 = new RestrictedCoordinates(k1), c2 = new RestrictedCoordinates(k2);
+                    c1.setFacingSite(c2);
+                    let deltaDefault = Math.ceil(f32(f32(c.s2.sites()) * real));
+                    deltaDefault = Math.max(deltaDefault, 30);
+                    const bounds = c1.boundsDeltaMax(c2, deltaDefault, idiv(deltaDefault, 2), conservedNow);
+                    c.c1 = c1;
+                    c.promise = exec(restrictNT(c.s1, true, k1), restrictNT(c.s2, true, k2), bounds, myGen);
+                    c.promise.catch(() => { });
+                };
+                let d = 0, accepted = false;
+                for (let k = 0; k < cands.length; k++) {
+                    while (d < cands.length && d - k < width) dispatch(cands[d++]);
+                    const c = cands[k];
+                    testedCut.push(c.signature);
+                    ++nbTest;
+                    const res = await c.promise;
+                    const newAlign = wireToSet(res.set);
+                    const newScore = spScoreLinear(frameSet(toAminosSet(newAlign, ctx), 1), ctx);
+                    if (progress) progress('refine', c.j + 1, postOrder.length, nbIter);
+                    const former = conservedScore;
+                    if (newScore > currentScore) {
+                        set = newAlign; currentScore = newScore; testedCut.length = 0; improve = true;
+                        const p1 = new RestrictedCoordinates(res.k1);
+                        p1.setFacingSite(new RestrictedCoordinates(res.k2));
+                        const pairs = c.c1.conservedSites(p1);
+                        conservedScore = new Int32Array(newAlign.sites());
+                        for (const [o, nw] of pairs) conservedScore[nw] = 1 + former[o];
+                        const formerC = conserved;
+                        conserved = new Uint8Array(newAlign.sites());
+                        for (const [o, nw] of pairs) conserved[nw] = formerC[o];
+                        if (runner.cancel) runner.cancel(myGen);
+                        idx = c.j + 1; accepted = true;
+                        break;
+                    }
+                    for (let q = 0; q < conservedScore.length; q++) conservedScore[q]++;
+                }
+                if (!accepted) idx = postOrder.length;
+            }
+            localReal = f32(localReal * f32(ctx.localRealignDec));
+        }
+        ctx.refineIterations = nbIter;
+        return set;
+    }
+
+    async function cutLeavesAsync(setIn, ctx, runner) {
+        if (setIn.size < 2) return setIn;
+        const exec = makeExecutor(ctx, runner);
+        let canImprove = true, nbIter = 0, set = setIn;
+        let currentScore = spScoreLinear(frameSet(toAminosSet(set, ctx), 1), ctx);
+        let localReal = f32(ctx.localRealignInit);
+        while ((ctx.maxRefines < 0 || nbIter < ctx.maxRefines) && canImprove) {
+            canImprove = false;
+            for (const sq of set.arr.slice()) {
+                let s1 = new SeqSet(); s1.add(sq);
+                const k1 = keptColumnsNT(s1, true); s1 = restrictNT(s1, true);
+                let s2 = new SeqSet(); for (const o of set.arr) if (o.name !== sq.name) s2.add(o);
+                const k2 = keptColumnsNT(s2, true); s2 = restrictNT(s2, true);
+                const c1 = new RestrictedCoordinates(k1), c2 = new RestrictedCoordinates(k2);
+                c1.setFacingSite(c2);
+                let dd = Math.ceil(f32(f32(s2.sites()) * localReal)); dd = Math.max(dd, 30);
+                const res = await exec(s1, s2, c1.boundsDeltaMax(c2, dd, dd, null), 0);
+                const na = wireToSet(res.set);
+                const ns = spScoreLinear(frameSet(toAminosSet(na, ctx), 1), ctx);
+                if (ns > currentScore) { set = na; currentScore = ns; canImprove = true; }
+            }
+            ++nbIter;
+            localReal = f32(localReal * f32(ctx.localRealignDec));
+        }
+        return set;
+    }
+
+    // ------------------------------------------------------------------ top level (programs.align.Aligner)
+    const DEFAULTS = {
+        gc: 1, ambi_OFF: false, fs: 30, fs_lr: 10, fs_term: 10, fs_lr_term: 7, gap_ext: 1, gap_ext_term: 0.9, gap_op: 7, gap_op_term: 6.3,
+        stop: 50, stop_lr: 17, max_refine_iter: -1, local_realign_init: 0.5, local_realign_dec: 0.5, optim: 2, alphabet_AA: 'SE_B_8',
+        lessReliable: [], maxTracebackCells: 4e8, onProgress: null, useWasm: true, tileSize: 0, tileMinCells: 600000
+    };
+    function makeCtx(opts) {
+        const o = Object.assign({}, DEFAULTS, opts || {});
+        const costs = makeCosts(o);
+        const t = {};
+        for (const k of ['gc', 'ambi_OFF', 'fs', 'fs_lr', 'fs_term', 'fs_lr_term', 'gap_ext', 'gap_ext_term', 'gap_op', 'gap_op_term', 'stop', 'stop_lr', 'maxTracebackCells', 'useWasm']) t[k] = o[k];
+        return {
+            taskOpts: { key: JSON.stringify(t), o: t },
+            opts: o, costs, matrix: makeMatrix(costs), ribo: ribosome(o.gc, o.ambi_OFF), alphabet: o.alphabet_AA,
+            maxRefines: o.max_refine_iter, localRealignInit: o.local_realign_init, localRealignDec: o.local_realign_dec,
+            maxTracebackCells: o.maxTracebackCells, useWasm: o.useWasm, tileSize: o.tileSize, tileMinCells: o.tileMinCells, refineIterations: 0
+        };
+    }
+
+    // V8 warm-up: one small alignment that reaches every branch of the kernel (profiles of several sequences,
+    // frameshifts, gaps at both ends, a stop, ambiguity codes), so that later runs are not slowed by repeated
+    // de-optimisation of code paths first met mid-run. It does not change any result.
+    let warmedUp = false;
+    function warmUp() {
+        warmedUp = true;
+        const b = 'ATGGCTGAAAAGCTGGATACCGTTGGAATGCCAGGTCTGAAACGTGCTTTCAAAGAGCTGCGTACCGATCAGGGCTTAAACCTGGAACGT' +
+            'TACGAAGTGATTCGCGGTAACCTGGCAGAACAGTTCGGTATTGATAACCCGCACGTTGGCCAGTAA';
+        const v = [b, b.slice(0, 40) + b.slice(41), b.slice(0, 70) + 'AC' + b.slice(70), b.slice(12),
+            b.slice(0, 150).replace(/^(.{60})GAT/, '$1TAA'), b.slice(0, 90) + b.slice(93).replace(/GCAG/, 'GNRY'),
+            b.replace(/C/g, (c, i) => (i % 7 === 0 ? 'T' : c))];
+        try { alignSequences(v.map((seq, i) => ({ name: 'w' + i, seq })), { _warm: true }); } catch (e) { /* warm-up only */ }
+    }
+
+    function prepareInput(records, opts) {
+        const ctx = makeCtx(opts);
+        const lr = new Set(ctx.opts.lessReliable || []);
+        const set = new SeqSet();
+        for (const r of records) {
+            if (!r.seq || !r.seq.length) continue;
+            set.add(new SeqNT(r.name, r.seq.replace(/\s+/g, ''), !lr.has(r.name)));
+        }
+        if (set.size === 0) throw MacseError('no sequences');
+        return { ctx, set, progress: ctx.opts.onProgress };
+    }
+    // Aligner.computeInitialSequenceDistanceMEM
+    function distanceMatrix(set, ctx, progress) {
+        const n = set.size, dist = Array.from({ length: n }, () => new Array(n).fill(0));
+        const tr = set.arr.map(q => seqCons3RF(q, ctx));
+        let pairsDone = 0;
+        for (let i = 0; i < n; i++) for (let j = i + 1; j < n; j++) {
+            const d = javaRoundF(f32(new SuffixTree(tr[i], tr[j], 6, ctx.alphabet).memDist3RF() * f32(500)));
+            dist[i][j] = d; dist[j][i] = d;
+            if (progress) progress('distances', ++pairsDone, n * (n - 1) / 2);
+        }
+        return dist;
+    }
+    // distanceMatrix with the rows of pairs computed in the pool (same values)
+    async function distanceMatrixAsync(set, ctx, runner, progress) {
+        if (runner.size < 2) return distanceMatrix(set, ctx, progress);
+        const n = set.size, dist = Array.from({ length: n }, () => new Array(n).fill(0));
+        const tr = set.arr.map(q => seqCons3RF(q, ctx));
+        let pairsDone = 0;
+        await Promise.all(tr.slice(0, n - 1).map((a, i) => runner.run({ kind: 'dist', alphabet: ctx.alphabet, a, b: tr.slice(i + 1) }, 0, 0).then(row => {
+            row.forEach((d, k) => { dist[i][i + 1 + k] = d; dist[i + 1 + k][i] = d; });
+            pairsDone += row.length;
+            if (progress) progress('distances', pairsDone, n * (n - 1) / 2);
+        })));
+        return dist;
+    }
+    function finishOutput(out, set, ctx, t0, extra) {
+        const nt = out.arr.filter(q => q.acids.length).map(q => ({ name: q.name, seq: q.acids }));
+        const aa = out.arr.filter(q => q.acids.length).map(q => ({ name: q.name, seq: q.toAminos(ctx).frameAminos(1).acids }));
+        return { nt, aa, stats: Object.assign({ sequences: set.size, columns: nt.length ? nt[0].seq.length : 0, refineIterations: ctx.refineIterations, ms: Date.now() - t0 }, extra || {}) };
+    }
+
+    // Synchronous, single thread.
+    // The warm-up only helps the JavaScript kernel; with WebAssembly (or with the DP in pool threads) skip it.
+    const needsWarmUp = (opts, runner) => !warmedUp && !(opts && opts._warm) && !(runner && runner.size >= 2) &&
+        (opts && opts.useWasm === false || !getWasmKernel());
+    function alignSequences(records, opts) {
+        if (needsWarmUp(opts)) warmUp();
+        const t0 = Date.now();
+        const { ctx, set, progress } = prepareInput(records, opts);
+        let out;
+        if (set.size === 1) out = set;
+        else if (set.size === 2) {
+            for (const q of set.arr) q.removeGaps();
+            const a = new SeqSet(), b = new SeqSet(); a.add(set.arr[0]); b.add(set.arr[1]);
+            out = new ProfileAligner(ctx).alignProfiles(a, b, null);
+        } else {
+            for (const q of set.arr) q.removeGaps();
+            const dist = distanceMatrix(set, ctx, progress);
+            out = dynamicTree(set, dist, ctx, progress);
+            if (ctx.opts.optim === 2) out = refine2cut(out, ctx, progress);
+            else if (ctx.opts.optim === 1) out = cutLeaves(out, ctx);
+        }
+        return finishOutput(out, set, ctx, t0);
+    }
+
+    // Same result as alignSequences; profile alignments run through `runner` (a pool of threads, see above).
+    async function alignSequencesAsync(records, opts, runner) {
+        runner = runner || localRunner();
+        if (needsWarmUp(opts, runner)) warmUp();
+        const t0 = Date.now();
+        const { ctx, set, progress } = prepareInput(records, opts);
+        let out;
+        if (set.size === 1) out = set;
+        else if (set.size === 2) {
+            for (const q of set.arr) q.removeGaps();
+            const a = new SeqSet(), b = new SeqSet(); a.add(set.arr[0]); b.add(set.arr[1]);
+            out = wireToSet((await makeExecutor(ctx, runner)(a, b, null, 0)).set);
+        } else {
+            for (const q of set.arr) q.removeGaps();
+            const dist = await distanceMatrixAsync(set, ctx, runner, progress);
+            out = await dynamicTreeAsync(set, dist, ctx, runner, progress);
+            if (ctx.opts.optim === 2) out = await refine2cutAsync(out, ctx, runner, progress);
+            else if (ctx.opts.optim === 1) out = await cutLeavesAsync(out, ctx, runner);
+        }
+        return finishOutput(out, set, ctx, t0, { threads: runner.size });
+    }
+
+    function parseFasta(text) {
+        const out = []; let cur = null;
+        for (const line0 of String(text).split(/\r?\n/)) {
+            const line = line0.replace(/\r$/, '');
+            if (!line.length || line[0] === '#') continue;
+            if (line[0] === '>') { cur = { name: line.substring(1), seq: '' }; out.push(cur); }
+            else if (cur) cur.seq += line;
+        }
+        return out.filter(r => r.seq.length);
+    }
+    function toFasta(records) { return records.map(r => '>' + r.name + '\n' + r.seq + '\n').join(''); }
+
+    return {
+        alignSequences, alignSequencesAsync, runTask, runDpTask, transferables, localRunner, parseFasta, toFasta, DEFAULTS, wasmAvailable: () => !!getWasmKernel(),
+        _internal: { SuffixTree, spScoreLinear, makeCtx, SeqNT, SeqSet, ProfileAligner }
+    };
+}));

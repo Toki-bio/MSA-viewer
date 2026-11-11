@@ -1,0 +1,52 @@
+[server.js lines 1360-1411 of ViewAlign fd8b8e4]
+// ============ BAM/CRAM → SAM CONVERSION ============
+app.post('/api/bam2sam', (req, res) => {
+    const { bamPath, region } = req.body;
+    if (!bamPath) return res.status(400).json({ error: 'Missing bamPath' });
+    const resolved = resolveLocalFile(bamPath);
+    if (resolved.error) return res.status(resolved.status).json({ error: resolved.error });
+
+    try {
+        const args = ['view', '-h'];
+        // chr1:1,000-5,000 as copied from IGV/UCSC; a region that still does not read as name:start-end
+        // is refused (it used to be dropped, and the whole BAM was converted)
+        if (region) {
+            const reg = String(region).replace(/,/g, '').trim();
+            if (!/^[\w.-]+:\d+-\d+$/.test(reg)) return res.status(400).json({ error: `Region not understood: ${region} (use name:start-end)` });
+            args.push(reg);
+        }
+        args.push(resolved.path);
+
+        const child = spawn('samtools', args, { timeout: 30000 });   // spawn has no maxBuffer: the cap is in collectChildOutput
+        collectChildOutput(child, (over, stdout, code, stderr) => {
+            if (res.headersSent) return;
+            if (over) return res.status(over.status).json({ error: over.message + ' - give a region (chr:start-end)' });
+            if (code !== 0) return res.status(500).json({ error: stderr || 'samtools failed' });
+            res.json({ success: true, sam: stdout });
+        });
+        child.on('error', err => { if (!res.headersSent) res.status(500).json({ error: err.message }); });
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
+// Errors that reach Express (e.g. a request body that is not valid JSON) are answered with their message
+// only: Express's own error page shows the stack trace, with the server's file paths, outside production.
+app.use((err, req, res, next) => {
+    if (res.headersSent) return next(err);
+    const status = Number(err.status || err.statusCode) || 500;
+    console.error(`[${req.method} ${req.path}]`, err.message);
+    res.status(status >= 400 && status < 600 ? status : 500)
+        .json({ error: err.expose ? err.message : (status < 500 ? 'Bad request' : 'Internal server error') });
+});
+
+app.listen(PORT, HOST, () => {
+    const tailscaleIp = process.env.TAILSCALE_IP || '';
+    const tailscaleMsg = tailscaleIp && HOST !== '127.0.0.1' ? `  (also on Tailscale ${tailscaleIp}:${PORT})` : '';
+    console.log(`ViewAlign server running on http://localhost:${PORT}${tailscaleMsg}`);
+    if (HOST === '127.0.0.1') console.log('Listening on this machine only (set HOST=0.0.0.0 to accept other machines).');
+    console.log(`Open this link once in each browser you use (it carries your access key):\n  http://localhost:${PORT}/?key=${ACCESS_KEY}`);
+    console.log(`The key is kept in ${ACCESS_KEY_FILE}; delete that file and restart for a new one.`);
+    initializeDatabases();
+    loadDbCache();
+});

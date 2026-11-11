@@ -1,0 +1,544 @@
+[script.js lines 23097-23639 of ViewAlign fd8b8e4]
+function updateClusteringPresetList() {
+    const presetSelect = el('clusteringPresetList');
+    if (!presetSelect) return;
+
+    let presets = safeLocalGet('clusteringPresets');
+    const presetNames = Object.keys(presets).sort();
+
+    // Clear and rebuild options
+    presetSelect.innerHTML = '<option value="">-- Select preset --</option>';
+
+    presetNames.forEach(name => {
+        const option = document.createElement('option');
+        option.value = name;
+        option.textContent = `${name} (${new Date(presets[name].timestamp).toLocaleDateString()})`;
+        presetSelect.appendChild(option);
+    });
+
+    debugLog('[Clustering] Preset list updated:', presetNames.length, 'presets');
+}
+
+function deleteClusteringPreset() {
+    const presetSelect = el('clusteringPresetList');
+    const presetName = presetSelect?.value;
+
+    if (!presetName) {
+        showMessage("Please select a preset to delete", 2000);
+        return;
+    }
+
+    if (!confirm(`Delete preset "${presetName}"?`)) {
+        return;
+    }
+
+    let presets = safeLocalGet('clusteringPresets');
+    delete presets[presetName];
+    safeLocalSet('clusteringPresets', JSON.stringify(presets), 'the clustering presets');
+
+    updateClusteringPresetList();
+    showMessage(`Preset "${presetName}" deleted`, 2000);
+}
+
+function _geEsc(s) {
+    return String(s == null ? '' : s).replace(/[&<>"']/g, ch => ({
+        '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
+    }[ch]));
+}
+
+function _geSetProbeMode(on) {
+    const modal = el('clusteringModal');
+    const title = modal && modal.querySelector('.ge-header h3');
+    if (modal) modal.classList.toggle('ge-probe', !!on);
+    if (title) title.textContent = on ? 'Clusterability' : 'Group explorer';
+    // Dock and Clear all are explorer actions; the window buttons (×) stay. Hiding the whole
+    // row left the Clusterability window with no way to close it but Esc.
+    ['geDockBtn', 'geClearBtn'].forEach(id => { const b = el(id); if (b) b.style.visibility = on ? 'hidden' : ''; });
+}
+
+function _geSetMenuVisible(on) {
+    const sec = el('groups-menu-section');
+    if (!sec) return;
+    sec.classList.toggle('ge-menu-off', !on);
+    if (!on) sec.classList.remove('menu-open');
+}
+
+function _geUpdateDockBtn() {
+    const btn = el('geDockBtn');
+    if (!btn) return;
+    btn.innerHTML = '&#9875;';
+    btn.title = _geDocked
+        ? 'Open Group explorer as a floating window'
+        : 'Dock Group explorer into the Groups menu';
+}
+
+function _geCloseExplorer() {
+    const modal = el('clusteringModal');
+    if (modal) modal.style.display = 'none';
+    const section = el('groups-menu-section');
+    if (section) section.classList.remove('menu-open');
+}
+
+function _geOnGroupsCleared() {
+    const modal = el('clusteringModal');
+    if (modal && modal.classList.contains('ge-probe')) return;
+    _geCloseExplorer();
+    _geSetMenuVisible(false);
+    if (_geDocked) _geUndock({ show: false });
+}
+
+function _geClearAll() {
+    clearTypePaint();
+}
+
+function _geDock() {
+    const modal = el('clusteringModal');
+    const host = el('groups-controls');
+    const section = el('groups-menu-section');
+    if (!modal || !host || !section || modal.classList.contains('ge-probe')) return;
+    if (!_geHomeParent) _geHomeParent = modal.parentNode;
+    _geDocked = true;
+    modal.classList.add('ge-docked');
+    ['transform', 'left', 'top', 'width', 'height', 'position', 'margin', 'maxHeight', 'maxWidth'].forEach(p => {
+        modal.style[p] = '';
+    });
+    host.appendChild(modal);
+    modal.style.display = 'flex';
+    _geSetMenuVisible(true);
+    closeOtherMenusExcept(section);
+    clearMenuCloseDelay(section);
+    section.classList.add('menu-open');
+    _geUpdateDockBtn();
+}
+
+function _geUndock(opts) {
+    const show = !opts || opts.show !== false;
+    const modal = el('clusteringModal');
+    if (!modal) return;
+    const home = _geHomeParent || document.body;
+    _geDocked = false;
+    modal.classList.remove('ge-docked');
+    home.appendChild(modal);
+    modal.style.position = 'fixed';
+    modal.style.left = '50%';
+    modal.style.top = '50%';
+    modal.style.transform = 'translate(-50%, -50%)';
+    modal.style.width = '';
+    modal.style.height = '';
+    modal.style.maxHeight = '80vh';
+    const section = el('groups-menu-section');
+    if (section) section.classList.remove('menu-open');
+    if (show && state.clusterResults && !modal.classList.contains('ge-probe')) {
+        modal.style.display = 'flex';
+        _geSetMenuVisible(true);
+    } else if (!show) {
+        modal.style.display = 'none';
+    }
+    _geUpdateDockBtn();
+}
+
+function _geToggleDock() {
+    if (_geDocked) _geUndock();
+    else _geDock();
+}
+
+function _geShowModal() {
+    const modal = el('clusteringModal');
+    if (!modal) return;
+    const probe = modal.classList.contains('ge-probe');
+    if (!probe && state.clusterResults) _geSetMenuVisible(true);
+    const content = el('clusteringContent');
+    if (content) content.style.display = '';
+    const tb = el('geToolbar');
+    const sm = el('geSummary');
+    if (tb) tb.style.display = '';
+    if (sm) sm.style.display = '';
+    if (_geDocked && !probe) {
+        const section = el('groups-menu-section');
+        if (section) {
+            closeOtherMenusExcept(section);
+            clearMenuCloseDelay(section);
+            section.classList.add('menu-open');
+        }
+        modal.style.display = 'flex';
+        _geBindExplorer();
+        _geUpdateDockBtn();
+        return;
+    }
+    showExclusiveModal('clusteringModal');
+    modal.style.display = 'flex';
+    modal.style.maxHeight = modal.style.maxHeight || '80vh';
+    if (!modal._draggableResizableInit) {
+        modal._draggableResizableInit = true;
+        makeModalDraggableResizable('clusteringModal', 'clusteringModalHeader', 'clusteringContent');
+    }
+    _geBindExplorer();
+    _geUpdateDockBtn();
+}
+
+function _geCopyText(text, okMsg) {
+    const done = () => showMessage(okMsg, 2000);
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+        navigator.clipboard.writeText(text).then(done).catch(() => {
+            _geCopyFallback(text, done);
+        });
+    } else {
+        _geCopyFallback(text, done);
+    }
+}
+
+function _geCopyFallback(text, done) {
+    const ta = document.createElement('textarea');
+    ta.value = text;
+    ta.style.position = 'fixed';
+    ta.style.left = '-9999px';
+    document.body.appendChild(ta);
+    ta.select();
+    try {
+        document.execCommand('copy');
+        done();
+    } catch (e) {
+        showMessage('Copy failed', 3000);
+    }
+    ta.remove();
+}
+
+function _geSeqById(id) {
+    return state.seqs.find(s => s.header === id);
+}
+
+function _geMemberIds(kind, idx) {
+    const results = state.clusterResults;
+    if (!results) return [];
+    if (kind === 'unassigned') return (results.unassigned || []).map(s => s.id);
+    const c = results.clusters && results.clusters[idx];
+    return c ? (c.sequences || []).map(s => s.id) : [];
+}
+
+// The rows of a group, each member claimed once (rows with the same name stay separate rows)
+function _geMemberRows(kind, idx) {
+    const results = state.clusterResults;
+    if (!results) return [];
+    const list = kind === 'unassigned' ? results.unassigned : (results.clusters && results.clusters[idx] ? results.clusters[idx].sequences : []);
+    const claim = _geRowClaimer();
+    return (list || []).map(m => claim(m)).filter(Boolean);
+}
+
+function _geGroupFasta(kind, idx, ungapped) {
+    return _geMemberRows(kind, idx).map(s => {
+        const body = ungapped ? degapResidues(s.seq) : s.seq;
+        return '>' + (s.fullHeader || s.header) + '\n' + body;
+    }).join('\n');
+}
+
+function _geGroupConsensusFasta(kind, idx) {
+    const seqs = _geMemberRows(kind, idx).map(s => s.seq);
+    const name = kind === 'unassigned'
+        ? 'Unassigned consensus'
+        : ((state.clusterResults.clusters[idx] && state.clusterResults.clusters[idx]._typeName) || ('Group ' + (idx + 1))) + ' consensus';
+    const cons = computeConsensusForSequences(seqs);
+    return '>' + name + '\n' + degapResidues(cons);
+}
+
+// Claims, for each group member, the row it stands for: the row object the grouping recorded when it
+// is still in the alignment, else the first unclaimed row with that name. Rows with the same name are
+// therefore never merged or dropped (the lookup used to be by name alone, which kept one row per name).
+function _geRowClaimer() {
+    const present = new Set(state.seqs);
+    const byName = new Map();
+    state.seqs.forEach(q => { const key = q.header || q.name || 'unnamed'; if (!byName.has(key)) byName.set(key, []); byName.get(key).push(q); });   // same id rule as getSeqsForClustering
+    const claimed = new Set();
+    return (m) => {
+        let row = (m.obj && present.has(m.obj) && !claimed.has(m.obj)) ? m.obj : null;
+        if (!row) {
+            // The recorded row object is gone (Undo and Redo put back copies). Among the unclaimed rows
+            // with the name, take the one with the recorded long name and residues, then the long name,
+            // then the residues, then the first: by name alone, "x one" and "x two" in two groups both
+            // became the first row named x (audit M15).
+            const cands = (byName.get(m.id) || []).filter(o => !claimed.has(o));
+            const was = m.obj || null;
+            const full = o => o.fullHeader || o.header, res = o => String(o.seq || '').replace(/[-.]/g, '');
+            if (was && cands.length > 1) {
+                const wf = full(was), wr = res(was);
+                row = cands.find(o => full(o) === wf && res(o) === wr) || cands.find(o => full(o) === wf) || cands.find(o => res(o) === wr) || null;
+            }
+            if (!row) row = cands[0] || null;
+        }
+        if (row) { claimed.add(row); m.obj = row; }
+        return row;
+    };
+}
+
+function _geReorderSeqsFromGroups() {
+    const results = state.clusterResults;
+    if (!results || !state.seqs) return;
+    const claim = _geRowClaimer();
+    const rowIndex = new Map(state.seqs.map((q, i) => [q, i]));
+    const ordered = [];
+    const takeAll = (list) => {
+        const rows = (list || []).map(m => claim(m)).filter(Boolean);
+        rows.sort((a, b) => rowIndex.get(a) - rowIndex.get(b));       // keep the current order inside a group
+        rows.forEach(r => ordered.push(r));
+    };
+    (results.clusters || []).forEach(c => takeAll(c.sequences));
+    takeAll(results.unassigned);
+    const seen = new Set(ordered);
+    state.seqs.forEach(q => { if (!seen.has(q)) ordered.push(q); });   // anything not in a group stays, in its order
+    if (ordered.length === state.seqs.length) state.seqs = ordered;     // never lose or duplicate a row
+}
+
+function _geMoveGroup(fromIdx, toIdx) {
+    const clusters = state.clusterResults && state.clusterResults.clusters;
+    if (!clusters || fromIdx === toIdx) return;
+    if (fromIdx < 0 || toIdx < 0 || fromIdx >= clusters.length || toIdx >= clusters.length) return;
+    pushUndo('order');
+    const [item] = clusters.splice(fromIdx, 1);
+    clusters.splice(toIdx, 0, item);
+    const movedKey = 'g' + fromIdx;
+    const next = new Set();
+    _geExpanded.forEach(k => {
+        if (k === 'u') { next.add('u'); return; }
+        const n = parseInt(k.slice(1), 10);
+        if (n === fromIdx) next.add('g' + toIdx);
+        else if (fromIdx < toIdx && n > fromIdx && n <= toIdx) next.add('g' + (n - 1));
+        else if (toIdx < fromIdx && n >= toIdx && n < fromIdx) next.add('g' + (n + 1));
+        else next.add(k);
+    });
+    _geExpanded = next;
+    _geSyncMapFromResults();
+    _geReorderSeqsFromGroups();
+    renderGroupExplorer();
+    renderAlignment();
+    if (state._biclusterRaw) reapplyBiclusterPaintMode();
+    else _updateInstrumentStatus();
+    _updateSplitHint();
+}
+
+// Move group members next to each other. which: 'all' (every group in list order, unassigned
+// last) or { kind, idx } for one group, which is gathered at the place of its first member.
+function _geGatherGroups(which) {
+    const results = state.clusterResults;
+    if (!results || !state.seqs.length) return;
+    let members = null;
+    if (which !== 'all') {
+        const list = which.kind === 'unassigned' ? results.unassigned : (results.clusters && results.clusters[which.idx] ? results.clusters[which.idx].sequences : []);
+        const claim = _geRowClaimer();
+        const rows = (list || []).map(m => claim(m)).filter(Boolean);
+        const set = new Set(rows);
+        members = state.seqs.filter(q => set.has(q));                    // current order
+        if (members.length < 2) { showMessage('Nothing to gather: the group has fewer than 2 sequences.', 2000); return; }
+    }
+    pushUndo('order');
+    if (which === 'all') {
+        _geReorderSeqsFromGroups();
+    } else {
+        const set = new Set(members);
+        const out = [];
+        let placed = false;
+        state.seqs.forEach(q => {
+            if (!set.has(q)) { out.push(q); return; }
+            if (!placed) { members.forEach(m => out.push(m)); placed = true; }
+        });
+        state.seqs = out;
+    }
+    state.selectedRows.clear();
+    _geSyncMapFromResults();
+    renderGroupExplorer();
+    renderAlignment();
+    if (state._biclusterRaw) reapplyBiclusterPaintMode();
+    else _updateInstrumentStatus();
+    showMessage(which === 'all' ? 'Group members gathered (Undo to restore the order).' : 'Group members gathered.', 2200);
+}
+
+// Switch every group colour off and on again without losing the groups
+function _geToggleAllColours() {
+    state.clusterPaintSuspended = !state.clusterPaintSuspended;
+    _geRepaint();
+}
+
+function _geRepaint() {
+    _geSyncMapFromResults();
+    renderGroupExplorer();
+    renderAlignment();
+    if (state._biclusterRaw) reapplyBiclusterPaintMode();
+    else _updateInstrumentStatus();
+}
+
+function _geSelectedIdSet() {
+    const ids = new Set();
+    if (!state.selectedRows) return ids;
+    state.selectedRows.forEach(i => {
+        if (state.seqs[i]) ids.add(state.seqs[i].header);
+    });
+    return ids;
+}
+
+function _geMarkSelectedSeqs() {
+    const ids = _geSelectedIdSet();
+    document.querySelectorAll('.ge-seq').forEach(node => {
+        node.classList.toggle('ge-seq-sel', ids.has(node.getAttribute('data-id')));
+    });
+}
+
+function _geScrollToSeq(header) {
+    const idx = state.seqs.findIndex(s => s.header === header);
+    if (idx < 0) return false;
+    if (typeof isCanvasMode === 'function' && isCanvasMode()) {
+        // Block view: the row in the band now in the middle of the view (row * pitch was band 0's rows)
+        if (isBlockLayout() && _canvasBlockReveal(idx, null)) return true;
+        const rowPitch = _canvasState.rowPitch || _canvasState.metrics?.charH || 16;
+        const viewH = (el('alignmentContainer') && el('alignmentContainer').clientHeight) || 240;
+        _canvasState.offsetY = Math.max(0, idx * rowPitch - Math.min(viewH / 3, rowPitch * 4));
+        _canvasState.scheduleDraw?.();
+        _canvasState.onOffsetChange?.();
+        return true;
+    }
+    const flash = () => {
+        const names = alignmentContainer.querySelectorAll(`.seq-line[data-seq-index="${idx}"] .seq-name`);
+        names.forEach(n => n.classList.add('ge-jump-flash'));
+        setTimeout(() => {
+            document.querySelectorAll(`.seq-line[data-seq-index="${idx}"] .seq-name`)
+                .forEach(n => n.classList.remove('ge-jump-flash'));
+        }, 900);
+        return names;
+    };
+    const reveal = () => {
+        const names = flash();
+        if (!names.length) return;
+        const view = alignmentContainer.getBoundingClientRect();
+        const mid = (view.top + view.bottom) / 2;
+        let best = names[0];
+        let bestDist = Infinity;
+        names.forEach(n => {
+            const r = n.getBoundingClientRect();
+            const d = Math.abs((r.top + r.bottom) / 2 - mid);
+            if (d < bestDist) {
+                bestDist = d;
+                best = n;
+            }
+        });
+        const r = best.getBoundingClientRect();
+        if (r.bottom < view.top + 4 || r.top > view.bottom - 4) {
+            best.scrollIntoView({ block: 'center', inline: 'nearest' });
+            setTimeout(flash, 60);
+        }
+    };
+    if (!el('modeBlocks')?.checked) {
+        const rowPx = _unifiedRowHeightPx || 16;
+        alignmentContainer.scrollTop = Math.max(0, idx * rowPx - 48);
+    }
+    if (typeof updateRowSelections === 'function') updateRowSelections();
+    requestAnimationFrame(reveal);
+    return true;
+}
+
+function _geToggleSeq(header) {
+    const idx = state.seqs.findIndex(s => s.header === header);
+    if (idx < 0) {
+        showMessage('Sequence not in the current alignment', 2500);
+        return;
+    }
+    if (state.selectedRows.has(idx)) state.selectedRows.delete(idx);
+    else state.selectedRows.add(idx);
+    state.lastSelectedIndex = idx;
+    if (typeof updateRowSelections === 'function') updateRowSelections();
+    if (typeof isCanvasMode === 'function' && isCanvasMode()) _canvasState.scheduleDraw?.();
+    _geMarkSelectedSeqs();
+    _geScrollToSeq(header);
+}
+
+function _geSelectGroup(kind, idx) {
+    // the group's own rows (by name, rows outside the group that share a member's name were selected too)
+    const at = new Map(state.seqs.map((q, i) => [q, i]));
+    const memberIdx = _geMemberRows(kind, idx).map(q => at.get(q)).filter(i => i !== undefined).sort((a, b) => a - b);
+    const allOn = memberIdx.length && memberIdx.every(i => state.selectedRows.has(i));
+    if (allOn) memberIdx.forEach(i => state.selectedRows.delete(i));
+    else state.selectedRows = new Set(memberIdx);
+    if (typeof updateRowSelections === 'function') updateRowSelections();
+    if (typeof isCanvasMode === 'function' && isCanvasMode()) _canvasState.scheduleDraw?.();
+    _geMarkSelectedSeqs();
+    if (!allOn && memberIdx.length) _geScrollToSeq(state.seqs[memberIdx[0]].header);
+}
+
+function _geAllNamedSeqs() {
+    const out = [];
+    const results = state.clusterResults;
+    if (!results) return out;
+    (results.clusters || []).forEach((c, idx) => {
+        const group = c._typeName || ('Group ' + (idx + 1));
+        (c.sequences || []).forEach(s => out.push({ id: s.id, group, idx, kind: 'group' }));
+    });
+    (results.unassigned || []).forEach(s => {
+        out.push({ id: s.id, group: 'Unassigned', idx: -1, kind: 'unassigned' });
+    });
+    return out;
+}
+
+function _geFindRegex(q) {
+    try { return new RegExp(q, 'i'); }
+    catch (e) { return null; }
+}
+
+function _geSubseqMatch(hay, needle) {
+    let i = 0;
+    for (let p = 0; p < hay.length && i < needle.length; p++) {
+        if (hay[p] === needle[i]) i++;
+    }
+    return i === needle.length;
+}
+
+function _geFindMatches(q, useRe) {
+    const all = _geAllNamedSeqs();
+    const query = (q || '').trim();
+    if (!query) return { matches: [], strict: [], error: '' };
+    if (useRe) {
+        const re = _geFindRegex(query);
+        if (!re) return { matches: [], strict: [], error: 'Invalid regex' };
+        const hits = all.filter(m => re.test(m.id));
+        return { matches: hits, strict: hits, error: '' };
+    }
+    const n = query.toLowerCase();
+    const ranked = all.map(m => {
+        const hay = String(m.id).toLowerCase();
+        let rank = Infinity;
+        if (hay === n) rank = 0;
+        else if (hay.startsWith(n)) rank = 1;
+        else {
+            const pos = hay.indexOf(n);
+            if (pos >= 0) rank = 2 + pos / 1000;
+            else if (_geSubseqMatch(hay, n)) rank = 50 + Math.abs(hay.length - n.length) / 100;
+        }
+        return { m, rank, len: String(m.id).length };
+    }).filter(x => x.rank < Infinity);
+    ranked.sort((a, b) => a.rank - b.rank || a.len - b.len);
+    const matches = ranked.map(x => x.m);
+    const strict = matches.filter(m => String(m.id).toLowerCase().includes(n));
+    return { matches, strict, error: '' };
+}
+
+function _geHideSuggest() {
+    const box = el('geSuggest');
+    if (box) {
+        box.hidden = true;
+        box.innerHTML = '';
+    }
+    _geSuggestI = -1;
+}
+
+function _geRenderSuggest() {
+    const box = el('geSuggest');
+    if (!box) return;
+    const items = _geFindHits.slice(0, 12);
+    if (!items.length) {
+        _geHideSuggest();
+        return;
+    }
+    if (_geSuggestI >= items.length) _geSuggestI = items.length - 1;
+    box.innerHTML = items.map((m, i) =>
+        `<div class="ge-suggest-item${i === _geSuggestI ? ' ge-suggest-on' : ''}" data-ge="suggest" data-id="${_geEsc(m.id)}" data-i="${i}">`
+        + `<span class="ge-suggest-id">${_geEsc(m.id)}</span>`
+        + `<span class="ge-suggest-g">${_geEsc(m.group)}</span></div>`
+    ).join('');
+    box.hidden = false;
+}
+

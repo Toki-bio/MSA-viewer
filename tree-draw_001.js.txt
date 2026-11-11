@@ -1,0 +1,536 @@
+[tree-draw.js lines 1-535 of ViewAlign fd8b8e4]
+/*
+ * tree-draw.js — graphical tree drawing for the Alignment Tree modal.
+ *
+ * The viewer already computes the tree and fills #treeNewickOutput with a Newick
+ * string. This module parses that Newick and renders an SVG phylogram directly
+ * inside the Tree modal (a #treeSvgOutput box, inserted above the Newick box).
+ *
+ * Interactive: zoom, swap the two branches at a node, and re-root on a branch.
+ * The drawn tree is held as a live structure rather than rebuilt from text each
+ * time, so those edits act on the tree itself; Reset returns to the computed tree.
+ *
+ * INSTALL: put this file in the repo next to script.js, then add ONE line in
+ * index.html right AFTER the existing  <script src="script.js"></script>  :
+ *
+ *     <script src="tree-draw.js"></script>
+ *
+ * No changes to script.js are required.
+ */
+(function () {
+  'use strict';
+
+  // ---------- Newick <-> tree ----------
+  function parseNewick(s) {
+    s = String(s || '').trim();
+    var i = 0;
+    function readName() {
+      var nm = '';
+      if (s[i] === "'") {                 // quoted label: '' is an escaped quote
+        i++;
+        while (i < s.length) {
+          if (s[i] === "'") { if (s[i + 1] === "'") { nm += "'"; i += 2; continue; } i++; break; }
+          nm += s[i++];
+        }
+      } else {
+        while (i < s.length && "():,;".indexOf(s[i]) === -1) nm += s[i++];
+      }
+      return nm.trim();
+    }
+    function node() {
+      var n = { name: '', len: 0, children: [] };
+      if (s[i] === '(') {
+        i++;
+        for (;;) { n.children.push(node()); if (s[i] === ',') { i++; continue; } break; }
+        if (s[i] === ')') i++;
+      }
+      n.name = readName();
+      if (s[i] === ':') {
+        i++;
+        var num = '';
+        while (i < s.length && "():,;".indexOf(s[i]) === -1) num += s[i++];
+        n.len = parseFloat(num) || 0;
+      }
+      return n;
+    }
+    return node();
+  }
+
+  function quoteName(nm) {
+    return /[\s():,;'\[\]]/.test(nm) ? "'" + String(nm).replace(/'/g, "''") + "'" : nm;   // [ ] start a Newick comment
+  }
+
+  // Serialise back to Newick so a re-rooted or rotated tree can be copied out.
+  function toNewick(root) {
+    function fmtLen(v) {
+      if (!(v > 0)) return '';
+      return ':' + (Math.round(v * 1e6) / 1e6);
+    }
+    function rec(n, isRoot) {
+      var inner = n.children.length
+        ? '(' + n.children.map(function (c) { return rec(c, false); }).join(',') + ')'
+        : '';
+      return inner + quoteName(n.name || '') + (isRoot ? '' : fmtLen(n.len));
+    }
+    return rec(root, true) + ';';
+  }
+
+  function cloneTree(n) {
+    return { name: n.name, len: n.len, children: n.children.map(cloneTree) };
+  }
+
+  // ---------- tree edits ----------
+
+  // Rotate the children at an internal node (for two children this is a swap).
+  function swapAt(node) {
+    if (!node || node.children.length < 2) return false;
+    node.children.reverse();
+    return true;
+  }
+
+  // Re-root on the branch entering `target`: the new root sits at that branch's
+  // midpoint, and every edge on the path back to the old root is reversed.
+  function rerootOnBranch(root, target) {
+    if (!target || target === root) return root;
+    var parent = new Map();
+    (function walk(n, p) { parent.set(n, p); n.children.forEach(function (c) { walk(c, n); }); })(root, null);
+    var p0 = parent.get(target);
+    if (!p0) return root;
+    // the only branch below a one-child root: the tree is already rooted there (re-rooting left the old
+    // root behind as an empty '?' tip)
+    if (p0 === root && root.children.length === 1) return root;
+
+    var half = (target.len || 0) / 2;
+    p0.children = p0.children.filter(function (c) { return c !== target; });
+
+    // Reverse the chain from p0 up to the old root, carrying each edge length
+    // to the edge that replaces it.
+    var node = p0, carried = half, up = parent.get(node);
+    while (up) {
+      up.children = up.children.filter(function (c) { return c !== node; });
+      var nextUp = parent.get(up);
+      node.children.push(up);
+      var edge = node.len;
+      node.len = carried;
+      carried = edge;
+      node = up;
+      up = nextUp;
+    }
+    node.len = carried;
+
+    target.len = half;
+    var newRoot = { name: '', len: 0, children: [target, p0] };
+
+    // The old root now has one child; splice it out so no artificial node remains.
+    (function collapse(n) {
+      n.children.forEach(collapse);
+      n.children = n.children.reduce(function (acc, c) {
+        if (c.children.length === 1 && !c.name) {
+          var only = c.children[0];
+          only.len = (only.len || 0) + (c.len || 0);
+          acc.push(only);
+        } else acc.push(c);
+        return acc;
+      }, []);
+    })(newRoot);
+
+    return newRoot;
+  }
+
+  // ---------- layout + SVG ----------
+  function niceNum(v) {
+    if (v <= 0) return 0;
+    var p = Math.pow(10, Math.floor(Math.log10(v)));
+    var f = v / p;
+    return (f >= 5 ? 5 : f >= 2 ? 2 : 1) * p;
+  }
+
+  function esc(t) {
+    // Escaping " (as the fontFamily values with quoted names, e.g. "Courier New", exposed --
+    // esc() previously left literal double-quotes untouched, which corrupts any HTML/SVG
+    // attribute this output gets embedded into, e.g. <option value="..."> or the SVG root's
+    // own font-family="..." attribute) matters for every caller, not just font names: safe to
+    // add unconditionally since &quot; decodes back to " correctly in text content too.
+    return String(t).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+  }
+
+  // Equal-angle unrooted layout (Felsenstein, Inferring Phylogenies, ch. 34 — the same
+  // scheme FigTree, Dendroscope and iTOL use). Each node receives an angular sector in
+  // proportion to the leaves below it, centred on the direction of its incoming edge, and
+  // sits at its parent's position advanced along that direction by the branch length.
+  function buildUnrootedSVGString(root, opts) {
+    opts = opts || {};
+    var measure = opts.measure || function (t) { return String(t).length * 6.8; };
+    var boxW = (opts.width || 700), boxH = (opts.height || 520);
+    var zoom = opts.zoom || 1;
+
+    var anyLen = false;
+    (function chk(n) { if (n.len > 0) anyLen = true; n.children.forEach(chk); })(root);
+
+    var uid = 0, leaves = [];
+    (function count(n) {
+      n._id = uid++;
+      n._leaves = n.children.length ? n.children.reduce(function (s, c) { return s + count(c); }, 0) : 1;
+      if (!n.children.length) leaves.push(n);
+      return n._leaves;
+    })(root);
+    if (!leaves.length) return '<div style="padding:8px;color:#777;">Empty tree.</div>';
+
+    var edgeLen = function (n) { return anyLen ? (n.len || 0) : 1; };
+    root.ux = 0; root.uy = 0; root.udir = 0;
+    (function place(n, start, sector) {
+      var a = start;
+      n.children.forEach(function (c) {
+        var sub = sector * (c._leaves / n._leaves);
+        var dir = a + sub / 2;
+        c.udir = dir;
+        c.ux = n.ux + edgeLen(c) * Math.cos(dir);
+        c.uy = n.uy + edgeLen(c) * Math.sin(dir);
+        place(c, a, sub);
+        a += sub;
+      });
+    })(root, 0, Math.PI * 2);
+
+    var minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
+    (function bounds(n) {
+      if (n.ux < minX) minX = n.ux; if (n.ux > maxX) maxX = n.ux;
+      if (n.uy < minY) minY = n.uy; if (n.uy > maxY) maxY = n.uy;
+      n.children.forEach(bounds);
+    })(root);
+
+    // opts.fontSize is an absolute px override (the dedicated Font size control); when unset,
+    // fall back to the original zoom-derived formula so Zoom alone still scales text as before.
+    var fontSize = opts.fontSize ? Math.max(6, opts.fontSize) : Math.max(8, 12 * zoom);
+    var fontFamily = opts.fontFamily || 'system-ui,-apple-system,Segoe UI,sans-serif';
+    var orientation = opts.labelOrientation === 'horizontal' ? 'horizontal' : 'angled';
+    var maxLabel = 0;
+    leaves.forEach(function (l) { maxLabel = Math.max(maxLabel, measure(l.name || '?')); });
+    var margin = Math.min(maxLabel * (fontSize / 12) + 14, 240);
+    // horizontal text needs the label's width at the left and right of the tree but only a line's height above and below it
+    // (a margin as wide as the longest name on every side made Fit impossible in a short panel: colleague check 2026-11-07)
+    var marginY = orientation === 'horizontal' ? Math.min(margin, fontSize * 1.35 + 14) : margin;
+
+    var spanX = Math.max(maxX - minX, 1e-9), spanY = Math.max(maxY - minY, 1e-9);
+    var innerW = Math.max(120, boxW - 2 * margin), innerH = Math.max(120, boxH - 2 * marginY);
+    var fitScale = Math.min(innerW / spanX, innerH / spanY);
+    // Fitting the WHOLE tree into the visible box (fitScale above) is exactly the wrong
+    // goal once there are many leaves: it shrinks per-leaf spacing as leaf count grows,
+    // guaranteeing illegible overlap for anything much past ~30-40 leaves regardless of
+    // zoom. The rooted layout never has this problem because its canvas height already
+    // grows with leaf count and scrolls; the equal-angle layout needs the same idea. This
+    // estimates the average arc-length available per leaf around the tree's TYPICAL radius
+    // (mean distance from origin, not the bounding box's half-span) and floors the scale so
+    // that stays at least one label-height apart. Using the mean rather than the bounding
+    // box matters: a bushy tree with a couple of long outlier branches has a large bounding
+    // box while most leaves sit much closer to the centre, so a bounding-box-derived radius
+    // badly underestimates how cramped the typical leaf actually is.
+    var radiusSum = 0;
+    leaves.forEach(function (l) { radiusSum += Math.hypot(l.ux, l.uy); });
+    var approxRadius = Math.max(radiusSum / leaves.length, 1e-9);
+    // User-adjustable (opts.labelSpacing, default 1) — the automatic densityFloorScale
+    // estimate below is explicitly documented as a proportionate mitigation, not a
+    // guarantee (lopsided/clumped topologies can still collide locally); rather than only
+    // offering the shared Zoom control (which also scales font size and the whole image),
+    // a dedicated multiplier lets a user push spacing further for a specific stubborn tree
+    // without changing anything else.
+    var minSpacingPx = 14 * (opts.labelSpacing || 1);
+    var densityFloorScale = (leaves.length * minSpacingPx) / (2 * Math.PI * approxRadius);
+    // This is still a proportionate mitigation, not a full guarantee: it assumes leaves are
+    // roughly evenly spread around the boundary, so a genuinely lopsided/clumped topology
+    // can still pack some leaves closer than others and overlap locally. Real collision
+    // detection would be needed to guarantee zero overlap in every case.
+    var scale = Math.max(fitScale, densityFloorScale) * zoom;   // was clamped at 0.4, so 25-40 % changed only the label
+    var totalW = spanX * scale + 2 * margin, totalH = spanY * scale + 2 * marginY;
+    function PX(n) { return margin + (n.ux - minX) * scale; }
+    function PY(n) { return marginY + (n.uy - minY) * scale; }
+
+    var out = [];
+    out.push('<svg xmlns="http://www.w3.org/2000/svg" width="' + totalW.toFixed(0) + '" height="' + totalH.toFixed(0) +
+      '" viewBox="0 0 ' + totalW.toFixed(0) + ' ' + totalH.toFixed(0) + '" font-family="' + esc(fontFamily) + '">');
+
+    (function draw(n) {
+      n.children.forEach(function (c) {
+        var x1 = PX(n).toFixed(1), y1 = PY(n).toFixed(1), x2 = PX(c).toFixed(1), y2 = PY(c).toFixed(1);
+        out.push('<line class="tree-hit tree-branch-hit" data-node="' + c._id + '" x1="' + x1 + '" y1="' + y1 +
+          '" x2="' + x2 + '" y2="' + y2 + '" stroke="transparent" stroke-width="10"/>');
+        out.push('<line x1="' + x1 + '" y1="' + y1 + '" x2="' + x2 + '" y2="' + y2 +
+          '" stroke="#3a3a3a" stroke-width="1.5" stroke-linecap="round" pointer-events="none"/>');
+        draw(c);
+      });
+      if (n.children.length) {
+        out.push('<circle class="tree-hit tree-node-hit" data-node="' + n._id + '" cx="' + PX(n).toFixed(1) +
+          '" cy="' + PY(n).toFixed(1) + '" r="5" fill="transparent"/>');
+        out.push('<circle cx="' + PX(n).toFixed(1) + '" cy="' + PY(n).toFixed(1) +
+          '" r="2.2" fill="#7d97ad" pointer-events="none"/>');
+      }
+    })(root);
+
+    // Radial label orientation (opts.labelOrientation, default 'angled'), matching
+    // FigTree/Dendroscope/iTOL (see the module-header comment): rotate each label to align
+    // with its own leaf's branch direction instead of always drawing horizontal text. This is
+    // the actual fix for label overlap in dense unrooted trees, more than densityFloorScale
+    // alone can be — horizontal text from many leaves whose branches point in
+    // similar-but-not-identical directions collides even when the leaf POINTS themselves have
+    // adequate radial spacing; text angled along each leaf's own direction fans labels apart
+    // along the same arc that already spaces the points. 'horizontal' keeps the older,
+    // always-flat rendering for anyone who finds angled text harder to read.
+    // Rotation angle is normalized to [-90, 90] (flipping 180 + the anchor/offset side when
+    // needed) so a label in the left half of the tree is never rendered upside down.
+    function labelTransform(l) {
+      if (orientation === 'horizontal') {
+        var toLeft = Math.cos(l.udir) < 0;
+        return { anchor: toLeft ? 'end' : '', offset: toLeft ? -5 : 5, rotateAttr: '' };
+      }
+      var deg = l.udir * 180 / Math.PI;
+      deg = ((deg + 180) % 360 + 360) % 360 - 180; // normalize to (-180, 180]
+      var flip = Math.abs(deg) > 90;
+      var textDeg = flip ? deg + 180 : deg;
+      return { anchor: flip ? 'end' : 'start', offset: flip ? -5 : 5, textDeg: textDeg };
+    }
+
+    // Label placement (angled orientation). Leaves whose branches point in nearly the same direction
+    // have colliding labels whatever the rotation or the Label spacing multiplier (a clumped topology
+    // packs leaves closer than the average no matter how far the whole tree is scaled). Each label is
+    // therefore given its own clear spot: it keeps its leaf's direction and radius when that is free,
+    // else it is moved a little along the arc, and when the arc is full it is moved outward, where
+    // the arc is longer; a thin leader line joins a moved label to its leaf. Two radial labels collide
+    // when their radial bands overlap and the arc between them at the inner band edge is shorter
+    // than a line height. Greedy in angle order: the first label takes its place, every later one the
+    // cheapest free place (small arc shifts before radial shifts). This replaces the earlier
+    // "name +N" merging as the default; the owner's 116-leaf CLsat panel at 400 % zoom had merged
+    // labels still overlapping their neighbours and one fan of a dozen names unreadable (2026-10-23).
+    // Overlap grouping (opts.groupOverlap, now default false, angled orientation only): adjacent
+    // leaves whose labels would collide are merged into one label "first_name +N", followed by the
+    // names it stands for in grey, so what was omitted is read right at the cluster; the full list
+    // is also the <title> tooltip. Grouping affects LABEL TEXT only; branch lines and node
+    // click-targets are drawn for every leaf, so the topology is unaffected.
+    var groupOverlap = opts.groupOverlap === true && orientation === 'angled';
+    var MAX_GROUP_SIZE = 6;
+    var displayGroups = leaves.map(function (l) { return { members: [l] }; });
+    if (groupOverlap && leaves.length > 1) {
+      var sorted = leaves.slice().sort(function (a, b) { return a.udir - b.udir; });
+      var groups = [{ members: [sorted[0]] }];
+      for (var gi = 1; gi < sorted.length; gi++) {
+        var l = sorted[gi];
+        var cur = groups[groups.length - 1];
+        var prevL = cur.members[cur.members.length - 1];
+        var r = Math.max(Math.hypot(l.ux, l.uy), Math.hypot(prevL.ux, prevL.uy)) * scale;
+        var arcGap = (l.udir - prevL.udir) * Math.max(r, 1);
+        if (arcGap < fontSize * 1.8 && cur.members.length < MAX_GROUP_SIZE) cur.members.push(l); else groups.push({ members: [l] });
+      }
+      displayGroups = groups;
+    }
+
+    // the origin (root) in px; every label is placed in polar coordinates around it
+    var ox0 = PX(root), oy0 = PY(root);
+    var lineH = fontSize * 1.35;   // a text box is ~1.3 em tall (ascent + descent), not the 1.15 em of a line
+    var labels = displayGroups.map(function (g) {
+      var members = g.members, isGroup = members.length > 1;
+      var l = members[Math.floor(members.length / 2)];
+      var text = isGroup ? (members[0].name || '?') + ' +' + (members.length - 1) : (l.name || '?');
+      var rest = isGroup ? members.slice(1).map(function (m) { return m.name || '?'; }) : [];
+      var tx = PX(l) - ox0, ty = PY(l) - oy0;
+      var r0 = Math.hypot(tx, ty), th0 = Math.atan2(ty, tx);
+      var w = measure(text) * (fontSize / 12) + 5;
+      rest.forEach(function (n) { w = Math.max(w, measure(n) * (fontSize * 0.85 / 12) + 5); });
+      // the box is as tall as its lines: one, or one plus the omitted names stacked under it
+      var h = lineH * (1 + 0.85 * rest.length);
+      return { leaf: l, members: members, isGroup: isGroup, text: text, rest: rest, r0: r0, th0: th0, w: w, h: h, r: r0, th: th0 };
+    });
+    if (orientation === 'angled' && labels.length > 1) {
+      var placed = [];
+      var collides = function (a, b) {
+        var ia = a.r, oa = a.r + a.w, ib = b.r, ob = b.r + b.w;
+        if (oa <= ib || ob <= ia) return false;                    // different radial bands: no collision
+        var inner = Math.max(ia, ib, 1);
+        var d = Math.abs(a.th - b.th); d = Math.min(d, 2 * Math.PI - d);
+        return d * inner < (a.h + b.h) / 2;
+      };
+      var free = function (c) { for (var k = 0; k < placed.length; k++) if (collides(c, placed[k])) return false; return true; };
+      labels.sort(function (a, b) { return a.th0 - b.th0; });
+      // candidate places, cheapest first: the leaf's own spot, then arc shifts (a line height at this
+      // radius per step) up to an eighth of a turn, then outward steps of a line height with the arc
+      // shifts again
+      labels.forEach(function (c) {
+        var best = null;
+        for (var rs = 0; rs < 200 && !best; rs++) {
+          var rr = c.r0 + rs * lineH;
+          var dth = lineH / Math.max(rr, 1);
+          for (var k = 0; k <= 60 && !best; k++) {
+            var signs = k === 0 ? [0] : [1, -1];
+            for (var si = 0; si < signs.length && !best; si++) {
+              var th = c.th0 + signs[si] * k * dth;
+              if (Math.abs(th - c.th0) > Math.PI / 4) continue;
+              var cand = { r: rr, th: th, w: c.w, h: c.h };
+              if (free(cand)) best = cand;
+            }
+          }
+        }
+        if (best) { c.r = best.r; c.th = best.th; }
+        placed.push(c);
+      });
+    }
+
+    var labelBounds = [], labelBoxes = [];   // labelBoxes: each label's box, to keep the scale bar clear of them
+    labels.forEach(function (c) {
+      var px = ox0 + c.r * Math.cos(c.th), py = oy0 + c.r * Math.sin(c.th);
+      var lx = PX(c.leaf), ly = PY(c.leaf);
+      var moved = Math.hypot(px - lx, py - ly) > 1.5;
+      var t = orientation === 'angled' ? labelTransform({ udir: c.th }) : labelTransform(c.leaf);
+      if (moved) {
+        // a thin leader from the leaf to the label's near end
+        var gx = px + Math.cos(c.th) * (t.offset < 0 ? -2 : 2), gy = py + Math.sin(c.th) * (t.offset < 0 ? -2 : 2);
+        out.push('<line x1="' + lx.toFixed(1) + '" y1="' + ly.toFixed(1) + '" x2="' + gx.toFixed(1) + '" y2="' + gy.toFixed(1) +
+          '" stroke="#b5b5b5" stroke-width="0.8" pointer-events="none"/>');
+      }
+      if (orientation === 'horizontal') {
+        // horizontal text is not rotated: it runs its whole width to the right of the anchor, or to the left when the label is on the left half
+        // (the bounds used cos(th)*w, right only for text turned along its branch, so names were cut at the edge of the drawing: colleague check 2026-11-07)
+        var hdir = t.anchor === 'end' ? -1 : 1;
+        labelBounds.push([px, py], [px + hdir * c.w, py]);
+        labelBoxes.push({ l: Math.min(px, px + hdir * c.w), r: Math.max(px, px + hdir * c.w), t: py - c.h / 2, b: py + c.h / 2 });
+      } else {
+        labelBounds.push([px, py], [px + Math.cos(c.th) * c.w, py + Math.sin(c.th) * c.w]);   // the text runs outward from the anchor
+        var cx2 = Math.cos(c.th), sy2 = Math.sin(c.th), bxs = [], bys = [];
+        // the glyphs run OUTWARD along the label's direction whichever side the label is on: a flipped (left-half) label is turned
+        // 180 degrees and anchored at its end, which puts the text outward again (the box was taken inward for it, so the bar could sit on a name)
+        [0, c.w + 5].forEach(function (a) { [-c.h / 2, c.h / 2].forEach(function (p) { bxs.push(px + a * cx2 - p * sy2); bys.push(py + a * sy2 + p * cx2); }); });
+        labelBoxes.push({ l: Math.min.apply(null, bxs), r: Math.max.apply(null, bxs), t: Math.min.apply(null, bys), b: Math.max.apply(null, bys) });
+      }
+      var titleEl = c.isGroup ? '<title>' + esc(c.members.map(function (m) { return m.name || '?'; }).join(', ')) + '</title>' : '';
+      // the omitted names on their own lines under the group label (tspans stack along the label's own axis)
+      var restEl = c.rest.map(function (n) {
+        return '<tspan x="' + (px + t.offset).toFixed(1) + '" dy="' + (lineH * 0.85).toFixed(1) + '" fill="#777" font-weight="400" font-size="' + (fontSize * 0.85).toFixed(1) + '">' + esc(n) + '</tspan>';
+      }).join('');
+      out.push('<text class="tree-leaf-label" data-leaf="' + esc(c.leaf.name || '') + '" x="' + (px + t.offset).toFixed(1) + '" y="' + (py + fontSize / 3).toFixed(1) +
+        '" font-size="' + fontSize.toFixed(1) + '" fill="' + (c.isGroup ? '#a05a00' : '#1f1f1f') + '"' +
+        (c.isGroup ? ' font-weight="600" style="cursor:help;"' : ' pointer-events="none"') +
+        (t.anchor ? ' text-anchor="' + t.anchor + '"' : '') +
+        (t.textDeg !== undefined ? ' transform="rotate(' + t.textDeg.toFixed(1) + ' ' + px.toFixed(1) + ' ' + py.toFixed(1) + ')"' : '') +
+        '>' + titleEl + esc(c.text) + restEl + '</text>');
+    });
+
+    // Labels moved outward can end beyond the box sized before placement: the drawing grows to hold them
+    var bx0 = 0, by0 = 0, bx1 = totalW, by1 = totalH;
+    labelBounds.forEach(function (q) {
+      bx0 = Math.min(bx0, q[0] - lineH); by0 = Math.min(by0, q[1] - lineH); bx1 = Math.max(bx1, q[0] + lineH); by1 = Math.max(by1, q[1] + lineH);
+    });
+    // The scale bar is placed once the drawing's bounds are known, in the first corner (bottom left as before, then bottom right,
+    // top left, top right) where its box (bar plus number) touches no label; when all four are taken the drawing grows by a strip
+    // under it. It used to sit at a fixed x=12, y=height-12, before the drawing grew, and landed on a name (colleague check 2026-11-07).
+    if (anyLen) {
+      var sbv = niceNum(spanX / 4), sbpx = sbv * scale;
+      var sbW = Math.max(sbpx, measure(String(sbv)) * (10 / 12) + 4), sbH = 20;   // number above the line: 10 px font + 4 px gap + the line
+      var sbFree = function (x, y) {   // x = left end of the bar, y = the line's y
+        for (var bi = 0; bi < labelBoxes.length; bi++) {
+          var q = labelBoxes[bi];
+          if (q.l < x + sbW + 3 && q.r > x - 3 && q.t < y + 3 && q.b > y - sbH - 3) return false;
+        }
+        return true;
+      };
+      var sbCands = [[bx0 + 12, by1 - 12], [bx1 - 12 - sbW, by1 - 12], [bx0 + 12, by0 + sbH + 8], [bx1 - 12 - sbW, by0 + sbH + 8]];
+      var sbx = null, sy = null;
+      for (var ci = 0; ci < sbCands.length && sbx === null; ci++) if (sbFree(sbCands[ci][0], sbCands[ci][1])) { sbx = sbCands[ci][0]; sy = sbCands[ci][1]; }
+      if (sbx === null) { by1 += sbH + 16; sbx = bx0 + 12; sy = by1 - 12; }
+      out.push('<line x1="' + sbx.toFixed(1) + '" y1="' + sy.toFixed(1) + '" x2="' + (sbx + sbpx).toFixed(1) + '" y2="' + sy.toFixed(1) +
+        '" stroke="#999" stroke-width="1.5"/>');
+      out.push('<text x="' + (sbx + sbpx / 2).toFixed(1) + '" y="' + (sy - 4).toFixed(1) +
+        '" font-size="10" fill="#777" text-anchor="middle">' + sbv + '</text>');
+    }
+    if (bx0 < 0 || by0 < 0 || bx1 > totalW || by1 > totalH) {
+      out[0] = '<svg xmlns="http://www.w3.org/2000/svg" width="' + (bx1 - bx0).toFixed(0) + '" height="' + (by1 - by0).toFixed(0) +
+        '" viewBox="' + bx0.toFixed(0) + ' ' + by0.toFixed(0) + ' ' + (bx1 - bx0).toFixed(0) + ' ' + (by1 - by0).toFixed(0) + '" font-family="' + esc(fontFamily) + '">';
+    }
+    out.push('</svg>');
+    return out.join('');
+  }
+
+  function buildTreeSVGString(root, opts) {
+    opts = opts || {};
+    var measure = opts.measure || function (t) { return String(t).length * 6.8; };
+    var containerW = opts.width || 700;
+    var zoom = opts.zoom || 1;
+
+    if (!root) return '<div style="padding:8px;color:#a00;">Cannot draw tree.</div>';
+    if (opts.layout === 'unrooted') return buildUnrootedSVGString(root, opts);
+
+    var anyLen = false;
+    (function chk(n) { if (n.len > 0) anyLen = true; n.children.forEach(chk); })(root);
+    // rowH has a floor so it can never shrink below what the label font's own floor
+    // (see fontSize below) needs - without one, zooming out past ~0.31 packs rows
+    // tighter than the 8px-minimum label text, and adjacent leaf labels overlap.
+    var usePhylo = anyLen, rowH = Math.max(14, 26 * zoom), padT = 18, padL = 12, padB = usePhylo ? 34 : 16;
+
+    var leafCount = 0, maxX = 0, uid = 0;
+    (function assign(n, x, depth) {
+      n._id = uid++;
+      n.x = usePhylo ? (depth === 0 ? 0 : x + n.len) : depth;
+      if (!n.children.length) { n.y = leafCount++; }
+      else {
+        n.children.forEach(function (c) { assign(c, n.x, depth + 1); });
+        n.y = (n.children[0].y + n.children[n.children.length - 1].y) / 2;
+      }
+      if (n.x > maxX) maxX = n.x;
+    })(root, 0, 0);
+    if (leafCount < 1) return '<div style="padding:8px;color:#777;">Empty tree.</div>';
+    if (!usePhylo) (function fix(n) { if (!n.children.length) n.x = maxX; n.children.forEach(fix); })(root);
+
+    var fontSize = opts.fontSize ? Math.max(6, opts.fontSize) : Math.max(8, 12 * zoom);
+    var fontFamily = opts.fontFamily || 'system-ui,-apple-system,Segoe UI,sans-serif';
+    var maxLabel = 0;
+    (function w(n) { if (!n.children.length) maxLabel = Math.max(maxLabel, measure(n.name || '?')); n.children.forEach(w); })(root);
+    maxLabel *= (fontSize / 12);
+
+    // as wide as the longest name: a cap cut names at the edge of the image, on screen and in the saved file
+    var labelW = maxLabel + 10, gap = 8;
+    var plotW = Math.max(150, (containerW - padL - gap - 8) * zoom - labelW);
+    var scaleX = maxX > 0 ? plotW / maxX : 1;
+    var totalW = padL + plotW + gap + labelW + 8;
+    var totalH = padT + (leafCount > 1 ? leafCount - 1 : 0) * rowH + padB;
+    function px(x) { return padL + x * scaleX; }
+    function py(r) { return padT + r * rowH; }
+
+    var out = [];
+    out.push('<svg xmlns="http://www.w3.org/2000/svg" width="' + totalW.toFixed(0) + '" height="' + totalH.toFixed(0) +
+      '" viewBox="0 0 ' + totalW.toFixed(0) + ' ' + totalH.toFixed(0) + '" font-family="' + esc(fontFamily) + '">');
+
+    (function draw(n, parentX, isRoot) {
+      var x2 = px(n.x), y = py(n.y), x1 = px(parentX);
+      // The horizontal branch is the click target for re-rooting; a wide invisible
+      // line under it keeps thin branches easy to hit.
+      if (!isRoot) {
+        out.push('<line class="tree-hit tree-branch-hit" data-node="' + n._id + '" x1="' + x1.toFixed(1) + '" y1="' + y.toFixed(1) +
+          '" x2="' + x2.toFixed(1) + '" y2="' + y.toFixed(1) + '" stroke="transparent" stroke-width="10" stroke-linecap="butt"/>');
+      }
+      out.push('<line x1="' + x1.toFixed(1) + '" y1="' + y.toFixed(1) + '" x2="' + x2.toFixed(1) + '" y2="' + y.toFixed(1) +
+        '" stroke="#3a3a3a" stroke-width="1.5" stroke-linecap="round" pointer-events="none"/>');
+      if (n.children.length) {
+        var yt = py(n.children[0].y), yb = py(n.children[n.children.length - 1].y);
+        out.push('<line x1="' + x2.toFixed(1) + '" y1="' + yt.toFixed(1) + '" x2="' + x2.toFixed(1) + '" y2="' + yb.toFixed(1) +
+          '" stroke="#3a3a3a" stroke-width="1.5" stroke-linecap="round" pointer-events="none"/>');
+        // Node handle: click to swap the branches hanging off it.
+        out.push('<circle class="tree-hit tree-node-hit" data-node="' + n._id + '" cx="' + x2.toFixed(1) + '" cy="' + y.toFixed(1) +
+          '" r="5" fill="transparent"/>');
+        out.push('<circle cx="' + x2.toFixed(1) + '" cy="' + y.toFixed(1) + '" r="2.2" fill="#7d97ad" pointer-events="none"/>');
+        n.children.forEach(function (c) { draw(c, n.x, false); });
+      } else {
+        out.push('<text x="' + (x2 + 6).toFixed(1) + '" y="' + (y + fontSize / 3).toFixed(1) +
+          '" font-size="' + fontSize.toFixed(1) + '" fill="#1f1f1f" pointer-events="none">' + esc(n.name || '?') + '</text>');
+      }
+    })(root, root.x, true);
+
+    if (usePhylo && maxX > 0) {
+      var sbv = niceNum(maxX / 4), sbpx = sbv * scaleX, sy = totalH - 14;
+      out.push('<line x1="' + padL + '" y1="' + sy.toFixed(1) + '" x2="' + (padL + sbpx).toFixed(1) + '" y2="' + sy.toFixed(1) +
+        '" stroke="#999" stroke-width="1.5"/>');
+      out.push('<text x="' + (padL + sbpx / 2).toFixed(1) + '" y="' + (sy - 4).toFixed(1) +
+        '" font-size="10" fill="#777" text-anchor="middle">' + sbv + '</text>');
+    }
+    out.push('</svg>');
+    return out.join('');
+  }
+
+  // ---------- module state ----------
+  var st = {
+    root: null, original: null, sourceNewick: '', zoom: 1, mode: 'swap', layout: 'rect', full: false,
+    labelSpacing: 1, fontSize: 12, fontFamily: 'system-ui,-apple-system,Segoe UI,sans-serif',

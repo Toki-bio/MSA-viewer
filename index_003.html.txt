@@ -1,0 +1,250 @@
+[index.html lines 534-782 of ViewAlign fd8b8e4]
+                                    </select>
+                                </details>
+                            </div>
+
+                            <div class="cluster-block">
+                                <div class="cluster-block-title" title="Draws rectangles over stretches where a subset of rows share a local pattern. This is a separate overlay from name and letter colours. Show 2D never changes row order; Group rows does.">2D analysis</div>
+                                <div class="cluster-actions">
+                                    <button id="biclusterComputeButton" style="flex: 1; background: #0f766e; color: white; border: none; border-radius: 2px; cursor: pointer;" title="Draw row × column rectangles. If groups exist, each rectangle is tagged as supporting a group, sitting inside one, or disagreeing.">Show 2D</button>
+                                    <button id="biclusterClearButton" title="Remove the 2D rectangle overlay. Name and letter colours stay until you Clear them in k-mer groups or Diagnostic SNPs.">Clear</button>
+                                    <button id="biclusterGroupRowsButton" title="Click a colored rectangle to stack those sequences (including scattered copies). Undoable.">Group rows</button>
+                                </div>
+                                <div class="cluster-actions">
+                                    <select id="biclusterPaintMode" title="How to draw copies of a pattern that are not sitting in one contiguous stack. Does not change alignment order.">
+                                        <option value="local_one" title="One rectangle covers every sequence that has this pattern, even if those rows are not next to each other.">All copies, one box</option>
+                                        <option value="local_two" title="The contiguous stack is one rectangle; scattered copies get a second, paler layer.">Stack + copies</option>
+                                        <option value="strict" title="Paint only the contiguous stack. Scattered copies of the same pattern are left unpainted.">Stack only</option>
+                                    </select>
+                                    <label class="cluster-opacity" title="How solid the 2D rectangles are drawn over the alignment.">Opacity
+                                        <input type="range" id="blockMaskOpacity" min="0.1" max="0.9" step="0.05" value="0.45">
+                                    </label>
+                                </div>
+                                <div id="blockMaskStatus" class="cluster-progress" style="font-size: 10px; color: #555; margin-top: 4px;"></div>
+                                <details style="margin-top: 6px;">
+                                    <summary style="font-size: 10px; color: #555; cursor: pointer;">Legacy squint mask</summary>
+                                    <div style="font-size: 10px; color: #555; margin: 4px 0;">Older overlay. Showing it replaces the current 2D rectangles.</div>
+                                    <div class="cluster-actions" style="margin-bottom: 4px;">
+                                        <select id="blockMaskPreset" style="flex: 1; min-width: 90px; height: 24px; font-size: 10px;" title="Squint coarseness: V1 = few big blocks, V5 = many fine blocks">
+                                            <option value="V1_coarsest">V1 coarsest</option>
+                                            <option value="V2_coarse">V2 coarse</option>
+                                            <option value="V3_medium" selected>V3 medium</option>
+                                            <option value="V4_fine">V4 fine</option>
+                                            <option value="V5_finest">V5 finest</option>
+                                        </select>
+                                        <button id="blockMaskComputeButton" style="background: #8b5cf6; color: white; border: none; border-radius: 2px; cursor: pointer;" title="Compute the block mask from the currently loaded alignment and overlay it">Show mask</button>
+                                        <button id="blockMaskClearButton" title="Remove the block-mask overlay">Clear</button>
+                                        <button id="blockMaskGroupButton" title="Click a colored rectangle to stack those sequences. Undoable.">Group rows</button>
+                                    </div>
+                                    <details style="margin-top: 4px;">
+                                        <summary style="font-size: 10px; color: #555; cursor: pointer;">Squint knobs</summary>
+                                        <div style="display: flex; flex-direction: column; gap: 2px; margin-top: 4px; font-size: 10px;" title="Same eight knobs the V1-V5 presets set. Move one and release to recompute the mask.">
+                                            <label style="display: flex; align-items: center; gap: 4px;">WIN <input type="range" id="bmKnobWIN" min="8" max="48" step="2" value="20" style="flex: 1;"><span id="bmKnobWINVal" style="width: 34px; text-align: right;">20</span></label>
+                                            <label style="display: flex; align-items: center; gap: 4px;">MOSAIC_STD <input type="range" id="bmKnobMOSAIC_STD" min="0.06" max="0.20" step="0.01" value="0.12" style="flex: 1;"><span id="bmKnobMOSAIC_STDVal" style="width: 34px; text-align: right;">0.12</span></label>
+                                            <label style="display: flex; align-items: center; gap: 4px;">BG_MARGIN <input type="range" id="bmKnobBG_MARGIN" min="0.05" max="0.16" step="0.01" value="0.10" style="flex: 1;"><span id="bmKnobBG_MARGINVal" style="width: 34px; text-align: right;">0.10</span></label>
+                                            <label style="display: flex; align-items: center; gap: 4px;">MIN_ZONE_W <input type="range" id="bmKnobMIN_ZONE_W" min="8" max="45" step="1" value="18" style="flex: 1;"><span id="bmKnobMIN_ZONE_WVal" style="width: 34px; text-align: right;">18</span></label>
+                                            <label style="display: flex; align-items: center; gap: 4px;">ZONE_BRIDGE <input type="range" id="bmKnobZONE_BRIDGE" min="1" max="6" step="1" value="4" style="flex: 1;"><span id="bmKnobZONE_BRIDGEVal" style="width: 34px; text-align: right;">4</span></label>
+                                            <label style="display: flex; align-items: center; gap: 4px;">ROW_MIN_GROUP <input type="range" id="bmKnobROW_MIN_GROUP" min="3" max="8" step="1" value="4" style="flex: 1;"><span id="bmKnobROW_MIN_GROUPVal" style="width: 34px; text-align: right;">4</span></label>
+                                            <label style="display: flex; align-items: center; gap: 4px;">ROW_MIN_GAP_ABS <input type="range" id="bmKnobROW_MIN_GAP_ABS" min="0.08" max="0.28" step="0.01" value="0.15" style="flex: 1;"><span id="bmKnobROW_MIN_GAP_ABSVal" style="width: 34px; text-align: right;">0.15</span></label>
+                                            <label style="display: flex; align-items: center; gap: 4px;">MIN_BLOCK_W <input type="range" id="bmKnobMIN_BLOCK_W" min="5" max="45" step="1" value="15" style="flex: 1;"><span id="bmKnobMIN_BLOCK_WVal" style="width: 34px; text-align: right;">15</span></label>
+                                        </div>
+                                    </details>
+                                </details>
+                            </div>
+
+                            <div id="clusterLiveStatus" class="cluster-live-status" hidden>
+                                <span id="clusteringInstrumentStatus" style="flex: 1;"></span>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                <div class="menu-section">
+                    <div class="section-header" data-section="search">
+                        <span>Search</span>
+                        <span class="toggle-icon">v</span>
+                    </div>
+                    <div class="control-group" id="search-controls">
+                        <div class="slider-container search-row">
+                            <div class="search-input-group">
+                                <input type="text" id="searchInput" placeholder="Enter motif..." style="width: 120px; height: 22px; padding: 2px; font-size: 12px;" title="Enter motif to search (case-insensitive, searches degapped sequences)">
+                                <label title="Interpret search as regular expression"><input type="checkbox" id="searchRegex" style="width:14px;height:14px;vertical-align:middle;"> .*</label>
+                                <input type="number" id="maxMismatches" min="0" max="10" value="0" style="width: 40px; height: 22px; padding: 2px; font-size: 12px;" title="Allowed mismatches (0 = exact match). Literal search only; ignored when regex is on">
+                                <input type="color" id="searchColor" value="#FFFF00" style="width: 32px; height: 26px; padding: 0;" title="Choose highlight color for search hits">
+                            </div>
+                            <div class="search-button-group">
+                                <button id="searchButton" title="Find motif in sequences (shortcut: Ctrl+F)">Find</button>
+                                <button id="clearLastSearchButton" title="Clear last search highlight (shortcut: Ctrl+Shift+F)">Clear Last</button>
+                                <button id="clearAllSearchesButton" title="Clear all search highlights (shortcut: Ctrl+Alt+F)">Clear All</button>
+                            </div>
+                        </div>
+                        <div style="display: flex; gap: 6px; align-items: center; margin-top: 4px; flex-wrap: wrap;">
+                            <button id="reverseComplementQueryButton" style="height: 22px; font-size: 11px; padding: 0 6px;" title="Replace the search box text with its reverse complement">Reverse complement query</button>
+                            <label style="font-size: 11px; display: flex; align-items: center; gap: 4px;">
+                                <input type="checkbox" id="searchBothStrands" style="margin: 0;" title="Also search for the reverse complement of the query"> Search both strands
+                            </label>
+                            <button id="reSitePopupBtn" style="height: 22px; font-size: 11px; padding: 0 6px;" title="Search common restriction enzyme recognition sites">Restriction Sites</button>
+                            <span id="reSiteLabel" style="font-size: 10px; color: #666;"></span>
+                        </div>
+                        <div id="reSitePopup" style="display:none; position:fixed; z-index:10050; top:72px; left:50%; transform:translateX(-50%); padding:12px; background:#fff; border:1px solid #888; border-radius:6px; box-shadow:0 4px 18px rgba(0,0,0,0.35); width:900px; max-width:94vw; max-height:82vh; overflow:hidden; font-size:11px;">
+                            <div style="font-weight:bold; margin-bottom:5px;">Restriction enzyme sites</div>
+                            <div style="display:flex; gap:6px; margin-bottom:4px;"><button id="reSiteSelectAllBtn" style="height:20px; font-size:10px; padding:0 8px;" title="Select every enzyme in the list below">Select All</button><button id="reSiteUnselectAllBtn" style="height:20px; font-size:10px; padding:0 8px;" title="Deselect every enzyme in the list below">Unselect All</button></div>
+                            <div id="reSiteList" style="display:grid; grid-template-columns:repeat(5, minmax(0, 1fr)); gap:4px 10px; padding:6px; border:1px solid #eee; background:#fafafa;"></div>
+                            <div style="margin-top:6px;">
+                                <label style="display:block; font-size:10px; color:#555; margin-bottom:2px;">Manual enzymes/sites (comma separated; use Name:Site or just Site)</label>
+                                <input type="text" id="reSiteManualInput" placeholder="BspQI:GCTCTTC, GAATTC" style="width:100%; height:22px; font-size:11px; padding:2px 4px; box-sizing:border-box;" title="Add custom enzymes/sites not in the preset list, as Name:Site or just Site">
+                            </div>
+                            <div style="display:flex; gap:6px; align-items:center; margin-top:6px; flex-wrap:wrap;">
+                                <button id="reSiteRunBtn" style="height:22px; font-size:11px;" title="Search the alignment for the selected/entered restriction sites">Find Sites</button>
+                                <button id="reSiteClearBtn" style="height:22px; font-size:11px;" title="Deselect all enzymes and clear manual entries">Clear Selection</button>
+                                <span style="font-size:10px; color:#666;">Uses IUPAC codes. Both strands are searched: a site on the minus strand is listed as "rev comp".</span>
+                            </div>
+                        </div>
+                        <!-- Named search presets (owner, 2026-10-23): the active searches saved under a name, run again on any alignment -->
+                        <div class="search-presets" title="Named sets of searches: save the active searches under a name (e.g. promoter boxes) and run them again on any alignment">
+                            <span style="font-size: 11px;">Presets:</span>
+                            <select id="searchPresetSelect" title="Saved search sets"></select>
+                            <button id="searchPresetLoadBtn" title="Run every search of the chosen set on this alignment (added to the active searches; a search already active is run again, not doubled)">Load</button>
+                            <button id="searchPresetDeleteBtn" title="Remove the chosen set">Delete</button>
+                            <input type="text" id="searchPresetName" placeholder="name, e.g. promoter boxes" maxlength="60" title="Name for the active searches (motifs, regex, mismatches, strands, colours); an existing name is replaced">
+                            <button id="searchPresetSaveBtn" title="Save the active searches under the name">Save active</button>
+                        </div>
+                        <div id="activeSearches" class="active-searches" style="display: none; margin-top: 4px; padding: 4px; background: #f8f8f8; border-radius: 3px; font-size: 11px;">
+                            <strong>Active searches:</strong>
+                            <div id="searchList" style="margin-top: 2px;"></div>
+                        </div>
+                    </div>
+                </div>
+                <div class="menu-section">
+                    <div class="section-header" data-section="colourseqs">
+                        <span>Colour Names</span>
+                        <span class="toggle-icon">v</span>
+                    </div>
+                    <div class="control-group" id="colourseqs-controls">
+                        <!-- Pattern Matching Section -->
+                        <div style="border-bottom: 1px solid #ddd; padding-bottom: 8px; margin-bottom: 8px;">
+                            <div style="font-weight: bold; font-size: 11px; margin-bottom: 4px;">Pattern Match</div>
+                            <div style="display: flex; gap: 4px; margin-bottom: 4px; flex-wrap: wrap;">
+                                <input type="text" id="colourPatternInput" placeholder="regex/text..." style="flex: 1; min-width: 100px; height: 22px; padding: 2px; font-size: 11px;" title="Enter regex or text to match sequence names">
+                                <input type="color" id="colourPatternColor" value="#FF6B6B" style="width: 32px; height: 26px; padding: 0;" title="Color for matched names">
+                                <button id="colourPatternButton" style="height: 26px; padding: 0 8px; font-size: 11px;" title="Colour every sequence name matching the pattern above">Apply</button>
+                            </div>
+                        </div>
+                        <!-- Auto Similarity Section -->
+                        <div style="border-bottom: 1px solid #ddd; padding-bottom: 8px; margin-bottom: 8px;">
+                            <div style="font-weight: bold; font-size: 11px; margin-bottom: 4px;">Auto by Similarity</div>
+                            <div style="display: flex; gap: 4px; align-items: center; margin-bottom: 4px;">
+                                <label style="font-size: 11px; white-space: nowrap;">First N chars:</label>
+                                <input type="number" id="colourSimilarityChars" value="10" min="1" max="50" style="width: 40px; height: 22px; padding: 2px; font-size: 11px;" title="Number of first characters to consider for similarity (default: 10)">
+                            </div>
+                            <div style="display: flex; gap: 4px; align-items: center; margin-bottom: 4px;">
+                                <label style="font-size: 11px; white-space: nowrap;">Sensitivity:</label>
+                                <input type="range" id="colourSimilarityThreshold" value="3" min="0" max="10" style="flex: 1;" title="N-gram Jaccard similarity threshold (0=strict 90%, 10=loose 40%)">
+                                <span id="colourThresholdValue" style="font-size: 11px; min-width: 30px; text-align: right;">70%</span>
+                            </div>
+                            <div style="display: flex; gap: 4px; align-items: center; margin-bottom: 4px;">
+                                <label style="font-size: 11px; white-space: nowrap;">Mode:</label>
+                                <label style="font-size: 11px; margin-right: 8px;">
+                                    <input type="radio" name="colourMode" value="discrete" checked title="Use discrete color palette"> Discrete
+                                </label>
+                                <label style="font-size: 11px;">
+                                    <input type="radio" name="colourMode" value="gradient" title="Use gradient colors"> Gradient
+                                </label>
+                            </div>
+                            <button id="colourAutoButton" style="width: 100%; height: 24px; font-size: 11px;" title="Group and colour sequences by name similarity using the settings above">Auto-Color by Similarity</button>
+                        </div>
+                        <!-- Presets Section -->
+                        <div style="border-bottom: 1px solid #ddd; padding-bottom: 8px; margin-bottom: 8px;">
+                            <div style="font-weight: bold; font-size: 11px; margin-bottom: 4px;">Presets</div>
+                            <div style="display: flex; gap: 4px; flex-wrap: wrap;">
+                                <input type="text" id="colourPresetName" placeholder="preset name" style="flex: 1; min-width: 80px; height: 22px; padding: 2px; font-size: 11px;" title="Name for this color preset">
+                                <button id="colourSavePresetButton" style="height: 24px; padding: 0 8px; font-size: 11px;" title="Save the current colour assignments under the preset name above">Save</button>
+                                <button id="colourLoadPresetButton" style="height: 24px; padding: 0 8px; font-size: 11px;" title="Load a previously saved colour preset">Load</button>
+                                <button id="colourResetButton" style="height: 24px; padding: 0 8px; font-size: 11px;" title="Clear all colour assignments on sequence names">Reset</button>
+                            </div>
+                            <div id="colourPresetList" style="margin-top: 4px; font-size: 10px; display: none;">
+                                <strong>Saved presets:</strong>
+                                <div id="presetItems" style="margin-top: 2px;"></div>
+                            </div>
+                        </div>
+                        <!-- Actions Section -->
+                        <div style="border-bottom: 1px solid #ddd; padding-bottom: 8px; margin-bottom: 8px;">
+                            <div style="font-weight: bold; font-size: 11px; margin-bottom: 4px;">Actions</div>
+                            <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 4px; margin-bottom: 4px;">
+                                <button id="colourSortButton" style="height: 24px; font-size: 11px;" title="Reorder rows so sequences with the same colour sit together">Sort by Color</button>
+                                <button id="colourGroupButton" style="height: 24px; font-size: 11px;" title="Move all coloured sequences to the top of the alignment">Group at Top</button>
+                            </div>
+                            <div style="display: flex;">
+                                <button id="colourInspectButton" style="flex: 1; height: 24px; font-size: 11px;" title="View color assignment history">Inspect Colors</button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                <div class="menu-section">
+                    <div class="section-header" data-section="alignment">
+                        <span>Alignment</span>
+                        <span class="toggle-icon">v</span>
+                    </div>
+                    <div class="control-group" id="alignment-controls">
+                        <div class="action-section al-menu">
+                            <div class="al-btngrid">
+                                <button id="realignAllButton" title="Realign all sequences with the settings below">Realign All</button>
+                                <button id="realignSelectedButton" title="Realign only the selected sequences (the others keep their rows)">Realign Selected</button>
+                                <button id="realignBlockButton" title="Realign the selected column span(s) of all rows, or a selected block of rows x columns (drag across rows), with MAFFT and splice it back. Column spans honour Adjust direction / Reorder / Reorder only (Ctrl+Shift+R)">Realign Block</button>
+                                <button id="addSequencesButton" title="Add new sequences and align them to the existing alignment">Add &amp; Align…</button>
+                                <button id="degapBlockLeftButton" title="Remove gaps in the selected column block and pack residues to the LEFT">Degap block ←</button>
+                                <button id="degapBlockRightButton" title="Remove gaps in the selected column block and pack residues to the RIGHT">Degap block →</button>
+                                <button id="macsePresetButton" class="al-btn-wide" title="Frameshift-aware codon alignment of coding sequences with MACSE v2.07 (built in): sets Sequence type to Coding sequence, then Realign All, Realign Selected and Add &amp; Align use it">Codon alignment (MACSE)…</button>
+                            </div>
+                            <div class="al-settings">
+                                <label for="mafftSeqType">Sequence type</label>
+                                <select id="mafftSeqType" title="Sequence type">
+                                    <option value="2" selected>Nucleotide</option>
+                                    <option value="1">Protein (BLOSUM62)</option>
+                                    <option value="0">Protein (JTT 200PAM)</option>
+                                    <option value="codon" title="Frameshift-aware codon alignment of coding sequences, built in: MACSE v2.07 (exact port) or a fast reference-based approximation. Codons scored by BLOSUM62, 1-2 nt indels marked as frameshifts, stop codons penalised.">Coding sequence (codon, frameshift-aware)</option>
+                                </select>
+                                <span class="al-head" id="codonAlignHead" style="display:none" title="Settings of the built-in codon aligner (used when Sequence type is Coding sequence)">Codon alignment</span>
+                                <div class="al-checks" id="codonAlignOpts" style="display:none">
+                                    <label title="MACSE v2.07: a JavaScript port of MACSE alignSequences (Ranwez et al. 2011, 2018) that gives the same alignment as MACSE with the same settings. Fast: a reference-based approximation, much quicker for long or many sequences."><span class="al-inline">method</span> <select id="codonEngine"><option value="macse" selected>MACSE v2.07 (exact)</option><option value="fast">fast (approximate)</option></select></label>
+                                    <span id="codonMacseOpts">
+                                        <label title="MACSE -fs: cost of an internal frameshift (default 30; gap opening costs 7, extension 1, BLOSUM62 scores)."><span class="al-inline">frameshift</span> <input type="number" id="macseFs" value="30" min="0" max="300" step="1" style="width:4em"></label>
+                                        <label title="MACSE -stop: cost of an internal stop codon (default 50; MACSE requires less than twice the frameshift cost)."><span class="al-inline">stop</span> <input type="number" id="macseStop" value="50" min="0" max="300" step="1" style="width:4em"></label>
+                                    </span>
+                                    <span id="codonFastOpts" style="display:none">
+                                        <label title="Penalty for a frameshifted codon (1 or 2 nucleotides instead of 3), in BLOSUM62 units (gap open 10, gap extension 1)."><span class="al-inline">frameshift</span> <input type="number" id="codonFs" value="40" min="0" max="300" step="1" style="width:4em"></label>
+                                        <label title="Penalty for an internal stop codon. Kept below two frameshifts so that a single stop is not explained away by a pair of frameshifts."><span class="al-inline">stop</span> <input type="number" id="codonStop" value="50" min="0" max="300" step="1" style="width:4em"></label>
+                                        <label title="Name of the sequence whose reading frame defines the codon columns (empty = first sequence). Pick a clean, complete coding sequence."><span class="al-inline">reference</span> <input type="text" id="codonRef" placeholder="first sequence" style="width:9em"></label>
+                                    </span>
+                                </div>
+                                <label for="mafftGapOpen">Gap open</label>
+                                <span class="al-pair">
+                                    <input type="number" id="mafftGapOpen" value="1.53" min="0" max="10" step="0.1" title="Gap opening penalty (default: 1.53)">
+                                    <label for="mafftGapExt" class="al-inline">extension</label>
+                                    <input type="number" id="mafftGapExt" value="0.0" min="0" max="5" step="0.05" title="Gap extension penalty / offset (default: 0.0 for nucleotides)">
+                                </span>
+                                <label for="mafftSpeed">Speed</label>
+                                <select id="mafftSpeed" title="How many times MAFFT builds the guide tree (--retree). 1 = FFT-NS-1, 2 = FFT-NS-2 (MAFFT's default)">
+                                    <option value="1">Fast (FFT-NS-1)</option>
+                                    <option value="2" selected>Standard (FFT-NS-2)</option>
+                                    <option value="3">Extra (3 guide trees)</option>
+                                </select>
+                                <span class="al-head">Options</span>
+                                <div class="al-checks">
+                                    <label title="Automatically reverse-complement sequences that appear to be in the wrong orientation (nucleotide only)"><input type="checkbox" id="mafftAdjustDir"> Adjust direction</label>
+                                    <label title="Reorder output sequences by similarity (guide-tree order) instead of input order. With Realign Block, you are asked whether to apply that order to the whole MSA (default No)."><input type="checkbox" id="mafftReorder"> Reorder by similarity</label>
+                                    <span class="al-kline">
+                                        <label title="Do not align. Only compute a k-mer guide-tree order (k set on the right). Realign All applies it to the whole MSA. Realign Block orders rows by the selected region and asks before applying (default No)."><input type="checkbox" id="mafftReorderOnly"> Reorder only (no alignment)</label>
+                                        <label class="al-k" title="k-mer length (3-12, default 6) of the similarity tree used by Reorder by similarity and Reorder only. The same setting as k in Clustering, Group by k-mer.">k <input type="number" id="mafftReorderK" min="3" max="12" value="6" step="1"></label>
+                                    </span>
+                                </div>
+                                <span class="al-head" title="Questions Realign Block asks; tick to stop asking and use the stored answer">Block prompts</span>
+                                <div class="al-checks">
+                                    <label title="Skip the Realign Block prompt about reverse-complementing full sequences (stored default: Yes). Uncheck to be asked each time."><input type="checkbox" id="mafftDontAskAdjust"> Don't ask (full-seq RC)</label>
+                                    <label title="Skip the Realign Block prompt about applying region order to the whole MSA (stored default: No). Uncheck to be asked each time."><input type="checkbox" id="mafftDontAskReorder"> Don't ask (apply order)</label>
+                                </div>
+                                <!-- Offset (-e) omitted: disttbfast treats -e as a boolean flag, not a value-taking option -->
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                <div class="menu-section ge-menu-off" id="groups-menu-section">

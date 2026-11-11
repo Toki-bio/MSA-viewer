@@ -1,0 +1,396 @@
+[script.js lines 4059-4453 of ViewAlign fd8b8e4]
+// Incrementally updates one already-rendered block's visible row window,
+// reusing existing row DOM nodes that remain in range instead of removing
+// and recreating everything. Returns true if it performed an incremental
+// update, false if it couldn't (caller should fall back to a full rebuild
+// of this block via _buildUnifiedBlock).
+// colWin ({ blockLen, start, charWidthPx }) is passed when the block is wider
+// than the viewport, so rows created here get the same padding offset as
+// _buildUnifiedBlock gives them.
+function _incrementalUpdateBlockRows(blockDiv, blockIndex, newRowStart, newRowEnd, rowHeightPx, colStart, colEnd, nameLen, stickyNames, standard, ambiguous, blackThresh, darkThresh, lightThresh, enableBlack, enableDark, enableLight, conservationData, isLastBlock, nSeq, colWin = null) {
+    const oldRange = _unifiedRenderedRowRanges.get(blockIndex);
+    if (!oldRange) return false;
+    const showLength = isLastBlock && (!colWin || colEnd >= colWin.start + colWin.blockLen - 1);
+
+    const rowSpacers = blockDiv.querySelectorAll(':scope > .unified-row-spacer');
+    if (rowSpacers.length !== 2) return false;
+    const [topRowSpacer, bottomRowSpacer] = rowSpacers;
+
+    // Build one Map from sequence index to existing row element during the
+    // existing initial querySelectorAll.
+    const existingRows = blockDiv.querySelectorAll(':scope > .seq-line[data-seq-index]');
+    const rowMap = new Map();
+    existingRows.forEach(rowEl => {
+        const idx = parseInt(rowEl.getAttribute('data-seq-index'), 10);
+        if (Number.isNaN(idx) || idx < 0) return; // leave consensus/other special rows alone
+        rowMap.set(idx, rowEl);
+    });
+
+    // Remove out-of-range rows and delete them from that Map. Also clean up their
+    // spanCache entries so forEachColumnSpan/updateColumnSelections never
+    // iterate a stale, detached row.
+    rowMap.forEach((rowEl, idx) => {
+        if (idx < newRowStart || idx > newRowEnd) {
+            state.spanCache?.delete(idx);
+            _removeCodonRows(rowEl);
+            rowEl.remove();
+            rowMap.delete(idx);
+        }
+    });
+
+    // Determine missing contiguous runs in [newRowStart, newRowEnd].
+    const missingRuns = [];
+    let runStart = -1;
+    for (let i = newRowStart; i <= newRowEnd; i++) {
+        if (!rowMap.has(i)) {
+            if (runStart < 0) runStart = i;
+        } else {
+            if (runStart >= 0) {
+                missingRuns.push([runStart, i - 1]);
+                runStart = -1;
+            }
+        }
+    }
+    if (runStart >= 0) missingRuns.push([runStart, newRowEnd]);
+
+    // Build each missing run in a detached DocumentFragment, with rows in
+    // ascending sequence-index order, and insert each fragment once before
+    // the first retained row with a greater index, or before bottomRowSpacer
+    // if there is none.
+    for (const [start, end] of missingRuns) {
+        const frag = document.createDocumentFragment();
+        for (let i = start; i <= end; i++) {
+            const lineDiv = createSequenceLine(i, colStart, colEnd + 1, nameLen, stickyNames, standard, ambiguous, blackThresh, darkThresh, lightThresh, enableBlack, enableDark, enableLight, showLength, conservationData);
+            if (colWin) {
+                const d = lineDiv.querySelector('.seq-data');
+                if (d) { _applyColumnWindowStyle(d, colWin.blockLen, colStart - colWin.start, colWin.charWidthPx); _noteRowColumnWindow(d, colStart, colEnd); }
+            }
+            frag.appendChild(lineDiv);
+            if (state._codonData) _appendCodonRows(lineDiv, i, colStart, colEnd + 1, colWin);
+        }
+        let insertBefore = bottomRowSpacer;
+        let nextGreaterIdx = Infinity;
+        rowMap.forEach((rowEl, idx) => {
+            if (idx > end && idx < nextGreaterIdx) {
+                nextGreaterIdx = idx;
+                insertBefore = rowEl;
+            }
+        });
+        blockDiv.insertBefore(frag, insertBefore);
+    }
+    // New rows carry the row and column selection (createSequenceLine), not the residue
+    // selection or the edit cursor: since the v230 row buffer, rows added a chunk per frame
+    // showed selected residues unselected once scrolled into view.
+    if (missingRuns.length) {
+        if (state.selectedNucs.size) scheduleNucSelectionRefresh();
+        if (state.editCell) updateEditActiveCell();
+    }
+
+    topRowSpacer.style.height = (newRowStart * rowHeightPx) + 'px';
+    bottomRowSpacer.style.height = (Math.max(0, nSeq - 1 - newRowEnd) * rowHeightPx) + 'px';
+
+    _unifiedRenderedRowRanges.set(blockIndex, { ...oldRange, rowStart: newRowStart, rowEnd: newRowEnd });
+    return true;
+}
+
+// Unified windowed render entry point for large ("crazy") alignments.
+// Full mode = blockWidth set to len (1 block); Block mode = blockWidth from
+// the slider (multiple blocks). Windows at three granularities: block-level
+// (which blocks are visible), row-level (which rows within each block), and
+// column-level (only when a block is wider than the viewport).
+function renderUnifiedWindowedDom(container, len, blockWidth, nameLen, stickyNames, standard, ambiguous, blackThresh, darkThresh, lightThresh, enableBlack, enableDark, enableLight, conservationData, shouldRenderConsensus, consensusPosition, consensus, options, preservedScrollTop, _isRetry, preservedScrollLeft) {
+    _unifiedWindowRenderParams = { len, blockWidth, nameLen, stickyNames, standard, ambiguous, blackThresh, darkThresh, lightThresh, enableBlack, enableDark, enableLight, conservationData, shouldRenderConsensus, consensusPosition, consensus, options };
+    const numBlocks = Math.max(1, Math.ceil(len / blockWidth));
+    // rowHeightPx falls back to a hardcoded 16px guess until a real row has been
+    // measured. That guess rarely matches the actual rendered row height (font
+    // stack/size dependent, seen as low as 13px), and this value gets baked into
+    // every block's bottom-row-spacer AND into blockHeightPx itself (measured
+    // from this same first, wrongly-sized block below) - the mismatch then
+    // compounds across every block's blockTop = blockIndex * blockHeightPx,
+    // drifting further with each block and eventually scrolling into an area
+    // with no real content (confirmed directly: a 621-seq/13px-row alignment
+    // measured blockHeightPx ~9771px from a first block whose true content
+    // only fills ~8100px, and by block 12 that ~1650px/block error compounded
+    // into a multi-thousand-pixel gap - scrolling to the bottom landed on
+    // blank space with the real rows rendered thousands of pixels off-screen).
+    // See the retry block below for the actual fix: rebuild once if the real
+    // measurement (taken after this pass) turns out to disagree.
+    const G = _unifiedGeometry(numBlocks, blockWidth, len);
+    const aaRowPxBefore = _unifiedAaRowPx;
+    const effectiveScrollTop = preservedScrollTop != null ? preservedScrollTop : container.scrollTop;
+    const effectiveScrollLeft = preservedScrollLeft != null ? preservedScrollLeft : container.scrollLeft;
+    const { charWidthPx, nameColWidthPx } = _measureUnifiedColumnMetrics(null);
+    const overscan = 1;
+    let blockStart = Math.max(0, G.indexAt(effectiveScrollTop) - overscan);
+    let blockEnd = Math.min(numBlocks - 1, G.indexAt(effectiveScrollTop + container.clientHeight) + overscan, blockStart + 20);
+    // Safety fallback: ensure at least one block is rendered
+    if (blockEnd < blockStart) {
+        blockStart = 0;
+        blockEnd = Math.min(numBlocks - 1, 0);
+    }
+
+    const headerHeightPx = _unifiedHeaderHeightPx != null ? _unifiedHeaderHeightPx : _measureUnifiedHeaderHeight(null);
+
+    const topSpacer = document.createElement('div');
+    topSpacer.className = 'unified-mode-spacer';
+    topSpacer.style.height = G.top(blockStart) + 'px';
+    container.appendChild(topSpacer);
+
+    let firstRealBlock = null;
+    for (let b = blockStart; b <= blockEnd; b++) {
+        const start = b * blockWidth;
+        const end = Math.min(start + blockWidth, len);
+        const blockDiv = _buildUnifiedBlock(b, start, end, len, G.blockH(b), G.rowH(b), effectiveScrollTop, container.clientHeight, effectiveScrollLeft, container.clientWidth, charWidthPx, nameColWidthPx, nameLen, stickyNames, standard, ambiguous, blackThresh, darkThresh, lightThresh, enableBlack, enableDark, enableLight, conservationData, shouldRenderConsensus, consensusPosition, consensus, options, headerHeightPx, G.top(b));
+        container.appendChild(blockDiv);
+        if (!firstRealBlock) firstRealBlock = blockDiv;
+    }
+
+    const bottomSpacer = document.createElement('div');
+    bottomSpacer.className = 'unified-mode-spacer';
+    bottomSpacer.style.height = Math.max(0, G.top(numBlocks) - G.top(blockEnd + 1)) + 'px';
+    container.appendChild(bottomSpacer);
+
+    // Measure from the first real block and its first real row
+    const rowHeightPx = G.rowH(blockStart);
+    let measuredRowHeightPx = rowHeightPx;
+    if (firstRealBlock) {
+        _measureUnifiedBlockHeight(firstRealBlock);
+        _measureUnifiedAaRow(firstRealBlock, blockStart, blockWidth, len);
+        _measureUnifiedHeaderHeight(firstRealBlock);
+        // A real sequence row, not the top consensus line (also .seq-line[data-seq-index],
+        // with index -1): the consensus has no translation row under it, so measuring it
+        // gave the bare row height while every sequence row was row + translation
+        const firstRow = firstRealBlock.querySelector('.seq-line[data-seq-index]:not([data-seq-index="-1"])');
+        if (firstRow) {
+            measuredRowHeightPx = _measureUnifiedRowHeight(firstRow);
+            _measureUnifiedColumnMetrics(firstRow);
+        }
+    }
+
+    // Self-correct: if the row height actually measured from real, rendered
+    // content disagrees with the (possibly-fallback) value this pass used to
+    // build every block's internal spacer math and blockHeightPx itself,
+    // rebuild once now with the corrected value - before the user ever sees
+    // the drifted layout - rather than letting every block after the first
+    // silently accumulate the error (see the comment above rowHeightPx).
+    // The _isRetry guard makes this at most one extra pass: the second call
+    // always measures the same real DOM it just built, so it can't disagree
+    // with itself.
+    // Blocks of different translation lane counts were placed with a guessed
+    // translation row height until one was measured: rebuild with it too.
+    const aaGuessed = aaRowPxBefore == null && _unifiedAaRowPx != null && !!state._codonData?.byGene && numBlocks > 1;
+    if (!_isRetry && (Math.abs(measuredRowHeightPx - rowHeightPx) > 0.5 || aaGuessed)) {
+        container.innerHTML = '';
+        // blockHeightPx was measured from this pass's wrongly-sized block (built
+        // with the stale rowHeightPx) - reset it too, so the retry derives a
+        // fresh fallback from the now-correct row height instead of reusing a
+        // blockHeightPx that's just as poisoned as the row height was.
+        _unifiedBlockHeightPx = null;
+        return renderUnifiedWindowedDom(container, len, blockWidth, nameLen, stickyNames, standard, ambiguous, blackThresh, darkThresh, lightThresh, enableBlack, enableDark, enableLight, conservationData, shouldRenderConsensus, consensusPosition, consensus, options, preservedScrollTop, true, preservedScrollLeft);
+    }
+
+    // Restore scroll position (same suppress dance as the existing functions)
+    const restoreTop = preservedScrollTop != null && container.scrollTop !== preservedScrollTop;
+    const restoreLeft = preservedScrollLeft != null && container.scrollLeft !== preservedScrollLeft;
+    if (restoreTop || restoreLeft) {
+        _unifiedScrollController.suppressNextEvent();
+        if (restoreLeft) container.scrollLeft = preservedScrollLeft;
+        if (restoreTop) container.scrollTop = preservedScrollTop;
+    }
+    // The blocks hold their on-screen rows; queue their row buffers.
+    _cancelAllBlockJobs();
+    const Gm = _unifiedGeometry(numBlocks, blockWidth, len);
+    container.querySelectorAll(':scope > .block-block[data-block-index]').forEach(blockDiv => {
+        const b = parseInt(blockDiv.getAttribute('data-block-index'), 10);
+        if (Number.isNaN(b)) return;
+        const start = b * blockWidth, end = Math.min(start + blockWidth, len);
+        _scheduleBuiltBlockGrowth(blockDiv, b, start, end, Gm.rowH(b), _unifiedCharWidthPx || charWidthPx, _unifiedWindowRenderParams, state.seqs.length);
+    });
+    _setupUnifiedScrollListener(container);
+}
+
+// Lightweight scroll-driven update: rebuilds only visible blocks (each with
+// row windowing inside), without clearing/rebuilding anything outside the
+// spacers and without renderAlignment()'s side effects. Falls back to a
+// full renderAlignment() if the DOM doesn't look like what this function
+// expects (e.g. an in-between mode switch).
+function _refreshUnifiedWindowOnScroll(container) {
+    const p = _unifiedWindowRenderParams;
+    if (!p) { renderAlignment({ deferConservation: true }); return; }
+    const spacers = [...container.querySelectorAll(':scope > .unified-mode-spacer')];
+    if (spacers.length !== 2) { renderAlignment({ deferConservation: true }); return; }
+    const [topSpacer, bottomSpacer] = spacers;
+
+    const numBlocks = Math.max(1, Math.ceil(p.len / p.blockWidth));
+    const G = _unifiedGeometry(numBlocks, p.blockWidth, p.len);
+    const { charWidthPx, nameColWidthPx } = _measureUnifiedColumnMetrics(null);
+    const overscan = 1;
+    // Captured once, before any DOM mutation below - same reasoning as before
+    // this function stopped clearing the container outright: reading these
+    // live mid-mutation is not reliable (confirmed directly in an earlier
+    // version of this function: scrollTop read 20000 immediately after being
+    // set, but 0 by the time a rebuilt block read it post-removal, because
+    // removing the old content momentarily collapses the container's
+    // scrollable height and the browser clamps scrollTop to fit).
+    const effectiveScrollTop = container.scrollTop;
+    const effectiveClientHeight = container.clientHeight;
+    const effectiveScrollLeft = container.scrollLeft;
+    const effectiveClientWidth = container.clientWidth;
+    let blockStart = Math.max(0, G.indexAt(effectiveScrollTop) - overscan);
+    let blockEnd = Math.min(numBlocks - 1, G.indexAt(effectiveScrollTop + effectiveClientHeight) + overscan, blockStart + 20);
+    // Safety fallback: ensure at least one block is rendered
+    if (blockEnd < blockStart) {
+        blockStart = 0;
+        blockEnd = Math.min(numBlocks - 1, 0);
+    }
+
+    // Use the cached header height as-is (no re-measure here, same reasoning
+    // as skipping the row/block re-measure below) - it was already measured
+    // from a real attached block during the initial render.
+    const headerHeightPx = _unifiedHeaderHeightPx != null ? _unifiedHeaderHeightPx : _measureUnifiedHeaderHeight(null);
+    const nSeq = state.seqs.length;
+
+    // Per block, in order of preference:
+    //  1. nothing - the viewport is still inside the rendered window with a
+    //     guard to spare on both axes (most scroll frames end here);
+    //  2. patch in place - the column window is re-centred on the existing
+    //     rows (_patchBlockColumnWindow) and/or rows are added/removed at the
+    //     ends (_incrementalUpdateBlockRows); names and untouched spans stay;
+    //  3. full build - the block is not in the DOM yet (or has no window
+    //     record), built and inserted before any old copy is removed.
+    // History: the first version rebuilt every visible block on every scroll
+    // (250-450 ms/step on a 621 x 1928 alignment); the second patched rows
+    // but still replaced the whole block whenever the column window moved,
+    // which in Full mode is every horizontal scroll frame (213 ms/step,
+    // every frame over 100 ms, on 62 x 16,808).
+    const existingBlocksByIndex = new Map();
+    container.querySelectorAll(':scope > .block-block[data-block-index]').forEach(el => {
+        const idx = parseInt(el.getAttribute('data-block-index'), 10);
+        if (!Number.isNaN(idx)) existingBlocksByIndex.set(idx, el);
+    });
+
+    const keptIndices = new Set();
+    let changed = false;
+    const visibleDataWidth = Math.max(0, effectiveClientWidth - nameColWidthPx);
+    const visibleCols = Math.max(1, Math.ceil(visibleDataWidth / Math.max(1, charWidthPx)));
+    for (let b = blockStart; b <= blockEnd; b++) {
+        const start = b * p.blockWidth;
+        const end = Math.min(start + p.blockWidth, p.len);
+        const blockLen = end - start;
+        const isLastBlock = end >= p.len;
+        const existingBlockDiv = existingBlocksByIndex.get(b);
+        const rowHeightPx = G.rowH(b), blockHeightPx = G.blockH(b);
+
+        // Same window arithmetic as _buildUnifiedBlock: what is on screen, and
+        // the buffer/guard sizes for this alignment.
+        const vis = _unifiedVisibleRows(G.top(b), blockHeightPx, headerHeightPx, rowHeightPx, effectiveScrollTop, effectiveClientHeight, nSeq);
+        const budget = _unifiedWindowBudget(vis.visibleRows, visibleCols, nSeq, blockLen);
+        const cw = _computeBlockColumnWindow(start, end, effectiveScrollLeft, visibleDataWidth, charWidthPx, budget.bufferCols);
+        const colWin = cw.needsColWindow ? { blockLen, start, charWidthPx } : null;
+
+        const oldRange = _unifiedRenderedRowRanges.get(b);
+        let handledIncrementally = false;
+        if (existingBlockDiv && oldRange && oldRange.colStart != null) {
+            // Hysteresis: nothing to do while the viewport stays at least a
+            // guard distance inside the rendered window on both axes.
+            const rowsOk = _rangeWithinGuard(oldRange.rowStart, oldRange.rowEnd, vis.s, vis.e, budget.guardRows, 0, Math.max(0, nSeq - 1));
+            const colsOk = !cw.needsColWindow || _rangeWithinGuard(oldRange.colStart, oldRange.colEnd, cw.visStart, cw.visEnd, budget.guardCols, start, end - 1);
+            if (rowsOk && colsOk) {
+                keptIndices.add(b);
+                continue;
+            }
+            let curColStart = oldRange.colStart, curColEnd = oldRange.colEnd;
+            if (!colsOk) {
+                // Re-centre the column window on the rows that exist, in place.
+                // The record is updated first so a row-growth job in flight
+                // sees its window superseded and stops.
+                _unifiedRenderedRowRanges.set(b, { ...oldRange, colStart: cw.colStart, colEnd: cw.colEnd });
+                _patchBlockColumnWindow(existingBlockDiv, b, start, end, curColStart, curColEnd, cw.colStart, cw.colEnd, charWidthPx, p, isLastBlock);
+                curColStart = cw.colStart; curColEnd = cw.colEnd;
+                changed = true;
+                handledIncrementally = true;
+            }
+            if (!rowsOk) {
+                const rowStart = Math.max(0, vis.s - budget.bufferRows);
+                const rowEnd = Math.min(Math.max(0, nSeq - 1), vis.e + budget.bufferRows);
+                handledIncrementally = _growBlockRows(existingBlockDiv, b, rowStart, rowEnd, vis.s, vis.e, rowHeightPx, curColStart, curColEnd, p, isLastBlock, nSeq, colWin);
+                if (handledIncrementally) changed = true;
+            }
+        }
+
+        if (!handledIncrementally) {
+            changed = true;
+            // Full rebuild for this one block: build and insert the replacement
+            // BEFORE removing the old one, so the container never has a gap
+            // where this block's columns/width are momentarily absent. This
+            // matters most in Full mode (a single block spanning the whole
+            // alignment width) - removing the sole block first, then building
+            // its replacement, briefly collapses the container's real
+            // scrollWidth, and the browser clamps alignmentContainer.scrollLeft
+            // to fit the (temporarily near-empty) content - exactly the same
+            // class of bug already documented and fixed for vertical scrollTop
+            // elsewhere in this file, but for horizontal scrollLeft: dragging
+            // the horizontal scrollbar right (which changes colStart/colEnd,
+            // forcing this exact full-rebuild path since the incremental path
+            // requires an unchanged column window) snapped back to the
+            // leftmost position on the first attempt, then worked on a second
+            // attempt - because by then this block's cached colStart/colEnd
+            // already matched the target position and the incremental path
+            // (which never removes anything) applied instead.
+            // (_buildUnifiedBlock records the block's rendered row/column window:
+            // the rows on screen; the buffer rows follow a chunk per frame.)
+            _cancelBlockJob(b);
+            const blockDiv = _buildUnifiedBlock(b, start, end, p.len, blockHeightPx, rowHeightPx, effectiveScrollTop, effectiveClientHeight, effectiveScrollLeft, effectiveClientWidth, charWidthPx, nameColWidthPx, p.nameLen, p.stickyNames, p.standard, p.ambiguous, p.blackThresh, p.darkThresh, p.lightThresh, p.enableBlack, p.enableDark, p.enableLight, p.conservationData, p.shouldRenderConsensus, p.consensusPosition, p.consensus, p.options, headerHeightPx, G.top(b));
+            _scheduleBuiltBlockGrowth(blockDiv, b, start, end, rowHeightPx, charWidthPx, p, nSeq);
+            if (existingBlockDiv) {
+                container.insertBefore(blockDiv, existingBlockDiv);
+                // Drop the old block's rows' spanCache entries, then remove it
+                // now that its replacement is already in place.
+                existingBlockDiv.querySelectorAll(':scope > .seq-line[data-seq-index]').forEach(rowEl => {
+                    const idx = parseInt(rowEl.getAttribute('data-seq-index'), 10);
+                    if (!Number.isNaN(idx) && idx >= 0) state.spanCache?.delete(idx);
+                });
+                existingBlockDiv.remove();
+            } else {
+                // No previous block at this index - keep DOM order ascending
+                // by block index: insert before the first remaining block
+                // whose index is greater, else right before bottomSpacer.
+                let insertBefore = bottomSpacer;
+                for (const [idx, el] of existingBlocksByIndex) {
+                    if (idx > b && el.isConnected) { insertBefore = el; break; }
+                }
+                container.insertBefore(blockDiv, insertBefore);
+            }
+            existingBlocksByIndex.set(b, blockDiv);
+        }
+        keptIndices.add(b);
+    }
+
+    // Remove any block that scrolled entirely out of the visible block range.
+    existingBlocksByIndex.forEach((el, idx) => {
+        if (!keptIndices.has(idx)) {
+            el.querySelectorAll(':scope > .seq-line[data-seq-index]').forEach(rowEl => {
+                const rIdx = parseInt(rowEl.getAttribute('data-seq-index'), 10);
+                if (!Number.isNaN(rIdx) && rIdx >= 0) state.spanCache?.delete(rIdx);
+            });
+            el.remove();
+            _unifiedRenderedRowRanges.delete(idx);
+            _cancelBlockJob(idx);
+            changed = true;
+        }
+    });
+
+    // Most scroll frames end here with the DOM untouched (see the hysteresis
+    // note above _unifiedWindowBudget); only touch spacers and selection
+    // classes when something was actually rebuilt.
+    if (!changed) return;
+    _scheduleBlockMaskOverlay();
+    const topH = G.top(blockStart) + 'px';
+    const bottomH = Math.max(0, G.top(numBlocks) - G.top(blockEnd + 1)) + 'px';
+    if (topSpacer.style.height !== topH) topSpacer.style.height = topH;
+    if (bottomSpacer.style.height !== bottomH) bottomSpacer.style.height = bottomH;
+    // Don't re-measure here — it forces a synchronous layout of everything just
+    // inserted, for no benefit on the hot scroll path.
+    _syncSelectionDomFromState();
+}
+

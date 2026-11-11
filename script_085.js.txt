@@ -1,0 +1,364 @@
+[script.js lines 36965-37327 of ViewAlign fd8b8e4]
+function _initDotPlotEvents() {
+    const setSb = () => document.documentElement.style.setProperty('--dot-sb', _dotScrollbarPx() + 'px');   // #dotPlotAlignPanel keeps one height
+    setSb();
+    window.addEventListener('resize', () => { _dotSbPx = -1; setSb(); });   // a browser zoom changes the scrollbar's CSS height (GLM audit)
+    const overlay = document.getElementById('dotPlotOverlay');
+    const threshSlider = document.getElementById('dotPlotThreshold');
+    const threshVal = document.getElementById('dotPlotThreshVal');
+    const recalcBtn = document.getElementById('dotPlotRecalc');
+    const exportBtn = document.getElementById('dotPlotExport');
+    const closeBtn = document.getElementById('dotPlotCloseBtn');
+    const viewport = document.getElementById('dotPlotViewport');
+
+    if (overlay) {
+        let hoverRaf = 0;
+        overlay.addEventListener('mousemove', (e) => {
+            const S = _dotPlotState;
+            if ((!S.scores && !S.matchMap) || S._frozen || hoverRaf) return;
+            hoverRaf = requestAnimationFrame(() => {
+                hoverRaf = 0;
+                const cell = _dotEventToCell(e);
+                if (!cell) {
+                    _dotClearHoverInfo();
+                    return;
+                }
+                if (cell.row === S.lastRow && cell.col === S.lastCol) return;
+                S.lastRow = cell.row; S.lastCol = cell.col;
+                try { _dotDrawOverlay(cell.row, cell.col); } catch (err) { console.error('_dotDrawOverlay:', err); }
+                try { _dotUpdateHoverInfo(cell.row, cell.col); } catch (err) { console.error('_dotUpdateHoverInfo:', err); }
+            });
+        });
+        overlay.addEventListener('mouseleave', () => {
+            if (hoverRaf) { cancelAnimationFrame(hoverRaf); hoverRaf = 0; }
+            const S = _dotPlotState;
+            if (S._frozen) return;
+            _dotClearOverlay();
+            S.lastRow = S.lastCol = -1;
+            _dotClearHoverInfo();
+            // Redraw pinned marker if present
+            if (S.pinnedRow >= 0) _dotDrawOverlay(S.pinnedRow, S.pinnedCol);
+        });
+        // Drag to pan the plot (the wheel zooms); a press that moved more than a few pixels is not a click
+        let pan = null, panned = false;
+        let markerDrag = false;
+        overlay.addEventListener('mousedown', (e) => {
+            if (e.button !== 0 || !viewport) return;
+            const S = _dotPlotState;
+            if (S.slideRow >= 0 && (S.scores || S.matchMap)) {
+                const r = overlay.getBoundingClientRect(), m = _dotCellToScreen(S.slideRow, S.slideCol);
+                if (e.shiftKey || Math.hypot(e.clientX - r.left - m.x, e.clientY - r.top - m.y) <= 10) {
+                    markerDrag = true; e.preventDefault();   // drags the position marker, not the plot
+                    const cell = _dotEventToCell(e); if (cell) _dotSetSlide(cell.row, cell.col, { noScroll: true });
+                    return;
+                }
+            } else if (e.shiftKey && (S.scores || S.matchMap)) {
+                markerDrag = true; e.preventDefault();
+                const cell = _dotEventToCell(e); if (cell) _dotSetSlide(cell.row, cell.col, { noScroll: true });
+                return;
+            }
+            pan = { x: e.clientX, y: e.clientY, sl: viewport.scrollLeft, st: viewport.scrollTop, moved: false };
+            panned = false;
+        });
+        window.addEventListener('mousemove', (e) => {
+            if (markerDrag) {
+                if (!(e.buttons & 1)) { markerDrag = false; return; }
+                const cell = _dotEventToCell(e); if (cell) _dotSetSlide(cell.row, cell.col, { noScroll: true });
+                return;
+            }
+            if (!pan) return;
+            if (!(e.buttons & 1)) { pan = null; overlay.style.cursor = ''; return; }   // released outside the window
+            const dx = e.clientX - pan.x, dy = e.clientY - pan.y;
+            if (!pan.moved && Math.hypot(dx, dy) < 4) return;
+            pan.moved = true;
+            overlay.style.cursor = 'grabbing';
+            viewport.scrollLeft = pan.sl - dx;
+            viewport.scrollTop = pan.st - dy;
+        });
+        window.addEventListener('mouseup', () => {
+            if (markerDrag) { markerDrag = false; panned = true; return; }   // the click that ends a marker drag is not a pin
+            if (!pan) return;
+            panned = pan.moved;
+            pan = null;
+            overlay.style.cursor = '';
+        });
+        // Right-click: what to do with the highlighted (green) stretch under the pointer
+        overlay.addEventListener('contextmenu', (e) => {
+            const S = _dotPlotState;
+            if (!S.scores && !S.matchMap) return;
+            const cell = _dotEventToCell(e);
+            const r = cell && _dotStretchAt(cell.row, cell.col);
+            if (!r) return;   // not on a dot: the browser's own menu
+            e.preventDefault();
+            _dotStretchMenu(e, r);
+        });
+        // Click to pin a coordinate for region copying
+        overlay.addEventListener('click', (e) => {
+            const S = _dotPlotState;
+            if (panned) { panned = false; return; }   // the end of a drag
+            if ((!S.scores && !S.matchMap) || S._frozen) return;
+            const cell = _dotEventToCell(e);
+            if (!cell) return;
+            S.pinnedRow = cell.row; S.pinnedCol = cell.col;
+            _dotSetSlide(cell.row, cell.col, { noScroll: true });   // the sliders follow a click (Staden-style)
+            _dotDrawOverlay(cell.row, cell.col);
+            _dotUpdateHoverInfo(cell.row, cell.col);
+            showMessage(`Pinned: A${_dotShownA(cell.row)} / B${_dotShownB(cell.col)}. Click "Copy Region" to copy FASTA.`, 2500);
+        });
+        overlay.addEventListener('dblclick', (e) => {
+            const S = _dotPlotState;
+            if ((!S.scores && !S.matchMap)) return;
+            e.preventDefault();
+            const cell = _dotEventToCell(e);
+            if (!cell) return;
+            const { row, col } = cell;
+            if (S._frozen) {
+                _dotUnfreeze();
+                S.lastRow = row;
+                S.lastCol = col;
+                _dotUpdateHoverInfo(row, col, { force: true });
+                showMessage('Unfrozen.', 1500);
+            } else {
+                S.pinnedRow = row;
+                S.pinnedCol = col;
+                S._frozen = true;
+                S._frozenRow = row;
+                S._frozenCol = col;
+                S.lastRow = row;
+                S.lastCol = col;
+                _dotUpdateHoverInfo(row, col, { force: true });
+                _dotDrawOverlay(row, col);
+                const bar = document.getElementById('dotPlotSpinScroll');
+                if (bar) bar.style.visibility = 'visible';
+                showMessage('FROZEN - double-click to unfreeze.', 3000);
+            }
+        });
+        _dotBindPlotWheel(viewport);
+        _dotBindPlotWheel(overlay);
+        const dotModal = document.getElementById('dotPlotModal');
+        const dotDialog = document.getElementById('dotPlotDialog');
+        // Bubble phase (not capture): this only needs to stop a wheel event
+        // from reaching the page body behind the modal (scroll-through), and
+        // must run AFTER the viewport/overlay's own wheel handler has already
+        // had a chance to zoom - a capture-phase listener here fires on this
+        // ANCESTOR before the event ever reaches the overlay, and
+        // stopPropagation() during capture halts the entire remaining
+        // journey (including the target/bubble phases), so the overlay's
+        // wheel zoom handler (Ctrl+wheel when this was written; a plain wheel
+        // since 2026-10-28) was being silently killed before it could ever run.
+        [dotModal, dotDialog].forEach((el) => {
+            if (!el || el._dotWheelBound) return;
+            el._dotWheelBound = true;
+            el.addEventListener('wheel', (e) => { e.stopPropagation(); }, { passive: false });
+        });
+    }
+    // Only the visible part is drawn, so scrolling and resizing redraw
+    if (viewport) {
+        let raf = 0;
+        const redraw = (e) => {
+            if (raf) return;
+            raf = requestAnimationFrame(() => {
+                raf = 0;
+                const S = _dotPlotState;
+                if (S._autoFit && e && e.type !== 'scroll') _dotFitView(); else _dotRender();
+                if (S.lastRow >= 0) _dotDrawOverlay(S.lastRow, S.lastCol);
+                else if (S.pinnedRow >= 0) _dotDrawOverlay(S.pinnedRow, S.pinnedCol);
+                else _dotClearOverlay();
+            });
+        };
+        viewport.addEventListener('scroll', redraw, { passive: true });
+        if (typeof ResizeObserver === 'function') new ResizeObserver(redraw).observe(viewport);
+    }
+    // A threshold redraw rebuilds the whole image: at most one per frame while dragging
+    const perFrame = (fn) => { let f = 0; return () => { if (!f) f = requestAnimationFrame(() => { f = 0; fn(); }); }; };
+    if (threshSlider) {
+        _dotOnModeChange();
+        threshSlider.addEventListener('input', perFrame(() => {
+            const v = parseInt(threshSlider.value);
+            if (threshVal) threshVal.textContent = v + '%';
+            const S = _dotPlotState;
+            if (!_dotLive()) { _dotMarkDirty(true); return; }
+            S.threshold = v / 100;
+            if (!S.spinMode && S.scores) {
+                _dotBuildImage();
+                _dotRender();
+                _dotDetectRegions();
+                if (S.lastRow >= 0) {
+                    _dotDrawOverlay(S.lastRow, S.lastCol);
+                    _dotUpdateHoverInfo(S.lastRow, S.lastCol);
+                }
+            }
+        }));
+    }
+    const ctxInput = document.getElementById('dotPlotContextRadius');
+    if (ctxInput) {
+        ctxInput.addEventListener('input', () => {
+            const S = _dotPlotState;
+            if (S.lastRow >= 0 && S.lastCol >= 0) {
+                _dotUpdateHoverInfo(S.lastRow, S.lastCol, { force: S._frozen });
+            }
+        });
+    }
+    const zoomInBtn = document.getElementById('dotPlotZoomIn');
+    const zoomOutBtn = document.getElementById('dotPlotZoomOut');
+    if (zoomInBtn) zoomInBtn.addEventListener('click', () => _dotApplyZoom(1.15));
+    if (zoomOutBtn) zoomOutBtn.addEventListener('click', () => _dotApplyZoom(1 / 1.15));
+    if (recalcBtn) recalcBtn.addEventListener('click', _dotRecalculate);
+    // Settings that need a new calculation: recalculate after a short pause while Live
+    // update is on; otherwise mark Recalculate so the user knows the plot is out of date.
+    const liveBox = document.getElementById('dotPlotLive');
+    const onSettingChange = () => {
+        if (!_dotLive()) { _dotMarkDirty(true); return; }
+        clearTimeout(_dotLiveTimer);
+        _dotLiveTimer = setTimeout(_dotRecalculate, 350);
+    };
+    const readout = (inId, outId) => () => { const o = document.getElementById(outId), i = document.getElementById(inId); if (o && i) o.textContent = i.value; };
+    document.getElementById('dotPlotWindow')?.addEventListener('input', readout('dotPlotWindow', 'dotPlotWindowVal'));
+    document.getElementById('dotPlotWindowLower')?.addEventListener('input', readout('dotPlotWindowLower', 'dotPlotWindowValLower'));
+    document.getElementById('dotPlotWindow')?.addEventListener('input', onSettingChange);
+    // Split halves: the controls above apply above the diagonal, the lower row below it
+    const splitBox = document.getElementById('dotPlotSplit');
+    const lowerCtl = document.getElementById('dotPlotLowerCtl');
+    const upperLabel = document.getElementById('dotPlotUpperLabel');
+    const splitLook = () => {
+        if (lowerCtl) lowerCtl.hidden = !splitBox.checked;
+        if (upperLabel) upperLabel.textContent = splitBox.checked ? 'Upper half:' : 'Mode:';
+        if (splitBox.checked && !splitBox._lowerChosen) {
+            splitBox._lowerChosen = true;   // later ticks keep the method chosen below the diagonal
+            // start with the other method below the diagonal
+            const upperSpin = document.querySelector('input[name="dotPlotMode"][value="spin"]')?.checked;
+            const other = document.querySelector(`input[name="dotPlotModeLower"][value="${upperSpin ? 'doter' : 'spin'}"]`);
+            if (other) other.checked = true;
+            _dotOnLowerModeChange();
+        }
+    };
+    if (splitBox) {
+        splitBox.addEventListener('change', () => { splitLook(); onSettingChange(); });
+        splitLook();   // on by default (owner 2026-10-28): a self-plot shows the other method below the diagonal
+    }
+    document.querySelectorAll('input[name="dotPlotModeLower"]').forEach(r => r.addEventListener('change', () => { _dotOnLowerModeChange(); onSettingChange(); }));
+    document.getElementById('dotPlotWindowLower')?.addEventListener('input', onSettingChange);
+    const lowerThresh = document.getElementById('dotPlotThresholdLower');
+    if (lowerThresh) lowerThresh.addEventListener('input', perFrame(() => {
+        const v = parseInt(lowerThresh.value, 10);
+        const lv = document.getElementById('dotPlotThreshValLower');
+        if (lv) lv.textContent = v + '%';
+        const S = _dotPlotState;
+        if (!_dotLive()) { _dotMarkDirty(true); return; }
+        if (S.lower && S.lower.ready && !S.lower.spinMode) {
+            S.lower.threshold = v / 100;     // a threshold only re-draws, no new calculation
+            _dotBuildImage();
+            _dotRender();
+            if (S.lastRow >= 0) _dotDrawOverlay(S.lastRow, S.lastCol);
+        } else onSettingChange();
+    }));
+    document.getElementById('dotPlotRevComp')?.addEventListener('change', onSettingChange);
+    document.querySelectorAll('input[name="dotPlotMode"]').forEach(r => r.addEventListener('change', onSettingChange));
+    if (liveBox) liveBox.addEventListener('change', () => { if (liveBox.checked && recalcBtn?.classList.contains('dot-dirty')) _dotRecalculate(); });
+    const fullBtn = document.getElementById('dotPlotFullView');
+    if (fullBtn) fullBtn.addEventListener('click', () => {
+        const S = _dotPlotState;
+        S._autoFit = true;
+        _dotFitView();
+        if (S.lastRow >= 0) _dotDrawOverlay(S.lastRow, S.lastCol);
+        else if (S.pinnedRow >= 0) _dotDrawOverlay(S.pinnedRow, S.pinnedCol);
+        else _dotClearOverlay();
+    });
+    if (exportBtn) exportBtn.addEventListener('click', _dotExportPng);
+    const copyBtn = document.getElementById('dotPlotCopyRegion');
+    if (copyBtn) {
+        copyBtn.addEventListener('click', () => {
+            const S = _dotPlotState;
+            const region = S._copyRegion;
+            if (!region && S.pinnedRow < 0) {
+                showMessage('Hover over or click the dot plot first to select a region.', 3000);
+                return;
+            }
+            let fasta;
+            if (region) {
+                fasta = `>${_dotFastaName('A', region.aStart, region.aStart + region.aSlice.length)}\n${region.aSlice}\n` +
+                        `>${_dotFastaName('B', region.bStart, region.bStart + region.bSlice.length)}\n${region.bSlice}`;
+            } else {
+                // Pinned position only: walk the diagonal to the extent of the match
+                let rBack = S.pinnedRow, cBack = S.pinnedCol;
+                while (rBack >= 0 && cBack >= 0 && _dotIsDot(rBack, cBack)) { rBack--; cBack--; }
+                rBack++; cBack++;
+                let rFwd = S.pinnedRow + 1, cFwd = S.pinnedCol + 1;
+                while (rFwd < S.rows && cFwd < S.cols && _dotIsDot(rFwd, cFwd)) { rFwd++; cFwd++; }
+                const context = parseInt(document.getElementById('dotPlotContextRadius')?.value) || 30;
+                const matchLen = rFwd - rBack;
+                const maxSlice = matchLen + 2 * context;
+                const aStart = Math.max(0, rBack - context);
+                const bStart = Math.max(0, cBack - context);
+                const sliceLen = Math.min(maxSlice, S.seqA.length - aStart, S.seqB.length - bStart);
+                const aSlice = S.seqA.slice(aStart, aStart + sliceLen);
+                const bSlice = S.seqB.slice(bStart, bStart + sliceLen);
+                fasta = `>${_dotFastaName('A', aStart, aStart + sliceLen)}\n${aSlice}\n` +
+                        `>${_dotFastaName('B', bStart, bStart + sliceLen)}\n${bSlice}`;
+            }
+            const len = fasta.split('\n')[1]?.length || 0;
+            navigator.clipboard.writeText(fasta).then(() => {
+                showMessage(`Copied ${len}bp region as FASTA!`, 2000);
+            }).catch(() => showMessage('Copy failed.', 2000));
+        });
+    }
+    const svgBtn = document.getElementById('dotPlotExportSvg');
+    if (svgBtn) svgBtn.addEventListener('click', _dotExportSvg);
+    if (closeBtn) {
+        closeBtn.addEventListener('click', () => {
+            const modal = document.getElementById('dotPlotModal');
+            if (modal) modal.style.display = 'none';
+            clearTimeout(_dotLiveTimer);
+            _dotClearRegionMarks();
+            _dotDock(false);
+        });
+    }
+    document.getElementById('dotPlotClearMarksBtn')?.addEventListener('click', () => _dotClearRegionMarks(true));
+    _dotInitStripEvents(); _dotInitLookEvents(); _dotInitRangeEvents();
+    _dotLoadBookmarks(); _dotRenderBookmarks();
+    document.getElementById('dotPlotBookmarkClearBtn')?.addEventListener('click', _dotClearBookmarks);
+    document.getElementById('dotPlotBookmarkTsvBtn')?.addEventListener('click', () => {
+        if (!state.dotBookmarks?.length) return;
+        navigator.clipboard.writeText(_dotBookmarksTsv()).then(() => showMessage(`Collection copied (${state.dotBookmarks.length} entries, tab-separated).`, 2500)).catch(() => showMessage('Could not copy.', 2000));
+    });
+
+    // Local help inside the dot plot modal
+    const helpBtn = document.getElementById('dotPlotHelpBtn');
+    const helpDiv = document.getElementById('dotPlotHelp');
+    if (helpBtn && helpDiv) {
+        helpBtn.addEventListener('click', () => {
+            helpDiv.style.display = (helpDiv.style.display === 'block') ? 'none' : 'block';
+        });
+    }
+
+    // Mode radio buttons
+    document.querySelectorAll('input[name="dotPlotMode"]').forEach(r => {
+        r.addEventListener('change', _dotOnModeChange);
+    });
+
+    // Window frame: move by the title bar, resize from any edge or corner, maximize
+    // (button or double-click on the title bar); the plot follows through the viewport's
+    // ResizeObserver
+    const dlg = document.getElementById('dotPlotDialog');
+    const bar = document.getElementById('dotPlotTitleBar');
+    if (dlg && bar) _initWindowFrame(dlg, bar, document.getElementById('dotPlotMaxBtn'), { minW: 560, minH: 420 });
+}
+
+// ============================================================================
+// REPEAT FINDER (Direct, Inverted, Tandem) & TSD FINDER
+// ============================================================================
+
+let _repeatFinderSeqIndex = -1;
+// Repeat highlighting state
+state.repeatHighlights = state.repeatHighlights || new Map(); // repeatId ("mode-index") => {segs: [[startCol, endCol), ...], row, color, anchor?} (_repeatInfoFromRow)
+let _repeatFinderSeqObj = null;   // the sequence chosen under "One sequence" (the row index alone went stale when rows moved)
+let _repeatFinderListObjs = [];   // the sequence of each entry in the list, as it was built
+let _lastRepeatResults = [];
+let _lastRepeatView = null;   // mode, label and length the results were made with
+let _lastTsdResults = [];
+// What #repeatResults shows: a repeat mode's table, 'tsd', or null (a message). Reopening the panel keeps the table
+// when it is of the mode the panel opens in (a table left under another mode's controls by a mode switch is not kept;
+// GLM db2 #15) and, for One sequence, of the sequence it opens on.
+let _repeatResultsShown = null;
+const _repeatColorPalette = ["#ff6b6b","#ffa94d","#ffd43b","#69db7c","#4dabf7","#da77f2","#20c997","#ff8787","#74c0fc","#f783ac","#ffe066","#63e6be","#a9e34b","#e599f7","#66d9e8","#fcc419","#94d82d","#ff922b","#be4bdb","#339af0"];
+

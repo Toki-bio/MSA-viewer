@@ -1,0 +1,502 @@
+[script.js lines 2764-3264 of ViewAlign fd8b8e4]
+function showExclusiveModal(id) {
+    EXCLUSIVE_MODAL_IDS.forEach(modalId => {
+        if (modalId === id) return;
+        const modal = el(modalId);
+        if (!modal) return;
+        // the dot plot's marks and click-through backdrop live with its window (GLM audit, v278)
+        if (modalId === 'dotPlotModal' && modal.style.display !== 'none' && typeof _dotClearRegionMarks === 'function') _dotClearRegionMarks();
+        // so does the Repeat Finder's faint TSD preview: it stayed on the rows when another window closed it (GLM db2 #6)
+        if (modalId === 'repeatFinderModal' && modal.style.display !== 'none' && typeof _hideTsdPreviewWithWindow === 'function') _hideTsdPreviewWithWindow();
+        // and a running repeat search: it would paint into a closed window
+        if (modalId === 'repeatFinderModal' && modal.style.display !== 'none' && typeof _abortRepeatJob === 'function') _abortRepeatJob('The search was cancelled when the window closed.');
+        modal.style.display = 'none';
+    });
+    const modal = el(id);
+    if (modal) modal.style.display = 'block';
+    return modal;
+}
+
+// SSH mini-console helpers
+let _sshConsoleCloseTimer = null;
+function _sshOpen(title) {
+    const cons = document.getElementById('sshConsole');
+    const body = document.getElementById('sshConsoleBody');
+    const titleEl = document.getElementById('sshConsoleTitle');
+    if (!cons) return;
+    if (_sshConsoleCloseTimer) { clearTimeout(_sshConsoleCloseTimer); _sshConsoleCloseTimer = null; }
+    if (body) body.innerHTML = '';
+    if (titleEl && title) titleEl.textContent = title;
+    cons.style.display = 'block';
+}
+function _sshLog(msg, type = 'plain') {
+    const body = document.getElementById('sshConsoleBody');
+    const cons = document.getElementById('sshConsole');
+    if (!body || !cons) return;
+    if (cons.style.display === 'none') { body.innerHTML = ''; cons.style.display = 'block'; }
+    if (_sshConsoleCloseTimer) { clearTimeout(_sshConsoleCloseTimer); _sshConsoleCloseTimer = null; }
+    const line = document.createElement('div');
+    line.className = `ssh-line ssh-line-${type}`;
+    line.textContent = msg;
+    body.appendChild(line);
+    body.scrollTop = body.scrollHeight;
+}
+function _sshSuccess(msg) {
+    _sshLog('[OK] ' + msg, 'ok');
+    _sshConsoleCloseTimer = setTimeout(() => {
+        const cons = document.getElementById('sshConsole');
+        if (cons) cons.style.display = 'none';
+    }, 2500);
+}
+function _sshError(msg) { _sshLog('[ERR] ' + msg, 'err'); }
+
+// Tooltip helper functions with viewport-aware positioning
+function showTooltipAt(content, target, options = {}) {
+    if (!tooltip || !target) return;
+    // Reset to base class then optionally extend
+    tooltip.className = 'tooltip';
+    if (options.className) {
+        tooltip.className += ' ' + options.className;
+    }
+    if (options.html) {
+        tooltip.innerHTML = content;
+    } else {
+        tooltip.textContent = content;
+    }
+    tooltip.style.display = 'block';
+
+    // Force a reflow to get accurate dimensions after content is set
+    const tooltipWidth = tooltip.offsetWidth || 150;
+    const tooltipHeight = tooltip.offsetHeight || 30;
+    const gapSize = 8;
+
+    // Get target position
+    const rect = target.getBoundingClientRect();
+    const scrollX = window.scrollX || window.pageXOffset;
+    const scrollY = window.scrollY || window.pageYOffset;
+
+    // Try to center horizontally above the target
+    let left = rect.left + rect.width / 2 - tooltipWidth / 2;
+    let top = rect.top - tooltipHeight - gapSize;
+    let useTransform = false;
+
+    // Clamp horizontal position to keep tooltip on screen
+    const padding = 5;
+    if (left < padding) {
+        left = padding;
+    } else if (left + tooltipWidth > window.innerWidth - padding) {
+        left = window.innerWidth - tooltipWidth - padding;
+    }
+
+    // If tooltip goes above viewport, position it below instead
+    if (top < padding) {
+        top = rect.bottom + gapSize;
+    }
+
+    // Add scroll offset for absolute positioning
+    tooltip.style.position = 'fixed';
+    tooltip.style.left = left + 'px';
+    tooltip.style.top = top + 'px';
+    tooltip.style.transform = 'none';
+}
+
+function hideTooltip() {
+    if (!tooltip) return;
+    tooltip.style.display = 'none';
+    tooltip.className = 'tooltip';
+}
+// A pointer drag in the alignment: a GeneDoc Move/Slide drag, a residue or column selection drag, a row
+// reorder drag that has passed its movement threshold (Full/Block or Canvas), or a Canvas pan. No residue
+// tooltip appears while one is in progress (owner, 2026-10-23: "when moving a sequence in edit mode, tooltip
+// over nucleotides should not appear").
+function _pointerDragInProgress() {
+    return !!(state.editDrag || state.isDragging || (_rowReorderDrag && _rowReorderDrag.started)
+        || (_canvasState.rowDrag && _canvasState.rowDrag.started)
+        || (_canvasState.canvas && _canvasState.canvas.style.cursor === 'grabbing'));
+}
+
+// Menu stability: JS owns open state; short delay only when leaving a menu entirely
+const menuCloseDelays = new Map();
+const MENU_CLOSE_DELAY = 120; // milliseconds - gap tolerance when moving to dropdown
+
+function clearMenuCloseDelay(section) {
+    if (menuCloseDelays.has(section)) {
+        clearTimeout(menuCloseDelays.get(section));
+        menuCloseDelays.delete(section);
+    }
+}
+
+function closeOtherMenusExcept(activeSection) {
+    document.querySelectorAll('.menu-section').forEach(section => {
+        if (section === activeSection) return;
+        clearMenuCloseDelay(section);
+        section.classList.remove('menu-open');
+        section.classList.remove('hover-active');
+    });
+}
+
+function openMenuSection(section) {
+    closeOtherMenusExcept(section);
+    clearMenuCloseDelay(section);
+    if (section && section.id === 'groups-menu-section' && !_geDocked) {
+        if (state.clusterResults) _geShowModal();
+        return;
+    }
+    section.classList.add('menu-open');
+    _keepMenuOnScreen(section);
+    if (section && section.id === 'groups-menu-section' && _geDocked) {
+        const modal = el('clusteringModal');
+        if (modal) modal.style.display = 'flex';
+    }
+}
+
+// A drop-down that would run past the right edge opens leftwards from its header's
+// right edge instead (at 1024px the Alignment menu was cut off on the right)
+function _keepMenuOnScreen(section) {
+    const group = section && section.querySelector(':scope > .control-group');
+    if (!group || group.classList.contains('detached')) return;
+    section.classList.remove('menu-flip-right');
+    const r = group.getBoundingClientRect();
+    if (r.width && r.right > window.innerWidth - 2) section.classList.add('menu-flip-right');
+}
+
+function makeControlGroupDetachable(section, group, handle, dockBtn) {
+    if (typeof section === 'string') {
+        section = document.getElementById(section);
+        group = document.getElementById(group);
+        handle = document.getElementById(handle);
+        dockBtn = document.getElementById(dockBtn);
+    }
+    if (!section || !group || !handle || !dockBtn) {
+        return;
+    }
+    if (handle._geDetachWired) return;
+    handle._geDetachWired = true;
+
+    let dragging = false;
+    let dragStartX = 0;
+    let dragStartY = 0;
+    let groupStartX = 0;
+    let groupStartY = 0;
+
+    handle.addEventListener('mousedown', (e) => {
+        if (e.target.closest('.panel-dock-btn')) {
+            return;
+        }
+        e.preventDefault();
+        if (!group.classList.contains('detached')) {
+            const rect = group.getBoundingClientRect();
+            group.classList.add('detached');
+            group.style.left = rect.left + 'px';
+            group.style.top = rect.top + 'px';
+            group.style.margin = '0';
+            section.classList.add('menu-open');
+            if (typeof clearMenuCloseDelay === 'function') {
+                clearMenuCloseDelay(section);
+            }
+        }
+        dragStartX = e.clientX;
+        dragStartY = e.clientY;
+        groupStartX = parseFloat(group.style.left) || 0;
+        groupStartY = parseFloat(group.style.top) || 0;
+        dragging = true;
+    });
+
+    document.addEventListener('mousemove', (e) => {
+        if (!dragging) {
+            return;
+        }
+        const dx = e.clientX - dragStartX;
+        const dy = e.clientY - dragStartY;
+        group.style.left = Math.min(Math.max(groupStartX + dx, -group.offsetWidth + 60), window.innerWidth - 60) + 'px';
+        group.style.top = Math.min(Math.max(groupStartY + dy, 0), window.innerHeight - 30) + 'px';
+    });
+
+    document.addEventListener('mouseup', () => {
+        dragging = false;
+    });
+
+    dockBtn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        group.classList.remove('detached');
+        group.style.left = '';
+        group.style.top = '';
+        group.style.margin = '';
+        if (!section.matches(':hover')) {
+            section.classList.remove('menu-open');
+        }
+    });
+}
+
+function setupMenuDocking() {
+    // Keys sits outside the standard group (right-aligned) but detaches the same way
+    document.querySelectorAll('.standard-menu-group .menu-section, #shortcuts-section').forEach(section => {
+        if (section.id === 'groups-menu-section') return;
+        const group = section.querySelector(':scope > .control-group');
+        if (!group) return;
+        let handle = group.querySelector(':scope > .panel-detach-handle');
+        if (!handle) {
+            const titleEl = section.querySelector('.section-header span');
+            const title = titleEl ? titleEl.textContent.trim() : 'Menu';
+            handle = document.createElement('div');
+            handle.className = 'panel-detach-handle';
+            handle.title = 'Drag to detach this panel';
+            handle.innerHTML = '<span class="panel-detach-grip">&#8942;&#8942;</span> '
+                + String(title).replace(/[&<>"']/g, ch => ({
+                    '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
+                }[ch]))
+                + ' <span class="panel-dock-btn" title="Dock back into the menu">&#9875;</span>';
+            group.insertBefore(handle, group.firstChild);
+        }
+        let dockBtn = handle.querySelector('.panel-dock-btn');
+        if (!dockBtn) {
+            dockBtn = document.createElement('span');
+            dockBtn.className = 'panel-dock-btn';
+            dockBtn.title = 'Dock back into the menu';
+            dockBtn.innerHTML = '&#9875;';
+            handle.appendChild(dockBtn);
+        }
+        makeControlGroupDetachable(section, group, handle, dockBtn);
+    });
+}
+
+function setupMenuStability() {
+    const menuSections = document.querySelectorAll('.menu-section');
+    menuSections.forEach(section => {
+        const controlGroup = section.querySelector('.control-group');
+
+        section.addEventListener('mouseenter', () => {
+            openMenuSection(section);
+        });
+
+        section.addEventListener('mouseleave', () => {
+            // Check if any input in this menu is focused (autocomplete might be open)
+            const hasFocusedInput = controlGroup?.querySelector('input:focus') !== null;
+
+            if (hasFocusedInput || (typeof _numSliderPopKeepsOpen === 'function' && _numSliderPopKeepsOpen())) {
+                // Don't close if input is focused or the number-box slider pop is in use
+                return;
+            }
+
+            // Brief delay when leaving menu entirely; switching sections closes others immediately
+            const timeoutId = setTimeout(() => {
+                section.classList.remove('menu-open');
+                section.classList.remove('hover-active');
+                menuCloseDelays.delete(section);
+            }, MENU_CLOSE_DELAY);
+            menuCloseDelays.set(section, timeoutId);
+        });
+
+        // Keep menu open when hovering over control-group
+        if (controlGroup) {
+            controlGroup.addEventListener('mouseenter', () => {
+                openMenuSection(section);
+            });
+
+            // Close menu when blur happens and mouse is not hovering
+            controlGroup.querySelectorAll('input').forEach(input => {
+                input.addEventListener('blur', () => {
+                    // The number-box slider sits on document.body, so the pointer
+                    // is not :hover on the section while dragging it.
+                    if (!section.matches(':hover') && !(typeof _numSliderPopKeepsOpen === 'function' && _numSliderPopKeepsOpen())) {
+                        section.classList.remove('menu-open');
+                        section.classList.remove('hover-active');
+                        clearMenuCloseDelay(section);
+                    }
+                });
+            });
+        }
+    });
+    // A press anywhere outside the menus (the alignment above all) closes every open menu.
+    // Capture phase: the alignment's mousedown handlers stop propagation, and a focused
+    // number box inside a menu used to hold it open until focus moved elsewhere.
+    document.addEventListener('pointerdown', (e) => {
+        const t = e.target;
+        if (!(t instanceof Element) || t.closest('.menu-section') || t.closest('#numSliderPop')) return;
+        document.querySelectorAll('#controls .menu-section.menu-open, #controls .menu-section.hover-active').forEach(section => {
+            clearMenuCloseDelay(section);
+            section.classList.remove('menu-open');
+            section.classList.remove('hover-active');
+            const focused = section.querySelector(':focus');
+            if (focused && !focused.closest('.control-group.detached')) focused.blur();
+        });
+    }, true);
+    setupMenuDocking();
+}
+
+function updateSliderBackground(slider) {
+    if (!slider) return;
+    const value = (slider.value - slider.min) / (slider.max - slider.min) * 100;
+    slider.style.setProperty('--slider-value', value + '%');
+}
+
+function updateNameLengthSliderRange() {
+    if (state.seqs.length === 0) return;
+
+    // If "No limit" is active, skip slider updates
+    if (el('nameLengthNoLimit')?.checked) return;
+
+    // Use the display header (first token) only to size the name column,
+    // so long descriptions in fullHeader don't blow up spacing.
+    const maxNameLength = _maxOf(state.seqs, s => s.header.length);
+
+    const slider = el('nameLengthSlider');
+    const input = el('nameLengthInput');
+
+    if (slider && input) {
+        // Set range from 3 to maximum name length + 2 buffer (with minimum of 12 for reasonable display)
+        // The +2 buffer ensures that when slider is set to max name length, the full display name is visible
+        const newMax = Math.max(maxNameLength + 2, 12);
+
+        // Update slider attributes
+        slider.min = 3;
+        slider.max = newMax;
+
+        // Update input attributes
+        input.min = 3;
+        input.max = newMax;
+
+    // Default the DISPLAYED value to something reasonable, not necessarily
+    // the full max - real-world headers can run past 200 characters (full
+    // BLAST-style descriptions), and auto-setting the slider to newMax made
+    // the name column wide enough to push every residue off-screen to the
+    // right by default, with nothing visibly wrong to explain why the
+    // alignment looked empty. The slider's max stays at newMax so a user
+    // who wants full names can still drag up to see them; only the
+    // automatic default is capped.
+    const AUTO_NAME_LENGTH_CAP = 30;
+    const initialValue = Math.min(newMax, AUTO_NAME_LENGTH_CAP);
+    slider.value = initialValue;
+    input.value = initialValue;
+
+        // Update the state to reflect the new (capped) displayed value, not
+        // the slider's max - those are different things now.
+        state.nameLength = initialValue;
+
+        // If current value is below new min, adjust it
+        if (parseInt(slider.value) < 3) {
+            slider.value = 3;
+            input.value = 3;
+        }
+
+        // Update slider background
+        updateSliderBackground(slider);
+
+        // Update title to reflect new range
+        slider.title = `Adjust sequence name display length (3-${newMax} characters)`;
+
+    }
+}
+
+function clampConsensusPercent(value) {
+    const num = parseInt(value, 10);
+    if (Number.isNaN(num)) return DEFAULTS.consensusThreshold;
+    return Math.max(30, Math.min(100, num));
+}
+
+function clampGroupConsensusPercent(value) {
+    const num = parseInt(value, 10);
+    // Deprecated: group consensus threshold removed; fall back to general threshold
+    if (Number.isNaN(num)) return DEFAULTS.consensusThreshold;
+    return Math.max(30, Math.min(100, num));
+}
+
+// The slider's max follows the longest name (updateNameLengthSliderRange); clamping to a
+// fixed 50 made the last part of a longer slider snap back.
+function clampNameLength(value) {
+    const num = parseInt(value, 10);
+    if (Number.isNaN(num)) return DEFAULTS.nameLength;
+    const max = parseInt(el('nameLengthSlider')?.max, 10) || 50;
+    return Math.max(3, Math.min(max, num));
+}
+
+// Name length actually shown: the slider value, or with "No limit" the longest name.
+// Every renderer, export and estimate reads this, so "No limit" is not undone by the next
+// render (renderAlignment used to reset --nameLen to the slider value and cut the names).
+function effectiveNameLength() {
+    if (el('nameLengthNoLimit')?.checked) {
+        let longest = 3;
+        for (const q of state.seqs || []) longest = Math.max(longest, (q.header || '').length);
+        return longest;
+    }
+    return clampNameLength(el('nameLengthSlider')?.value);
+}
+
+// Restore the "No limit" checkbox from a preset or snapshot (older ones lack it: off)
+function _applyNameLenNoLimit(on) {
+    const cb = el('nameLengthNoLimit');
+    if (!cb) return;
+    cb.checked = on;
+    const slider = el('nameLengthSlider'), input = el('nameLengthInput');
+    if (slider) slider.disabled = on;
+    if (input) input.disabled = on;
+    applyNameLengthLive(effectiveNameLength());
+}
+
+function _truncName(name, n) {
+    return name.length > n ? name.slice(0, Math.max(1, n - 1)) + '\u2026' : name;
+}
+
+// Width and labels change together, at once, with no re-render: the name column's width
+// used to follow the slider immediately while the names were re-cut only after the next
+// render, so while dragging they never matched.
+function applyNameLengthLive(n) {
+    document.documentElement.style.setProperty('--nameLen', n);
+    document.querySelectorAll('#alignmentContainer .seq-line[data-seq-index] > .seq-name').forEach(nm => {
+        const q = state.seqs[+nm.dataset.seqIndex];
+        if (q) _setSeqNameLabel(nm, _truncName(q.header, n));
+    });
+    window._syncHorizontalScrollbar?.();
+}
+function clampMinCoverage(value) {
+    const num = parseInt(value, 10);
+    if (Number.isNaN(num)) return DEFAULTS.minCoverage;
+    return Math.max(0, Math.min(100, num));
+}
+
+function setNameLengthUI(value, triggerRender = false) {
+    if (el('nameLengthNoLimit')?.checked) {
+        applyNameLengthLive(effectiveNameLength());
+        if (triggerRender) debounceRender();
+        return;
+    }
+    const slider = el('nameLengthSlider');
+    const input = el('nameLengthInput');
+    const clamped = clampNameLength(value);
+    if (slider) {
+        slider.value = clamped;
+        updateSliderBackground(slider);
+    }
+    if (input) {
+        input.value = clamped;
+    }
+    applyNameLengthLive(clamped);
+    if (triggerRender) {
+        debounceRender();
+    }
+}
+
+function setConsensusThresholdUI(value, triggerRender = false) {
+    const slider = el('consensusThreshold');
+    const input = el('consensusThresholdInput');
+    const clamped = clampConsensusPercent(value);
+    if (slider) {
+        slider.min = 30;
+        slider.max = 100;
+        slider.value = clamped;
+        updateSliderBackground(slider);
+    }
+    if (input) {
+        input.min = 30;
+        input.max = 100;
+        input.value = clamped;
+    }
+    if (triggerRender) {
+        debounceRender();
+    }
+}
+
+function setGroupConsensusThresholdUI(value, triggerRender = false) {
+    // Deprecated control; safely no-op
+}
+

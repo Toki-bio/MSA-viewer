@@ -1,0 +1,444 @@
+[script.js lines 14963-15405 of ViewAlign fd8b8e4]
+function setupHoverMenuReveal() {
+    const controls = el('controls');
+    if (!controls || !alignmentContainer) return;
+    if (controls.dataset.hoverMenuBound === '1') return;
+    controls.dataset.hoverMenuBound = '1';
+
+    // Menu stays visible via CSS sticky positioning
+    // This JavaScript just handles closing overlapping menu sections
+
+    controls.addEventListener('click', (e) => {
+        const header = e.target.closest('.section-header');
+        if (header) {
+            // When clicking a menu section header, close others
+            document.querySelectorAll('.control-group').forEach(group => {
+                const isRelated = header.nextElementSibling === group;
+                if (!isRelated && group.style.display === 'block') {
+                    group.style.display = 'none';
+                }
+            });
+        }
+    });
+}
+
+// Non-linear zoom: slider 0-100 maps to 50%-200% with log curve
+// Gives equal space to zoom-out (50-100%) and zoom-in (100-200%)
+function _sliderToZoom(sliderVal) {
+    return Math.round(50 * Math.pow(4, sliderVal / 100));
+}
+function _zoomToSlider(zoomPct) {
+    return Math.round(100 * Math.log2(zoomPct / 50) / 2);
+}
+
+function _readZoomSliderRaw() {
+    const slider = el('zoomSlider');
+    const raw = parseInt(slider?.value ?? '', 10);
+    return Number.isNaN(raw) ? _zoomToSlider(100) : raw;
+}
+
+// v182+ stores raw log-slider positions (0-100). Older presets/snapshots stored
+// linear zoom percent (50-200) in the same field.
+function _normalizeStoredZoomSlider(stored, legacyPercent = false) {
+    const n = parseInt(stored, 10);
+    if (Number.isNaN(n)) return _zoomToSlider(100);
+    if (legacyPercent || n > 100) {
+        return _zoomToSlider(Math.min(200, Math.max(50, n)));
+    }
+    return Math.max(0, Math.min(100, n));
+}
+
+function _placeZoom100Tick() {
+    const slider = el('zoomSlider');
+    const tick = el('zoom100Tick');
+    if (!slider || !tick) return;
+    const min = Number(slider.min) || 0;
+    const max = Number(slider.max) || 100;
+    const span = max - min || 1;
+    const frac = (_zoomToSlider(100) - min) / span;
+    const wrap = tick.parentElement;
+    const sliderRect = slider.getBoundingClientRect();
+    const wrapRect = wrap?.getBoundingClientRect();
+    if (!wrapRect || wrapRect.width <= 0 || sliderRect.width <= 0) return;
+    // Native range thumbs sit on an inset track (half a thumb at each end).
+    // Place the 100% mark over that thumb position, not the raw box midpoint.
+    const thumb = 8;
+    const usable = Math.max(0, sliderRect.width - thumb);
+    const center = (sliderRect.left - wrapRect.left) + thumb / 2 + usable * frac;
+    tick.style.left = center + 'px';
+}
+
+function _approxResidueCount() {
+    const seqs = state.seqs || [];
+    return seqs.length * (seqs.length ? seqs[0].seq.length : 0);
+}
+function setZoom(percent) {
+    // Round to a whole pixel. Fractional font-size produces fractional row
+    // heights, and the browser rounds each row's painted background independently
+    // leaving 1px unpainted seams between rows at some zoom levels.
+    const size = Math.max(1, Math.round((percent / 100) * 13));
+    const isCanvas = isCanvasMode();   // Canvas or Block (Canvas Block)
+    const isWindowedDom = state._needsWindowedDom &&
+        (document.getElementById('modeSingle')?.checked || isDomBlock());
+    // Window geometry must be measured at the final font size, not midway
+    // through the container's 0.1s CSS font-size transition. A big span view skips the
+    // transition too: every animation step re-laid out every residue span (zoom took 5-13 s
+    // at 316k spans).
+    const bigDom = !isCanvas && (isWindowedDom || _approxResidueCount() > 60000);
+    // The residue at the view's top left before the cells change size; scrolled back to the top
+    // left afterwards (scroll offsets in pixels alone put other columns and rows there). A Canvas
+    // redraw is debounced, so repeated zoom steps keep the first, still unapplied, anchor.
+    const zoomAnchor = !state.seqs?.length || !!document.getElementById('modeReads')?.checked ? null
+        : isCanvas ? (_canvasState.pendingAnchor || _captureViewAnchor(true)) : _captureViewAnchor(false);
+    // DOM views: no font-size transition while anchoring, so the anchor is applied at the final size
+    // Canvas too (audit L1): its redraw reads the font size, and read it mid-transition
+    // (12.2 px for 12 px), so cells were measured for a size the text never has.
+    const noTransition = isCanvas || bigDom || !!zoomAnchor;
+    if (noTransition) alignmentContainer.style.transition = 'none';
+    _syncResidueWidthVar(size + 'px');   // before the font change: the probe needs no layout of the alignment
+    alignmentContainer.style.fontSize = size + 'px';
+    el('zoomVal').textContent = percent + '%';
+    el('zoomVal').classList.toggle('not-default', percent !== 100);
+    // Keep the raw 0-100 log slider, its fill, and the 100% tick in lockstep
+    // with the displayed percent. setZoom used to update only the label, so a
+    // later background refresh against a stale/min-max-mutated slider made
+    // "100%" appear near the left edge of the track.
+    const slider = el('zoomSlider');
+    if (slider) {
+        if (slider.min !== '0') slider.min = '0';
+        if (slider.max !== '100') slider.max = '100';
+        const sliderVal = String(_zoomToSlider(percent));
+        if (slider.value !== sliderVal) slider.value = sliderVal;
+        updateSliderBackground(slider);
+    }
+    _placeZoom100Tick();
+    // Canvas measures/bakes glyphs at render time. Large Full/Block views also
+    // need a rebuild: their row/column spacers and viewport windows are based
+    // on cached pixel measurements that become stale when the font size changes.
+    if (isCanvas) {
+        if (zoomAnchor) _canvasState.pendingAnchor = zoomAnchor;
+        debounceRender();
+    } else if (isWindowedDom) {
+        _invalidateUnifiedWindowMeasurements();
+        renderAlignment();
+        if (zoomAnchor) _applyViewAnchor(zoomAnchor);
+    } else if (zoomAnchor) {
+        _applyViewAnchor(zoomAnchor);
+    }
+    if (noTransition) {
+        // Keep transitions disabled through the next paint so restoring the
+        // stylesheet rule cannot animate away from the geometry just measured.
+        requestAnimationFrame(() => requestAnimationFrame(() => {
+            alignmentContainer.style.removeProperty('transition');
+        }));
+    }
+    _resyncPersistentScrollbars();
+}
+
+// The persistent scrollbars size themselves from the alignment's scroll size,
+// but a zoom change is a CSS font-size change, which their observers do not see.
+// Without this the horizontal bar kept its 100%-zoom width after zooming out,
+// could be dragged past the alignment's end, and snapped back.
+// Runs on the next frame and again after the 0.1 s font-size transition.
+function _resyncPersistentScrollbars() {
+    const run = () => {
+        window._syncHorizontalScrollbar?.();
+        window._syncVerticalScrollbar?.();
+    };
+    requestAnimationFrame(run);
+    setTimeout(run, 250);
+}
+function setZoomFromSlider() {
+    const slider = el('zoomSlider');
+    setZoom(_sliderToZoom(parseInt(slider.value)));
+}
+function adjustZoom(delta) {
+    const slider = el('zoomSlider');
+    const currentPct = _sliderToZoom(parseInt(slider.value));
+    let newPct = currentPct + delta;
+    newPct = Math.max(50, Math.min(200, newPct));
+    slider.value = _zoomToSlider(newPct);
+    setZoom(newPct);
+}
+function resetZoom() {
+    const slider = el('zoomSlider');
+    slider.value = _zoomToSlider(100);
+    setZoom(100);
+    updateSliderBackground(slider);
+}
+function debounce(func, delay) {
+    let timer;
+    return () => {
+        clearTimeout(timer);
+        timer = setTimeout(func, delay);
+    };
+}
+// Redraws the user asked for say what they are doing when they will take over ~1 s. A redraw
+// is synchronous, so the notice has to be on screen before it starts: predict the cost from
+// the last measured redraw in the same view (script + the browser's layout and paint, which
+// is most of it), scaled by residues; with nothing measured yet, assume a big span view is slow.
+// No Stop button: a half-done redraw cannot be abandoned without leaving a broken view.
+let _lastRedraw = null;   // { key, residues, ms }
+function _redrawKey() {
+    return [_checkedRadioValue('mode', ''), !!state._needsWindowedDom].join('|');
+}
+function _predictRedrawMs() {
+    const n = _approxResidueCount();
+    const key = _redrawKey();
+    if (_lastRedraw && _lastRedraw.key === key && _lastRedraw.residues > 0) return _lastRedraw.ms * n / _lastRedraw.residues;
+    // 60k: full-DOM files now stop at ALIGN_WINDOWED_DOM_THRESHOLD (100k), so the notice must start below it
+    return (isSpanRenderMode() && !state._needsWindowedDom && n > 60000) ? 1500 : 0;
+}
+async function renderWithNotice(label) {
+    if (!state.seqs || !state.seqs.length) { renderAlignment(); return; }
+    const slow = _predictRedrawMs() > 1000;
+    if (slow) {
+        const len = state.seqs.reduce((m, s) => Math.max(m, s.seq.length), 0);
+        showBusy(label || 'Redrawing the alignment…', `${state.seqs.length.toLocaleString()} sequences × ${len.toLocaleString()} columns`);
+        await yieldToPaint();
+    }
+    const t0 = performance.now();
+    try {
+        renderAlignment();
+        // layout and paint happen after the script: wait for the frame to be drawn
+        await new Promise(res => requestAnimationFrame(() => requestAnimationFrame(res)));
+        _lastRedraw = { key: _redrawKey(), residues: _approxResidueCount(), ms: performance.now() - t0 };
+    } finally {
+        if (slow) hideBusy();
+    }
+}
+const debounceRender = debounce(() => renderWithNotice(), 50);
+// Var-sites threshold changes: in place while only Highlight diffs shows them, else a redraw
+const debouncedDiffRefresh = debounce(() => { if (!_refreshDiffHighlightInPlace()) renderAlignment(); }, 50);
+
+// -- Large-alignment pre-parse index & mode classification ------------------
+// Three viewing strategies (chunking implemented in later phases):
+//   tall  - many sequences  -> vertical page chunks (PDF-like)
+//   long  - few seqs, wide   -> horizontal column windows
+//   crazy - both dimensions  -> warn before parse; user can cancel
+const ALIGN_TALL_SEQ_THRESHOLD = 500;
+const ALIGN_LONG_COL_THRESHOLD = 3000;
+const ALIGN_CRAZY_VOLUME = 5_000_000;
+// Below ALIGN_CRAZY_VOLUME but large enough that building the full DOM
+// (one <span> per residue) causes the browser engine itself to spend tens
+// of seconds on style recalc / layout / paint, even though no single JS
+// statement is slow.  Alignments at or above this count use the existing
+// windowed DOM renderer (renderUnifiedWindowedDom) instead of the classic
+// full-build path, without affecting the crazy-alignment dialog or the
+// Canvas auto-switch (the crazy dialog is gated by ALIGN_CRAZY_VOLUME, the Canvas default by
+// ALIGN_CANVAS_DEFAULT_RESIDUES).
+// Measured 2026-10 at 300 x 1,000: the full build blocks the page 2.3 s on a
+// switch to Full (1.3 s Block, 1.2 s on load); windowed it is 0.4 s with
+// similar scrolling. Show 2D now draws on windowed views too, so the threshold is 100,000 (owner,
+// 2026-10-22, after measuring 96k-495k: Full switch 4.2-7.1 s -> 1.1-1.2 s, longest freeze 2.7-3.7 s
+// -> 0.4-0.6 s, residue click 0.17-0.53 s -> 0.05-0.13 s; the full regression suite passes).
+const ALIGN_WINDOWED_DOM_THRESHOLD = 100_000;
+// At or above this many residues a freshly loaded alignment opens in Canvas mode (the user
+// can still pick Block). Measured 2026-10-16 at 600 x 600 (360k residues, Radeon 780M):
+// the full-DOM view scrolls at 110-160 ms a frame because every row entering the viewport is
+// laid out and the whole layer repainted (content-visibility: auto), and turning that rule
+// off makes mode switches and Highlight diffs 2-3x slower (5-10 s) while Canvas scrolls at
+// 8-9 ms a frame. The DOM view is smooth only up to ~30-40k residues (150 x 150 fine,
+// 200 x 200 a few 50 ms frames, 300 x 300 p95 67 ms), hence 40,000 (v249; 100,000 in v245).
+const ALIGN_CANVAS_DEFAULT_RESIDUES = 40_000;
+
+/** Single-pass FASTA scan: counts sequences and lengths without building seq objects. */
+function scanFastaIndex(text) {
+    let nSeqs = 0, maxLen = 0, totalResidues = 0, curLen = 0;
+    let seenHeader = false;
+    let i = 0;
+    const len = text.length;
+    while (i < len) {
+        const lineStart = i;
+        while (i < len && text[i] !== '\n' && text[i] !== '\r') i++;
+        const line = text.slice(lineStart, i).trim();
+        while (i < len && (text[i] === '\n' || text[i] === '\r')) i++;
+        if (!line) continue;
+        if (line[0] === '>') {
+            if (seenHeader && curLen > 0) {
+                maxLen = Math.max(maxLen, curLen);
+                totalResidues += curLen;
+            }
+            curLen = 0;
+            seenHeader = true;
+            nSeqs++;
+        } else if (seenHeader) {
+            for (let j = 0; j < line.length; j++) {
+                const c = line[j];
+                if ((c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') || c === '-' || c === '.' || c === '*') curLen++;
+            }
+        }
+        // Lines before first '>' are discarded (leading garbage)
+    }
+    if (curLen > 0) {
+        maxLen = Math.max(maxLen, curLen);
+        totalResidues += curLen;
+    }
+    return { nSeqs, maxLen, totalResidues };
+}
+
+/** MSF header scan: sequence count from Name: lines, width from Len: in header. */
+function scanMsfIndex(text) {
+    let nSeqs = 0, maxLen = 0;
+    let i = 0;
+    const len = text.length;
+    while (i < len) {
+        const lineStart = i;
+        while (i < len && text[i] !== '\n' && text[i] !== '\r') i++;
+        const line = text.slice(lineStart, i).trim();
+        while (i < len && (text[i] === '\n' || text[i] === '\r')) i++;
+        if (!line) continue;
+        if (line.startsWith('Name:')) nSeqs++;
+        const m = line.match(/Len:\s*(\d+)/i);
+        if (m) maxLen = Math.max(maxLen, parseInt(m[1], 10));
+    }
+    return { nSeqs, maxLen, totalResidues: nSeqs * maxLen };
+}
+
+/**
+ * Cheap pre-parse index for FASTA/MSF. Returns null for formats we cannot
+ * scan without a full parse (SAM, GenBank, etc.).
+ */
+function scanAlignmentText(text) {
+    if (text.charCodeAt(0) === 0xFEFF) text = text.slice(1); // strip BOM
+    const t = text.trim();
+    if (!t) return null;
+    const isMsf = (t.includes('MSF:') && t.includes('Check:'))
+        || t.includes('!!AA_MULTIPLE_ALIGNMENT')
+        || t.includes('!!NA_MULTIPLE_ALIGNMENT');
+    if (isMsf) return scanMsfIndex(text);
+    if (/^\s*>/m.test(text)) return scanFastaIndex(text);
+    const firstLine = t.split(/\r\n|\r|\n/, 1)[0];
+    if (/^[A-Za-z*.\-]+$/.test(firstLine)) return scanFastaIndex(text);
+    return null;
+}
+
+/**
+ * Classify alignment dimensions into viewing mode.
+ * @returns {{ mode: 'normal'|'tall'|'long'|'crazy', isTall: boolean, isLong: boolean, isCrazy: boolean }}
+ */
+function classifyAlignmentSize(stats) {
+    const isTall = stats.nSeqs > ALIGN_TALL_SEQ_THRESHOLD;
+    const isLong = stats.maxLen > ALIGN_LONG_COL_THRESHOLD;
+    const isCrazy = (isTall && isLong) || stats.totalResidues > ALIGN_CRAZY_VOLUME;
+    // Windowed DOM rendering kicks in below the crazy threshold too: the
+    // browser engine's own style/layout/paint cost on a multi-million-span
+    // DOM tree is the real bottleneck, not any single JS call.
+    const needsWindowedDom = isCrazy || stats.totalResidues > ALIGN_WINDOWED_DOM_THRESHOLD;
+    let mode = 'normal';
+    if (isCrazy) mode = 'crazy';
+    else if (isTall) mode = 'tall';
+    else if (isLong) mode = 'long';
+    return { mode, isTall, isLong, isCrazy, needsWindowedDom };
+}
+
+function _formatResidueCount(n) {
+    return (n >= 1_000_000)
+        ? (n / 1_000_000).toFixed(1).replace(/\.0$/, '') + 'M'
+        : n.toLocaleString();
+}
+
+/**
+ * Modal shown for "crazy"/tall/long alignments before heavy parse work, and
+ * again if the user later switches into Full mode specifically (it has no
+ * windowing at all - measured to fully block the main thread past 45s on a
+ * 3408x1753 alignment that Block mode, itself no speed demon at ~12s, could
+ * at least render).
+ * @param {string} [context] 'load' (default) or 'full-mode-switch'
+ * @returns {Promise<'cancel'|'proceed'>}
+ */
+function showLargeAlignmentDialog(stats, classification, context = 'load') {
+    if (_paneIsChild && context === 'load') return Promise.resolve('proceed');   // a pane shows what its page already holds, or a file the user chose for it
+    return new Promise((resolve) => {
+        const backdrop = document.createElement('div');
+        backdrop.className = 'blast-modal-backdrop align-load-dialog';
+        const dialog = document.createElement('div');
+        dialog.className = 'blast-dialog';
+        dialog.style.maxWidth = '460px';
+
+        const isModeSwitch = context === 'full-mode-switch' || context === 'block-mode-switch';
+        const title = document.createElement('div');
+        title.className = 'blast-dialog-title';
+        title.textContent = context === 'full-mode-switch' ? 'Full mode on a large alignment'
+            : context === 'block-mode-switch' ? 'Block mode on a large alignment'
+            : 'Large alignment';
+
+        const content = document.createElement('div');
+        content.className = 'blast-dialog-content';
+        content.style.fontSize = '12px';
+        content.style.lineHeight = '1.55';
+
+        const reasons = [];
+        if (classification.isTall) reasons.push(`${stats.nSeqs.toLocaleString()} sequences`);
+        if (classification.isLong) reasons.push(`${stats.maxLen.toLocaleString()} columns`);
+        if (stats.totalResidues > ALIGN_CRAZY_VOLUME) reasons.push(`over ${_formatResidueCount(ALIGN_CRAZY_VOLUME)} total residues`);
+        const reasonText = reasons.length ? reasons.join(' and ') : 'this alignment is very large';
+
+        // Full mode windows both rows and columns (v167-v169) - it no longer
+        // freezes at this size, but the very first paint still has to
+        // compute conservation shading for the whole alignment once, which
+        // measured ~9s on a 40M-residue synthetic file. Block mode has no
+        // windowing at all yet and genuinely hangs well past a minute at
+        // that same size (measured directly) - the two warnings are
+        // deliberately different in severity, not copy-pasted.
+        const bodyText = context === 'full-mode-switch'
+            ? `Full mode windows both rows and columns, so it won't freeze - but the very first paint
+               still computes shading for the whole alignment once, which can take several seconds on
+               an alignment this size. Canvas mode stays instant, and editing works there too.`
+            : context === 'block-mode-switch'
+            ? `Block mode now windows column-chunks vertically, so it won't freeze - but the very
+               first paint still computes shading for the whole alignment once, which can take
+               several seconds on an alignment this size. Canvas mode stays instant, and editing
+               works there too.`
+            : `Loading may be slow or briefly freeze the browser because ${reasonText}.
+               Canvas mode is recommended (scrolling and editing stay instant); Show 2D works in Canvas too.`;
+
+        content.innerHTML = `
+            <p style="margin:0 0 10px;">
+                <strong>${stats.nSeqs.toLocaleString()}</strong> sequences &times;
+                <strong>${stats.maxLen.toLocaleString()}</strong> columns
+                (<strong>${_formatResidueCount(stats.totalResidues)}</strong> residues)
+            </p>
+            <p style="margin:0 0 12px;color:#555;">${bodyText}</p>
+            <div style="display:flex;gap:8px;justify-content:flex-end;">
+                <button type="button" id="alignLoadCancel" style="padding:6px 14px;font-size:12px;cursor:pointer;">Cancel</button>
+                <button type="button" id="alignLoadProceed" style="padding:6px 14px;font-size:12px;cursor:pointer;background:#1a73e8;color:#fff;border:1px solid #1557b0;border-radius:3px;">${isModeSwitch ? 'Switch anyway' : 'Load anyway'}</button>
+            </div>
+        `;
+
+        dialog.appendChild(title);
+        dialog.appendChild(content);
+        backdrop.appendChild(dialog);
+        document.body.appendChild(backdrop);
+
+        let started = false;
+        const finish = (choice) => {
+            if (started && choice !== 'proceed') return;
+            backdrop.remove();
+            document.removeEventListener('keydown', onKey);
+            resolve(choice);
+        };
+        const onKey = (e) => {
+            if (e.key === 'Escape') finish('cancel');
+        };
+        document.addEventListener('keydown', onKey);
+        content.querySelector('#alignLoadCancel').addEventListener('click', () => finish('cancel'));
+        content.querySelector('#alignLoadProceed').addEventListener('click', (e) => {
+            // The load that follows can block the page for seconds, and the dialog's removal is
+            // not painted until it ends: say it is working, let that paint, then go on
+            const btn = e.currentTarget;
+            if (btn.disabled) return;
+            btn.disabled = true;
+            btn.textContent = isModeSwitch ? 'Switching…' : 'Loading…';
+            btn.style.cursor = 'progress';
+            content.querySelector('#alignLoadCancel').disabled = true;
+            backdrop.style.cursor = 'progress';
+            started = true;   // no Esc or backdrop cancel once started
+            requestAnimationFrame(() => setTimeout(() => finish('proceed'), 0));
+        });
+        backdrop.addEventListener('click', (e) => {
+            if (e.target === backdrop) finish('cancel');
+        });
+    });
+}
+

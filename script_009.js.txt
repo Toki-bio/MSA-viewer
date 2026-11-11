@@ -1,0 +1,444 @@
+[script.js lines 3616-4058 of ViewAlign fd8b8e4]
+// full rebuild of the row's content when a one-span-per-column count cannot
+// be relied on (variable-sites breakpoint markers) or the length badge is
+// involved.
+function _patchRowColumns(dataEl, index, start, end, oldS, oldE, newS, newE, charWidthPx, p, isLastBlock) {
+    const html = (a, b) => _seqDataSpansHtml(index, a, b + 1, p.standard, p.ambiguous, p.blackThresh, p.darkThresh, p.lightThresh, p.enableBlack, p.enableDark, p.enableLight, p.conservationData);
+    const badgeOld = isLastBlock && oldE >= end - 1;
+    const badgeNew = isLastBlock && newE >= end - 1;
+    const countable = !(state._brkBeforePos && state._brkBeforePos.size > 0) && !_foldDomInfo() && !badgeOld && !badgeNew
+        && dataEl.childNodes.length === (oldE - oldS + 1);
+    if (!countable || newS > oldE || newE < oldS) {
+        dataEl.innerHTML = html(newS, newE) + (badgeNew ? _seqLengthBadgeHtml(index) : '');
+    } else {
+        if (newS > oldS) _removeLeadingChildren(dataEl, newS - oldS);
+        else if (newS < oldS) dataEl.insertAdjacentHTML('afterbegin', html(newS, oldS - 1));
+        if (newE < oldE) _removeTrailingChildren(dataEl, oldE - newE);
+        else if (newE > oldE) dataEl.insertAdjacentHTML('beforeend', html(oldE + 1, newE));
+    }
+    _applyColumnWindowStyle(dataEl, end - start, newS - start, charWidthPx);
+    _noteRowColumnWindow(dataEl, newS, newE);
+    state.spanCache?.delete(index);
+    _registerRowSpans(index, dataEl);
+    if (state._codonData && dataEl.parentElement) _appendCodonRows(dataEl.parentElement, index, newS, newE + 1, { blockLen: end - start, start, charWidthPx });
+}
+
+// Each column-windowed data row remembers its own window, because a
+// re-centre is applied a chunk of rows per frame and a later re-centre may
+// find rows at different windows.
+function _noteRowColumnWindow(dataEl, colStart, colEnd) {
+    dataEl.dataset.cs = String(colStart);
+    dataEl.dataset.ce = String(colEnd);
+}
+
+// Re-centres the column window of an existing block in one frame: every
+// data row is patched in place (_patchRowColumns), the ruler and consensus
+// rows get new content. Names and row elements are untouched. fallbackS/E is
+// the block's previous window, for rows that carry no window of their own.
+//
+// One frame on purpose. Spreading the rows over frames was measured (62 rows
+// x 16,808 columns, 3 rows a frame): a frame that changes any row costs ~30 ms
+// before the per-row cost (~9 ms a row), so 20 small frames of 100-170 ms
+// replaced one of ~550 ms and the median scroll step went from 15 ms back to
+// 115 ms. Between re-centres nothing changes, and a re-centre comes every
+// (bufferCols - guardCols) columns of scrolling - about 1,700 px here.
+function _patchBlockColumnWindow(blockDiv, blockIndex, start, end, fallbackS, fallbackE, newS, newE, charWidthPx, p, isLastBlock) {
+    const blockLen = end - start;
+    blockDiv.querySelectorAll(':scope > .seq-line[data-seq-index]').forEach(rowEl => {
+        const idx = parseInt(rowEl.getAttribute('data-seq-index'), 10);
+        if (Number.isNaN(idx) || idx < 0) return;   // consensus rows are handled below
+        const d = rowEl.querySelector('.seq-data');
+        if (!d) return;
+        const oS = d.dataset.cs != null ? +d.dataset.cs : fallbackS;
+        const oE = d.dataset.ce != null ? +d.dataset.ce : fallbackE;
+        if (oS === newS && oE === newE) return;
+        _patchRowColumns(d, idx, start, end, oS, oE, newS, newE, charWidthPx, p, isLastBlock);
+    });
+    const ruler = blockDiv.querySelector(':scope > .scale-ruler-line > .seq-data');
+    if (ruler) {
+        const rulerLen = newE - newS + 1;
+        ruler.dataset.scale = rulerLen + ':' + newS;
+        if (state._diffColumns || _foldDomInfo()) ruler.innerHTML = generateScaleHTML(rulerLen, 10, newS);
+        else ruler.textContent = generateScale(rulerLen, 10, newS);
+        _applyColumnWindowStyle(ruler, blockLen, newS - start, charWidthPx);
+    }
+    const track = blockDiv.querySelector(':scope > .annot-track-line > .seq-data');
+    if (track && state._annotLayout) {
+        _fillAnnotTrackData(track, newS, newE, charWidthPx);
+        _applyColumnWindowStyle(track, blockLen, newS - start, charWidthPx);
+    }
+    if (p.shouldRenderConsensus) {
+        state.spanCache?.delete(CONSENSUS_ROW_INDEX);
+        blockDiv.querySelectorAll(':scope > .consensus-line').forEach(line => {
+            const position = line.classList.contains('consensus-top') ? 'top' : 'bottom';
+            const tmp = document.createElement('div');
+            addConsensusLine(tmp, p.consensus, newS, newE + 1, p.nameLen, p.stickyNames, p.blackThresh, p.darkThresh, p.lightThresh, p.enableBlack, p.enableDark, p.enableLight, isLastBlock && newE >= end - 1, position, p.options);
+            const fresh = tmp.firstElementChild?.querySelector('.seq-data');
+            const old = line.querySelector('.seq-data');
+            if (fresh && old) {
+                _applyColumnWindowStyle(fresh, blockLen, newS - start, charWidthPx);
+                old.replaceWith(fresh);
+            }
+        });
+    }
+}
+
+// Builds one block's DOM for the non-windowed (small-alignment) render path.
+// Factored out so the windowed and non-windowed paths share one implementation.
+// Used by both Full mode (blockWidth = len, one block) and Block mode
+// (blockWidth from slider, multiple blocks).
+function _buildBlockElement(start, end, len, nameLen, stickyNames, standard, ambiguous, blackThresh, darkThresh, lightThresh, enableBlack, enableDark, enableLight, conservationData, shouldRenderConsensus, consensusPosition, consensus, options) {
+    const blockLen = end - start;
+    const blockDiv = document.createElement('div');
+    // cv-block: rows off screen skip layout and paint (styles.css); --cols sizes them meanwhile
+    blockDiv.className = 'block-block cv-block';
+    blockDiv.style.setProperty('--cols', String(blockLen));
+
+    const scaleDiv = document.createElement('div');
+    scaleDiv.className = 'seq-line scale-ruler-line';
+    const scaleNameDiv = document.createElement('div');
+    scaleNameDiv.className = 'seq-name';
+    scaleNameDiv.textContent = '';
+    const scaleDataDiv = document.createElement('div');
+    scaleDataDiv.className = 'seq-data';
+    scaleDataDiv.dataset.scale = blockLen + ':' + start;   // lets Highlight diffs rebuild it in place
+    if (state._diffColumns || _foldDomInfo()) {
+        scaleDataDiv.innerHTML = generateScaleHTML(blockLen, 10, start);
+    } else {
+        scaleDataDiv.textContent = generateScale(blockLen, 10, start);
+    }
+    scaleDiv.appendChild(scaleNameDiv);
+    scaleDiv.appendChild(scaleDataDiv);
+    // The annotation track is added by _insertAnnotTracks once the rows exist
+    blockDiv.appendChild(scaleDiv);
+    const isLastBlock = (start + (end - start) >= len) || end >= len;
+
+    if (shouldRenderConsensus && consensusPosition === 'top') {
+        addConsensusLine(blockDiv, consensus, start, end, nameLen, stickyNames, blackThresh, darkThresh, lightThresh, enableBlack, enableDark, enableLight, isLastBlock, 'top', options);
+    }
+    for (let i = 0; i < state.seqs.length; i++) {
+        const lineDiv = createSequenceLine(i, start, end, nameLen, stickyNames, standard, ambiguous, blackThresh, darkThresh, lightThresh, enableBlack, enableDark, enableLight, isLastBlock, conservationData);
+        blockDiv.appendChild(lineDiv);
+        if (state._codonData) _appendCodonRows(lineDiv, i, start, end, null);
+    }
+    if (shouldRenderConsensus && consensusPosition === 'bottom') {
+        addConsensusLine(blockDiv, consensus, start, end, nameLen, stickyNames, blackThresh, darkThresh, lightThresh, enableBlack, enableDark, enableLight, isLastBlock, 'bottom', options);
+    }
+    return blockDiv;
+}
+
+// -- Unified windowed DOM rendering (Full + Block modes) -------------------
+// Full mode = special case with blockWidth = len (1 block, row+column windowed).
+// Block mode = multi-block case (block-level windowing, row windowing within
+// each block, column windowing only when a block is wider than the viewport).
+
+let _unifiedRowHeightPx = null;
+let _unifiedBlockHeightPx = null;
+let _unifiedHeaderHeightPx = null;
+let _unifiedCharWidthPx = null;
+let _unifiedNameColWidthPx = null;
+let _unifiedWindowRenderParams = null;
+// Codon analysis by gene gives each block only the translation rows its genes need
+// (none in a block without CDS), so blocks differ in height. The measured row and
+// block heights are those of a block with _unifiedMeasuredLanes translation rows per
+// sequence; every other block's follows from _unifiedAaRowPx, the height of one
+// translation row (see _unifiedGeometry).
+let _unifiedAaRowPx = null;
+let _unifiedSeqRowPx = null;   // a sequence row alone (AA only: the translation overlaps it)
+let _unifiedMeasuredLanes = 0;
+let _unifiedGeomCache = null;
+// Per-block record of which row indices are currently rendered in the
+// DOM, keyed by block index. Populated in _buildUnifiedBlock, consumed
+// by a future incremental-diff version of _refreshUnifiedWindowOnScroll.
+let _unifiedRenderedRowRanges = new Map();
+
+function _invalidateUnifiedWindowMeasurements() {
+    _unifiedRowHeightPx = null;
+    _unifiedBlockHeightPx = null;
+    _unifiedHeaderHeightPx = null;
+    _unifiedCharWidthPx = null;
+    _unifiedNameColWidthPx = null;
+    _unifiedAaRowPx = null;
+    _unifiedSeqRowPx = null;
+    _unifiedMeasuredLanes = 0;
+    _unifiedGeomCache = null;
+    _unifiedRenderedRowRanges.clear();
+    _cancelAllBlockJobs();
+}
+
+function _measureUnifiedRowHeight(sampleRowEl) {
+    if (sampleRowEl) {
+        // The row pitch: the sequence row plus its translation row(s), when codon
+        // analysis is on (they follow it as siblings)
+        // From the row's top to the bottom of its last translation row: with AA only the
+        // first translation row overlaps the sequence row, so adding the heights overcounts
+        const top = sampleRowEl.getBoundingClientRect().top;
+        let bottom = sampleRowEl.getBoundingClientRect().bottom;
+        let sib = sampleRowEl.nextElementSibling;
+        while (sib && sib.classList.contains('aa-row')) { bottom = Math.max(bottom, sib.getBoundingClientRect().bottom); sib = sib.nextElementSibling; }
+        const h = bottom - top;
+        if (h > 1) _unifiedRowHeightPx = h;
+    }
+    return _unifiedRowHeightPx || 16;
+}
+
+// The translation rows per sequence of the block the heights are measured from, and
+// the height of one translation row (from the block's own, or a probe row when it has none)
+function _measureUnifiedAaRow(sampleBlockEl, blockIndex, blockWidth, len) {
+    if (!sampleBlockEl || !state._codonData) return;
+    const start = blockIndex * blockWidth;
+    _unifiedMeasuredLanes = _codonLanesForRange(start, Math.min(start + blockWidth, len));
+    let aa = sampleBlockEl.querySelector(':scope > .aa-row');
+    let probe = null;
+    if (!aa) {
+        probe = _buildAARowEl([], null, false, 0, 1, null);
+        probe.style.visibility = 'hidden';
+        sampleBlockEl.appendChild(probe);
+        aa = probe;
+    }
+    const h = aa.getBoundingClientRect().height;
+    if (probe) probe.remove();
+    if (h > 0.5) _unifiedAaRowPx = h;
+    const seqRow = sampleBlockEl.querySelector('.seq-line[data-seq-index]:not([data-seq-index="-1"])');
+    const s = seqRow?.getBoundingClientRect().height;
+    if (s > 0.5) _unifiedSeqRowPx = s;
+}
+
+// Block positions of the windowed renderer: top(b) (top(numBlocks) = total height),
+// blockH(b), rowH(b) (a sequence row with its translation rows) and indexAt(y), the
+// block at y. Uniform (b * blockHeight) unless codon analysis by gene gives blocks
+// different translation lane counts.
+function _unifiedGeometry(numBlocks, blockWidth, len) {
+    const baseRow = Math.max(1, _unifiedRowHeightPx || 16);
+    const baseBlock = Math.max(1, _unifiedBlockHeightPx || _unifiedFallbackBlockHeightPx());
+    const cd = state._codonData;
+    if (!(cd && cd.byGene && cd.colLanes && numBlocks > 1)) {
+        return {
+            top: b => b * baseBlock, blockH: () => baseBlock, rowH: () => baseRow,
+            indexAt: y => Math.floor(y / baseBlock)
+        };
+    }
+    const nSeq = state.seqs.length;
+    const mk = _unifiedMeasuredLanes;
+    const aa = _unifiedAaRowPx || baseRow / (1 + mk);
+    // Pitch of a row with k translation rows: the sequence row plus k translation rows;
+    // with AA only the first one overlaps the sequence row (k > 0)
+    const aaOnly = _aaOnlyActive();
+    const seq = _unifiedSeqRowPx || (aaOnly ? baseRow : baseRow - mk * aa);
+    const pitch = k => seq + k * aa - (aaOnly && k > 0 ? seq : 0);
+    const c = _unifiedGeomCache;
+    if (!(c && c.cd === cd && c.numBlocks === numBlocks && c.blockWidth === blockWidth && c.len === len && c.baseRow === baseRow && c.baseBlock === baseBlock && c.aa === aa && c.mk === mk && c.nSeq === nSeq && c.aaOnly === aaOnly && c.seq === seq)) {
+        const lanes = new Uint8Array(numBlocks);
+        const tops = new Float64Array(numBlocks + 1);
+        for (let b = 0; b < numBlocks; b++) {
+            const st = b * blockWidth;
+            lanes[b] = _codonLanesForRange(st, Math.min(st + blockWidth, len));
+            tops[b + 1] = tops[b] + Math.max(1, baseBlock + nSeq * (pitch(lanes[b]) - pitch(mk)));
+        }
+        _unifiedGeomCache = { cd, numBlocks, blockWidth, len, baseRow, baseBlock, aa, mk, nSeq, aaOnly, seq, lanes, tops };
+    }
+    const { lanes, tops } = _unifiedGeomCache;
+    return {
+        top: b => tops[Math.max(0, Math.min(numBlocks, b))],
+        blockH: b => tops[b + 1] - tops[b],
+        rowH: b => Math.max(1, baseRow + pitch(lanes[b]) - pitch(mk)),
+        indexAt: y => {
+            let lo = 0, hi = numBlocks - 1;
+            while (lo < hi) { const m = (lo + hi + 1) >> 1; if (tops[m] <= y) lo = m; else hi = m - 1; }
+            return lo;
+        }
+    };
+}
+
+function _measureUnifiedColumnMetrics(sampleRowEl) {
+    if (sampleRowEl) {
+        const dataSpan = sampleRowEl.querySelector('.seq-data span[data-pos]');
+        if (dataSpan) {
+            const w = dataSpan.getBoundingClientRect().width;
+            if (w > 0) _unifiedCharWidthPx = w;
+        }
+        const nameEl = sampleRowEl.querySelector('.seq-name');
+        if (nameEl) {
+            const w = nameEl.getBoundingClientRect().width;
+            if (w > 0) _unifiedNameColWidthPx = w;
+        }
+    }
+    return { charWidthPx: _unifiedCharWidthPx || 7.8, nameColWidthPx: _unifiedNameColWidthPx || 0 };
+}
+
+function _unifiedFallbackBlockHeightPx() {
+    const rowHeightPx = _unifiedRowHeightPx || 16;
+    return Math.max(rowHeightPx, (state.seqs?.length || 1) * rowHeightPx + 40);
+}
+
+function _measureUnifiedBlockHeight(sampleBlockEl) {
+    if (sampleBlockEl) {
+        const h = sampleBlockEl.getBoundingClientRect().height;
+        if (h > 1) _unifiedBlockHeightPx = h;
+    }
+    return _unifiedBlockHeightPx || _unifiedFallbackBlockHeightPx();
+}
+
+// Measures the header (ruler + optional top consensus) directly from a real,
+// attached block's own child elements, rather than deriving it as
+// `blockHeightPx - nSeq * rowHeightPx`. That subtraction looked exact on
+// paper but isn't: rowHeightPx is a getBoundingClientRect() measurement that
+// can carry a fraction-of-a-pixel rounding difference from how blockHeightPx
+// was itself measured, and multiplied across thousands of rows that tiny
+// per-row difference compounds into a "header" of several thousand pixels
+// instead of the real ~30px ruler+consensus - confirmed directly: measured
+// headerHeight via subtraction came out to 6651px on a real 3408-row
+// alignment, versus visible rows never rendering at all because the row
+// range collapsed to negative. Must be called AFTER the block element is
+// attached to the document (getBoundingClientRect on a detached element
+// returns a zero rect), same requirement as _measureUnifiedBlockHeight.
+function _measureUnifiedHeaderHeight(sampleBlockEl) {
+    if (sampleBlockEl) {
+        const ruler = sampleBlockEl.querySelector('.scale-ruler-line');
+        const topConsensus = sampleBlockEl.querySelector('.consensus-line');
+        let h = 0;
+        if (ruler) h += ruler.getBoundingClientRect().height;
+        const track = sampleBlockEl.querySelector(':scope > .annot-track-line');
+        if (track) h += track.getBoundingClientRect().height;
+        if (topConsensus) {
+            const r = topConsensus.getBoundingClientRect();
+            // Only count it if it's actually positioned above the first data
+            // row (top consensus), not below (bottom consensus belongs to
+            // the block's trailing content, not its header).
+            const firstDataRow = sampleBlockEl.querySelector('.seq-line[data-seq-index]');
+            if (!firstDataRow || r.top <= firstDataRow.getBoundingClientRect().top) h += r.height;
+        }
+        if (h > 0) _unifiedHeaderHeightPx = h;
+    }
+    return _unifiedHeaderHeightPx != null ? _unifiedHeaderHeightPx : (_unifiedRowHeightPx || 16);
+}
+
+// Builds one block's DOM with row windowing inside (unlike _buildBlockElement
+// which renders ALL rows). Each block contains: ruler, optional top consensus,
+// top row spacer, visible rows, bottom row spacer, optional bottom consensus.
+// Column windowing is applied when the block is wider than the viewport.
+function _buildUnifiedBlock(blockIndex, start, end, len, blockHeightPx, rowHeightPx, effectiveScrollTop, clientHeight, scrollLeft, clientWidth, charWidthPx, nameColWidthPx, nameLen, stickyNames, standard, ambiguous, blackThresh, darkThresh, lightThresh, enableBlack, enableDark, enableLight, conservationData, shouldRenderConsensus, consensusPosition, consensus, options, headerHeightPxIn, blockTopPxIn) {
+    const blockLen = end - start;
+    const blockDiv = document.createElement('div');
+    blockDiv.className = 'block-block';
+    blockDiv.dataset.blockIndex = String(blockIndex);
+    const isLastBlock = (start + (end - start) >= len) || end >= len;
+
+    // Column windowing within this block - computed up front so the ruler and
+    // both consensus lines can use it too, not just data rows. When the block
+    // is narrower than the viewport (typical Block mode), all columns fit and
+    // no windowing is applied - same as Block mode. When the block is wider
+    // than the viewport (Full mode with 1 giant block), only visible columns
+    // are rendered with padding-left for the offset.
+    const visibleDataWidth = Math.max(0, clientWidth - nameColWidthPx);
+    const nSeq = state.seqs.length;
+    const headerHeight = headerHeightPxIn != null ? headerHeightPxIn : _measureUnifiedHeaderHeight(null);
+    const _vis = _unifiedVisibleRows(blockTopPxIn != null ? blockTopPxIn : blockIndex * blockHeightPx, blockHeightPx, headerHeight, rowHeightPx, effectiveScrollTop, clientHeight, nSeq);
+    const _budget = _unifiedWindowBudget(_vis.visibleRows, Math.max(1, Math.ceil(visibleDataWidth / Math.max(1, charWidthPx))), nSeq, blockLen);
+    const { colStart, colEnd, needsColWindow } = _computeBlockColumnWindow(start, end, scrollLeft, visibleDataWidth, charWidthPx, _budget.bufferCols);
+
+    // Ruler — was previously generated for the block's FULL width (blockLen,
+    // up to the whole alignment in Full mode's single-block case) on every
+    // call, including every scroll-triggered refresh. Windowed the same as
+    // data rows now.
+    const scaleDiv = document.createElement('div');
+    scaleDiv.className = 'seq-line scale-ruler-line';
+    const scaleNameDiv = document.createElement('div');
+    scaleNameDiv.className = 'seq-name';
+    scaleNameDiv.textContent = '';
+    const scaleDataDiv = document.createElement('div');
+    scaleDataDiv.className = 'seq-data';
+    const rulerLen = colEnd - colStart + 1;
+    scaleDataDiv.dataset.scale = rulerLen + ':' + colStart;
+    if (state._diffColumns || _foldDomInfo()) {
+        scaleDataDiv.innerHTML = generateScaleHTML(rulerLen, 10, colStart);
+    } else {
+        scaleDataDiv.textContent = generateScale(rulerLen, 10, colStart);
+    }
+    if (needsColWindow) _applyColumnWindowStyle(scaleDataDiv, blockLen, colStart - start, charWidthPx);
+    scaleDiv.appendChild(scaleNameDiv);
+    scaleDiv.appendChild(scaleDataDiv);
+    if (state._annotLayout) {
+        // Annotation track above the ruler, windowed like it (px positions
+        // agree with the rows' px padding; ch when the block is not windowed)
+        const track = _buildAnnotTrackLine(colStart, colEnd, needsColWindow ? charWidthPx : null);
+        if (track) {
+            if (needsColWindow) _applyColumnWindowStyle(track.querySelector('.seq-data'), blockLen, colStart - start, charWidthPx);
+            blockDiv.appendChild(track);
+        }
+    }
+    blockDiv.appendChild(scaleDiv);
+
+    if (shouldRenderConsensus && consensusPosition === 'top') {
+        // addConsensusLine used to be called with the block's full start/end
+        // (up to the whole alignment width in Full mode) - it builds one
+        // span PER COLUMN with its own hover listener, so on a wide
+        // alignment this alone measured 290ms of a ~350ms total scroll-
+        // refresh (83%), building ~12,000 consensus spans every scroll when
+        // only ~180 were ever visible. Windowed the same as data rows now.
+        // The trailing "sequence length" badge (showLength) is appended right
+        // after the last rendered span, not pinned to the container's true
+        // right edge - only pass it through when this windowed view actually
+        // reaches the block's real final column, or a scrolled-away view
+        // would show the badge floating after an arbitrary mid-alignment
+        // column instead of at the end.
+        addConsensusLine(blockDiv, consensus, colStart, colEnd + 1, nameLen, stickyNames, blackThresh, darkThresh, lightThresh, enableBlack, enableDark, enableLight, isLastBlock && colEnd >= end - 1, 'top', options);
+        if (needsColWindow) {
+            const consDataEl = blockDiv.lastElementChild?.querySelector('.seq-data');
+            if (consDataEl) _applyColumnWindowStyle(consDataEl, blockLen, colStart - start, charWidthPx);
+        }
+    }
+
+    // Row windowing within this block.
+    // The block's vertical position in the container is blockTopPxIn (_unifiedGeometry).
+    // The header (ruler + optional top consensus) occupies the space between the
+    // block's top and the row area. Uses the directly-measured header height
+    // (see _measureUnifiedHeaderHeight) rather than deriving it as
+    // `blockHeightPx - nSeq * rowHeightPx` - that subtraction looked exact but
+    // compounds rowHeightPx's own sub-pixel measurement error across every row
+    // in the block, which on a real 3408-row alignment produced a phantom
+    // ~6651px "header" (versus the real ~30px ruler+consensus) and made the
+    // row range collapse to negative, rendering zero rows.
+    // The rows on screen now; the buffer rows around them are added a chunk
+    // per frame by the caller (_growBlockRows), so a block entering the
+    // window never costs one long frame. _vis already applied the
+    // empty/inverted-area fallback.
+    const rowStart = Math.max(0, _vis.s);
+    const rowEnd = Math.min(Math.max(0, nSeq - 1), _vis.e);
+    _unifiedRenderedRowRanges.set(blockIndex, { rowStart, rowEnd, colStart, colEnd, bufferRows: _budget.bufferRows });
+
+    // Top row spacer (fills the space of rows above the visible window)
+    const topRowSpacer = document.createElement('div');
+    topRowSpacer.className = 'unified-row-spacer';
+    topRowSpacer.style.height = (rowStart * rowHeightPx) + 'px';
+    blockDiv.appendChild(topRowSpacer);
+
+    // Visible rows. The length badge belongs after the block's real last
+    // column only - same rule as the consensus line above.
+    for (let i = rowStart; i <= rowEnd; i++) {
+        const lineDiv = createSequenceLine(i, colStart, colEnd + 1, nameLen, stickyNames, standard, ambiguous, blackThresh, darkThresh, lightThresh, enableBlack, enableDark, enableLight, isLastBlock && colEnd >= end - 1, conservationData);
+        if (needsColWindow) {
+            const dataEl = lineDiv.querySelector('.seq-data');
+            if (dataEl) { _applyColumnWindowStyle(dataEl, blockLen, colStart - start, charWidthPx); _noteRowColumnWindow(dataEl, colStart, colEnd); }
+        }
+        blockDiv.appendChild(lineDiv);
+        if (state._codonData) _appendCodonRows(lineDiv, i, colStart, colEnd + 1, needsColWindow ? { blockLen, start, charWidthPx } : null);
+    }
+
+    // Bottom row spacer (fills the space of rows below the visible window)
+    const bottomRowSpacer = document.createElement('div');
+    bottomRowSpacer.className = 'unified-row-spacer';
+    bottomRowSpacer.style.height = (Math.max(0, nSeq - 1 - rowEnd) * rowHeightPx) + 'px';
+    blockDiv.appendChild(bottomRowSpacer);
+
+    if (shouldRenderConsensus && consensusPosition === 'bottom') {
+        addConsensusLine(blockDiv, consensus, colStart, colEnd + 1, nameLen, stickyNames, blackThresh, darkThresh, lightThresh, enableBlack, enableDark, enableLight, isLastBlock && colEnd >= end - 1, 'bottom', options);
+        if (needsColWindow) {
+            const consDataEl = blockDiv.lastElementChild?.querySelector('.seq-data');
+            if (consDataEl) _applyColumnWindowStyle(consDataEl, blockLen, colStart - start, charWidthPx);
+        }
+    }
+
+    return blockDiv;
+}
+

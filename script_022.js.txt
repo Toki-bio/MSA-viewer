@@ -1,0 +1,415 @@
+[script.js lines 9369-9782 of ViewAlign fd8b8e4]
+// Where a feature label sticks while its box is partly scrolled off: just right of the
+// name column. Measured from a rendered name cell, once per name width and font size.
+let _annotLabelLeftKey = null;
+function _syncAnnotLabelLeft() {
+    const key = effectiveNameLength() + ':' + (alignmentContainer.style.fontSize || '');
+    if (key === _annotLabelLeftKey) return;
+    const nm = alignmentContainer.querySelector('.seq-line[data-seq-index] > .seq-name');
+    if (!nm) return;   // first block of a windowed render: measured on the next one
+    const left = nm.getBoundingClientRect().right - alignmentContainer.getBoundingClientRect().left + 4;
+    alignmentContainer.style.setProperty('--annot-label-left', Math.max(0, left).toFixed(1) + 'px');
+    _annotLabelLeftKey = key;
+}
+
+function _buildAnnotTrackLine(colStart, colEnd, cw) {
+    const L = state._annotLayout;
+    if (!L) return null;
+    _syncAnnotLabelLeft();
+    const line = document.createElement('div');
+    line.className = 'annot-track-line';
+    line.style.height = L.lanes + 'em';
+    const name = document.createElement('div');
+    name.className = `seq-name annot-track-name ${el('stickyNames')?.checked === false ? 'static' : ''}`;
+    const maxChars = Math.max(6, Math.floor(effectiveNameLength() * 1.3));
+    name.innerHTML = `<span class="annot-track-label">${_escapeHtml(_truncName(L.label, maxChars))}</span>`;
+    name.title = `${L.label}: ${L.feats.length} feature${L.feats.length === 1 ? '' : 's'}`;
+    line.appendChild(name);
+    const data = document.createElement('div');
+    data.className = 'seq-data annot-track-data';
+    _fillAnnotTrackData(data, colStart, colEnd, cw);
+    line.appendChild(data);
+    line.addEventListener('mouseover', e => {
+        const fe = e.target.closest('.annot-feat');
+        const d = fe && state._annotLayout?.feats[+fe.dataset.fi];
+        if (d) showTooltipAt(_annotTooltipHtml(d), fe, { html: true, className: 'annot-tip' });
+    });
+    line.addEventListener('mouseout', e => { if (e.target.closest('.annot-feat')) hideTooltip(); });
+    line.addEventListener('click', e => {
+        const fe = e.target.closest('.annot-feat');
+        if (!fe) return;
+        e.stopPropagation();
+        _annotSelectFeature(+fe.dataset.fi, e.shiftKey || isCtrlModifier(e));
+    });
+    return line;
+}
+
+// Non-windowed Full/Block render: the tracks go in after the rows exist, so
+// the boxes can use the measured width of a residue span. ch units were
+// measured 0.011 px per column off the spans: 180 px over a 16 kb row.
+function _insertAnnotTracks(container) {
+    if (!state._annotLayout) return;
+    let cw = null;
+    container.querySelectorAll(':scope > .block-block').forEach(block => {
+        const ruler = block.querySelector(':scope > .scale-ruler-line > .seq-data[data-scale]');
+        if (!ruler) return;
+        const [n, start] = ruler.dataset.scale.split(':').map(Number);
+        if (cw == null) {
+            const span = block.querySelector('.seq-line[data-seq-index] .seq-data span[data-pos]');
+            cw = span ? span.getBoundingClientRect().width : 0;
+        }
+        const track = _buildAnnotTrackLine(start, start + n - 1, cw || null);
+        if (track) block.insertBefore(track, block.firstChild);
+    });
+}
+
+function _annotTooltipHtml(d) {
+    const f = d.f;
+    const fmt = n => n.toLocaleString();
+    const where = d.seqIndex === 'cols' ? 'alignment columns' : _escapeHtml(state.seqs[d.seqIndex]?.header || f.chrom);
+    let h = `<b>${_escapeHtml(f.name)}</b>`;
+    if (f.desc) h += `<br>${_escapeHtml(f.desc)}`;
+    h += `<br>${where}: ${fmt(f.start + 1)}&ndash;${fmt(f.end)}${f.strand ? ' (' + f.strand + ')' : ''}, ${fmt(f.end - f.start)} bp`;
+    if (f.cdsBlocks && f.cdsBlocks.length > 1) h += `<br>${f.cdsBlocks.length} coding exons, ${fmt(f.cdsBlocks.reduce((t, [a, b]) => t + b - a, 0))} bp coding`;
+    if (d.seqIndex !== 'cols') h += `<br>columns ${fmt(d.cs + 1)}&ndash;${fmt(d.ce + 1)}`;
+    if (f.score != null) h += `<br>score ${f.score}`;
+    return h;
+}
+
+function _annotSelectFeature(fi, additive) {
+    const d = state._annotLayout?.feats[fi];
+    if (!d) return;
+    if (!additive) state.selectedColumns.clear();
+    for (let p = d.cs; p <= d.ce; p++) state.selectedColumns.add(p);
+    state.lastSelectedColumn = d.ce;
+    hideTooltip();
+    updateColumnSelections();
+    if (isCanvasMode()) _canvasState.scheduleDraw?.();
+    showMessage(`${d.f.name}: columns ${(d.cs + 1).toLocaleString()}-${(d.ce + 1).toLocaleString()} selected`, 2500);
+}
+
+// Canvas mode: the track is drawn above the ruler; TRACK_H is its height.
+function _annotTrackHeightPx(charH) {
+    const L = state._annotLayout;
+    return L ? L.lanes * charH : 0;
+}
+
+// The slots of a feature's columns a..b: first to last shown column (a fold inside stays under the box), null when all
+// are hidden. The cells are drawn by slot; by column the box stood over other residues once columns were hidden.
+function _annotSlotSpan(a, b) {
+    const so = _canvasState.slotOf;
+    if (!so) return [a, b];
+    let c0 = Math.max(0, a), c1 = Math.min(so.length - 1, b);
+    while (c0 <= c1 && so[c0] < 0) c0++;
+    while (c1 >= c0 && so[c1] < 0) c1--;
+    return c0 <= c1 ? [so[c0], so[c1]] : null;
+}
+function _canvasDrawAnnotTrack(ctx, o) {
+    const L = state._annotLayout;
+    const { ox, oy, w, NAME_W, CHAR_W, CHAR_H, TRACK_H, firstCol, lastCol, stickyNames, fontSizePx } = o;
+    if (!L || TRACK_H <= 0) return;
+    const y0 = -oy;
+    if (y0 + TRACK_H <= 0) return;
+    if (o.layer) {
+        // Block view: the track is drawn whole into its own canvas and copied at whole device pixels.
+        // A band's track scrolls with the band, so the canvas edge cuts it at a different line in every
+        // frame, and Chrome antialiases a path cut by the canvas edge (the feature arrows' tips) slightly
+        // differently from the same path uncut: the frame copy then kept pixels a full redraw does not
+        // give (measured with a software canvas: 2 pixels, 6 levels). Its labels are drawn there too, away
+        // from the text of the other bands, whose order changed their antialiasing after a read-back.
+        const dpr = o.dpr || 1, W = Math.max(1, Math.ceil(w * dpr)), H = Math.max(1, Math.round(TRACK_H * dpr));
+        const lc = _canvasState._annotLayer || (_canvasState._annotLayer = document.createElement('canvas'));
+        if (lc.width !== W) lc.width = W;
+        if (lc.height !== H) lc.height = H;
+        const lctx = lc.getContext('2d', { alpha: false });
+        lctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+        _canvasDrawAnnotTrack(lctx, { ...o, oy: 0, layer: false });
+        ctx.save();
+        ctx.setTransform(1, 0, 0, 1, 0, 0);
+        ctx.imageSmoothingEnabled = false;
+        ctx.drawImage(lc, 0, Math.round(y0 * dpr));
+        ctx.restore();
+        return;
+    }
+    ctx.save();
+    ctx.fillStyle = '#fff';
+    ctx.fillRect(0, y0, w, TRACK_H);
+    const labelFont = Math.max(8, Math.round(fontSizePx * 0.72)) + 'px Arial, Helvetica, sans-serif';
+    const dataLeft = stickyNames ? NAME_W : Math.max(0, NAME_W - ox);
+    // firstCol/lastCol are slots
+    for (const d of L.feats) {
+        const sp = _annotSlotSpan(d.cs, d.ce);
+        if (!sp || sp[1] < firstCol || sp[0] > lastCol) continue;
+        const x0 = NAME_W + sp[0] * CHAR_W - ox, x1 = NAME_W + (sp[1] + 1) * CHAR_W - ox;
+        const y = y0 + d.lane * CHAR_H + 1, hh = CHAR_H - 2;
+        const ah = Math.min(6, (x1 - x0) / 2);
+        ctx.fillStyle = d.color;
+        ctx.beginPath();
+        if (d.f.strand === '+') {
+            ctx.moveTo(x0, y); ctx.lineTo(x1 - ah, y); ctx.lineTo(x1, y + hh / 2); ctx.lineTo(x1 - ah, y + hh); ctx.lineTo(x0, y + hh);
+        } else if (d.f.strand === '-') {
+            ctx.moveTo(x0 + ah, y); ctx.lineTo(x1, y); ctx.lineTo(x1, y + hh); ctx.lineTo(x0 + ah, y + hh); ctx.lineTo(x0, y + hh / 2);
+        } else {
+            ctx.rect(x0, y, x1 - x0, hh);
+        }
+        ctx.closePath();
+        ctx.fill();
+        for (const [a, b] of _annotIntronCols(d)) {    // introns: box cut, a thin line joins the exons (as in the DOM track)
+            const isp = _annotSlotSpan(a, b);
+            if (!isp) continue;
+            const ix0 = NAME_W + isp[0] * CHAR_W - ox, ix1 = NAME_W + (isp[1] + 1) * CHAR_W - ox;
+            ctx.fillStyle = '#fff'; ctx.fillRect(ix0, y, ix1 - ix0, hh);
+            ctx.fillStyle = d.color; ctx.fillRect(ix0, y + hh / 2 - 1, ix1 - ix0, 2);
+        }
+        ctx.font = labelFont;
+        const tw = ctx.measureText(d.f.name).width;
+        if (tw + 8 + ah <= x1 - x0) {
+            // The label stays on screen while its box is partly scrolled off to the left
+            const lx = Math.min(Math.max(x0, dataLeft) + 4, x1 - ah - 4 - tw);
+            ctx.fillStyle = d.fg;
+            ctx.textBaseline = 'middle';
+            ctx.textAlign = 'left';
+            ctx.fillText(d.f.name, lx, y + hh / 2);
+        }
+    }
+    // Name cell: the track label, over whatever scrolled under it (as the rows do)
+    const nameX0 = stickyNames ? 0 : -ox;
+    if (stickyNames || ox < NAME_W) {
+        ctx.beginPath();
+        ctx.rect(0, y0, NAME_W, TRACK_H);
+        ctx.clip();
+        ctx.fillStyle = '#fff';
+        ctx.fillRect(nameX0, y0, NAME_W, TRACK_H);
+        ctx.fillStyle = '#777';
+        ctx.font = labelFont;
+        ctx.textBaseline = 'middle';
+        ctx.textAlign = 'left';
+        ctx.fillText(_truncName(L.label, Math.max(6, Math.floor(NAME_W / (fontSizePx * 0.42)))), nameX0 + 4, y0 + CHAR_H / 2);
+    }
+    ctx.restore();
+    ctx.textBaseline = 'top';
+    ctx.textAlign = 'start';
+}
+
+// The feature under a Canvas-mode pointer position, or null.
+function _canvasHitTestAnnot(clientX, clientY) {
+    const L = state._annotLayout;
+    const canvas = _canvasState.canvas;
+    const m = _canvasState.metrics;
+    if (!L || !canvas || !m || !m.trackH) return null;
+    // _canvasLocal: in the Block view every band has its own track at its top (it read band 1's)
+    const P = _canvasLocal(clientX, clientY);
+    const x = P.x;
+    const y = P.y + P.oy;
+    if (y < 0 || y >= m.trackH || x < m.nameW) return null;
+    const slot = Math.floor((x - m.nameW + P.ox) / m.charW);
+    if (slot >= P.s1) return null;   // past the band's last column
+    const lane = Math.floor(y / m.charH);
+    const d = L.feats.find(q => { if (q.lane !== lane) return false; const sp = _annotSlotSpan(q.cs, q.ce); return !!sp && sp[0] <= slot && sp[1] >= slot; });
+    return d ? { d, col: _canvasSlotToCol(slot), lane } : null;
+}
+
+// Loading, clearing, the Settings panel
+function setAnnotation(text, sourceName) {
+    const parsed = parseBedText(text);
+    if (!parsed.features.length) {
+        showMessage(`No BED features found in ${sourceName}`, 4000);
+        return false;
+    }
+    state.annot = { text: String(text), sourceName, trackName: parsed.trackName, features: parsed.features, skippedLines: parsed.skipped };
+    // A mitochondrial gene set (tRNAs, rRNAs, ND/COX/ATP/CYTB) with the Standard code
+    // still selected: switch to the vertebrate mitochondrial code, and say so. A whole
+    // mitogenome has many such features; a single-gene file (one COX1 feature) counts when
+    // every feature in it has a mitochondrial gene name
+    const mt = parsed.features.filter(f => /^(trn|tRNA|ND\d|NAD\d|COX\d|CO[123]\b|ATP[68]|CYTB|COB\b|12S|16S|rrn|control region|D-loop|OL$)/i.test(f.name)).length;
+    const codeSel = el('codonCode');
+    if ((mt >= 10 || mt === parsed.features.length) && codeSel && codeSel.value === '1') {
+        codeSel.value = '2';
+        showMessageAfterRender('Annotation looks mitochondrial: genetic code set to Vertebrate Mito (Display > Code)', 5000);
+    }
+    if (state.seqs?.length) renderAlignment(); else updateAnnotPanel();
+    showMessage(`Annotation: ${parsed.features.length} feature${parsed.features.length === 1 ? '' : 's'} from ${sourceName}`, 3000);
+    return true;
+}
+
+// A GenBank location as sorted 0-based half-open blocks: join(), order(), complement(), partial < >, single bases.
+// Positions in another record (ACC:12..40) and between-base sites (12^13) are left out.
+function _gbLocationBlocks(loc) {
+    const s = String(loc || '').replace(/\s+/g, '');
+    if (/[A-Za-z0-9_.]+:\d/.test(s.replace(/^(complement|join|order)\(/g, ''))) return null;
+    const blocks = [];
+    for (const m of s.matchAll(/<?(\d+)(?:\.\.>?(\d+))?/g)) {
+        if (s[m.index + m[0].length] === '^' || s[m.index - 1] === '^') continue;
+        const a = +m[1], b = m[2] ? +m[2] : a;
+        if (a >= 1 && b >= a) blocks.push([a - 1, b]);
+    }
+    blocks.sort((x, y) => x[0] - y[0]);
+    return blocks.length ? { blocks, strand: /complement\(/.test(s) ? '-' : '+' } : null;
+}
+
+// The CDS, tRNA and rRNA features of GenBank records as the annotation track (BED12, so snapshots keep it):
+// they were parsed and dropped, so codon analysis never knew a GenBank file's genes and "Auto" guessed a frame
+// from ATG counts. A BED the user loaded is not replaced; a GenBank file's own features are. /transl_table
+// sets the genetic code.
+function _annotFromGenBank(seqs) {
+    if (state.annot && !state.annot.fromGenBank) return;
+    const lines = [];
+    let table = null;
+    for (const s of seqs || []) {
+        const feats = s._genbank && s._genbank.features;
+        if (!feats || !feats.length) continue;
+        const chrom = String(s.header || '').split(/\s+/)[0];
+        for (const f of feats) {
+            if (!/^(CDS|tRNA|rRNA)$/.test(f.type)) continue;
+            const loc = _gbLocationBlocks(f.location);
+            if (!loc) continue;
+            const q = f.qualifiers || {};
+            const name = String(q.gene || q.locus_tag || q.product || f.type).replace(/\s+/g, '_');
+            const start = loc.blocks[0][0], end = loc.blocks[loc.blocks.length - 1][1];
+            const cds = f.type === 'CDS';
+            if (cds && q.transl_table && !table) table = String(q.transl_table);
+            const desc = cds ? `CDS codon_start=${/^[123]$/.test(String(q.codon_start)) ? q.codon_start : 1}${q.product ? ' ' + q.product : ''}`
+                : `${f.type}${q.product ? ' ' + q.product : ''}`;
+            lines.push([chrom, start, end, name, 0, loc.strand, start, cds ? end : start, '.', loc.blocks.length,
+                loc.blocks.map(b => b[1] - b[0]).join(',') + ',', loc.blocks.map(b => b[0] - start).join(',') + ',', desc].join('\t'));
+        }
+    }
+    if (!lines.length) {
+        if (state.annot && state.annot.fromGenBank) state.annot = null;     // the previous GenBank's genes are not this file's
+        return;
+    }
+    const text = lines.join('\n') + '\n';
+    const parsed = parseBedText(text);
+    state.annot = { text, sourceName: 'GenBank features', trackName: 'GenBank features', features: parsed.features, skippedLines: parsed.skipped, fromGenBank: true };
+    const codeSel = el('codonCode');
+    if (table && codeSel && [...codeSel.options].some(o => o.value === table) && codeSel.value !== table) {
+        codeSel.value = table;
+        showMessageAfterRender(`GenBank /transl_table=${table}: genetic code set to ${codeSel.options[codeSel.selectedIndex].text} (Display > Code)`, 5000);
+    }
+}
+
+function clearAnnotation() {
+    if (!state.annot) return;
+    state.annot = null;
+    state._annotLayout = null;
+    state._annotReport = null;
+    if (state.seqs?.length) renderAlignment();
+    updateAnnotPanel();
+}
+
+function loadAnnotationFromUrl(u) {
+    const url = String(u || '').trim();
+    if (!url) return Promise.resolve(false);
+    showMessage('Loading annotation...', 0);
+    return fetch(url)
+        .then(r => { if (!r.ok) throw new Error('HTTP ' + r.status); return r.text(); })
+        .then(t => setAnnotation(t, url.split('/').pop() || url))
+        .catch(err => {
+            console.warn('[annot] load failed:', err);
+            showMessage(`Failed to load annotation: ${err.message}`, 5000);
+            return false;
+        });
+}
+
+function updateAnnotPanel() {
+    const st = el('annotStatus');
+    if (!st) return;
+    const a = state.annot;
+    const clearBtn = el('annotClearButton');
+    if (clearBtn) clearBtn.disabled = !a;
+    if (!a) {
+        st.textContent = 'No annotation loaded. BED columns: sequence name (as in the alignment, or * for alignment columns), start, end, name, score, strand, ., ., itemRgb; a 13th column is shown in the tooltip.';
+        return;
+    }
+    const plural = (n, w) => `${n.toLocaleString()} ${w}${n === 1 ? '' : 's'}`;
+    let s = `${a.trackName || a.sourceName}: ${plural(a.features.length, 'feature')}`;
+    const r = state._annotReport;
+    if (r) {
+        if (r.placed) s += `, ${r.placed === a.features.length ? 'all' : r.placed.toLocaleString()} placed on ${r.chroms.join(', ')} (${plural(r.lanes, 'lane')})`;
+        if (r.unmatched.size) s += `. Skipped: ` + [...r.unmatched].map(([c, n]) => `${n} on "${c}" (no such sequence)`).join(', ');
+        if (r.outside) s += `. ${r.outside} outside the sequence`;
+    }
+    if (el('showAnnotation')?.checked === false) s += '. Hidden';
+    else if (r && r.placed && !state._annotLayout && state._varSiteHiddenRanges) s += '. Not shown with Variable sites only';
+    if (a.skippedLines) s += `. ${plural(a.skippedLines, 'malformed line')} ignored`;
+    st.textContent = s;
+}
+
+function initAnnotationPanel() {
+    const cb = el('showAnnotation');
+    if (cb && !cb._annotBound) {
+        cb._annotBound = true;
+        cb.addEventListener('change', () => {
+            if (state.annot && state.seqs?.length) renderAlignment();
+            updateAnnotPanel();
+        });
+    }
+    const fileBtn = el('annotFileButton'), fileIn = el('annotFileInput');
+    if (fileBtn && fileIn && !fileBtn._annotBound) {
+        fileBtn._annotBound = true;
+        fileBtn.addEventListener('click', () => { fileIn.value = ''; fileIn.click(); });
+        fileIn.addEventListener('change', () => {
+            const f = fileIn.files && fileIn.files[0];
+            if (f) f.text().then(t => setAnnotation(t, f.name));
+        });
+    }
+    const urlBtn = el('annotUrlButton'), urlIn = el('annotUrlInput');
+    if (urlBtn && urlIn && !urlBtn._annotBound) {
+        urlBtn._annotBound = true;
+        const loadTyped = () => {
+            if (!urlIn.value.trim()) { showMessage('Type the URL of a BED file first.', 2500); return; }
+            loadAnnotationFromUrl(urlIn.value);
+        };
+        urlBtn.addEventListener('click', loadTyped);
+        urlIn.addEventListener('keydown', e => {
+            if (e.key === 'Enter') { e.preventDefault(); loadTyped(); }
+        });
+    }
+    const clr = el('annotClearButton');
+    if (clr && !clr._annotBound) {
+        clr._annotBound = true;
+        clr.addEventListener('click', clearAnnotation);
+    }
+    updateAnnotPanel();
+}
+
+function generateScale(maxLength, interval = 10, startPos = 0) {
+    const scaleArray = new Array(maxLength).fill(' ');
+
+    // Find the first multiple of interval in this block's range
+    const startAbs = startPos + 1;
+    const endAbs = startPos + maxLength;
+    const firstMultiple = Math.ceil(startAbs / interval) * interval;
+
+    // Show position markers at multiples of interval within this block
+    for (let absPos = firstMultiple; absPos <= endAbs; absPos += interval) {   // endAbs is the block's last column
+        let label;
+        // Alternate: 10 number, 20 *, 30 number, 40 *, etc.
+        if ((absPos / interval) % 2 === 1) {
+            label = absPos.toString();
+        } else {
+            label = '*';
+        }
+
+        const relIdx = absPos - startPos - 1; // 0-based index for the target position
+        const startIdx = relIdx - (label.length - 1); // Right-align: last digit at relIdx
+
+        // Only place the label if it fits completely within the block
+        if (startIdx >= 0 && startIdx + label.length <= maxLength) {
+            for (let i = 0; i < label.length; i++) {
+                scaleArray[startIdx + i] = label[i];
+            }
+        }
+    }
+
+    return scaleArray.join('');
+}
+
+/**
+ * The ruler's labels when columns are hidden (Variable sites only). generateScale() writes one character per
+ * column, so with hidden columns a number such as "230" lost its middle digit and left scraps ("2", "0").
+ * Here each number is one whole label, right-aligned on its own column like generateScale's, and a label is
+ * left out when its column is hidden, when it would not fit before the first shown column (lo), or when it would
+ * touch the previous label. cols[s] is the column in slot s (a negative entry is a marker's slot, -1 minus the column after it; it carries no label).
+ * Returns [slot of the label's last character, text] for the slots in [lo, hi), in order.
+ */

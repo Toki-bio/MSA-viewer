@@ -1,0 +1,346 @@
+[script.js lines 5761-6105 of ViewAlign fd8b8e4]
+// CANVAS-BASED RENDERER - for large alignments
+// Draws only visible area, no per-residue DOM nodes
+// =====================================================================
+// totalContentW: current alignment's full pixel width (for the persistent scrollbar's thumb sizing).
+// onOffsetChange: optional callback (registered by setupPersistentScrollbar) invoked after each
+// draw() so the scrollbar can mirror wheel-scroll/drag-pan that didn't originate from the bar itself.
+const _canvasState = { offsetX: 0, offsetY: 0, ctx: null, metrics: null, seqsLen: 0, scheduleDraw: null, totalContentW: 0, totalContentH: 0, onOffsetChange: null, resizeHandler: null, mousemoveHandler: null, mouseupHandler: null, canvas: null, rowPitch: 0 };
+
+// Block view (isBlockLayout(); prototyped on branch proto-canvas-block as ?view=cblock):
+// the Canvas renderer draws the wrapped Block layout. Layout abstraction:
+//   strip (default): one band; content (x, y) = (NAME_W + slot*CHAR_W, HEADER_H + row*pitch).
+//   block: bands of bandCols slots stacked vertically, band b at content y = bandTop[b] (a prefix
+//     sum: with codon analysis by gene a band has only the translation lanes of its genes, so bands
+//     differ in height); each band is a complete strip (ruler, consensus, rows) of slots
+//     [b*bandCols, (b+1)*bandCols) drawn by the SAME drawRegion with a per-band virtual offset
+//     (ox_b = s0*CHAR_W, oy_b = oy - bandTop[b]) and row pitch under a clip to the band's rectangle.
+//     drawOverlay works the same way. Hit tests go through _canvasLocal(), which turns a client
+//     point into (band-local x, y mapped onto the strip's row pitch, ox, oy, slot range), so the
+//     strip arithmetic in every hit test is unchanged. Horizontal offset is always 0 (bands fit
+//     the width: bandCols = min(Block width slider, what fits)), the frame copy is the vertical one,
+//     and the exposed strip is widened to the band's line edges (bandEdges) instead of row edges.
+// Since batch 1 this is the Block view itself (isBlockLayout()). vaCanvasBlock(on): Block (true) or
+// the Canvas strip (false) without the mode-switch bookkeeping, for the measurement scripts.
+// The view asked for here is a choice, as a click on the radio (onModeChange) or ?view=: without it
+// renderAlignment's default-view rule (Canvas for a file the user has not chosen a view for) put a
+// small alignment straight back into the Canvas strip (GLM audit cblk #10).
+window.vaCanvasBlock = (on) => {
+    _domBlockForTests = false;
+    _userChoseDomView = !!on;
+    _userDismissedAutoCanvas = !!on;
+    const r = document.getElementById(on ? 'modeBlocks' : 'modeCanvas');
+    if (r) r.checked = true;
+    _lastModeRadioId = r ? r.id : _lastModeRadioId;
+    return renderAlignment();
+};
+// A client point in the coordinates the strip hit tests expect: canvas-relative x, y and the
+// offsets, or in Block layout band-local y with the band's virtual offsets and its slot range.
+function _canvasLocal(clientX, clientY) {
+    const canvas = _canvasState.canvas;
+    const rect = canvas.getBoundingClientRect();
+    const x = clientX - rect.left, y = clientY - rect.top;
+    const L = _canvasState.layout;
+    if (!L) return { x, y, ox: _canvasState.offsetX, oy: _canvasState.offsetY, s0: 0, s1: Infinity, sticky: !!el('stickyNames')?.checked, rect, band: 0, last: true };
+    const cy = (clientY == null ? 0 : y) + _canvasState.offsetY;
+    const b = L.bandAt(cy);   // bands differ in height (translation lanes): binary search of their tops
+    let ry = cy - L.bandTop[b];
+    if (ry >= L.bandBody[b]) ry = 1e9;   // the gap between bands: no line there
+    else {
+        // The hit tests divide by the strip's row pitch; a band whose rows have fewer translation
+        // lanes is mapped onto it row by row (same row, same offset into the row; the lanes a band
+        // has are the first ones), and the lines under the rows move down with them.
+        const p = L.bandPitch[b], P0 = _canvasState.rowPitch, m = _canvasState.metrics, H0 = m.headerH || m.charH;
+        if (p !== P0 && ry >= H0) {
+            const rel = ry - H0, nS = _canvasState.seqsLen || 0;
+            if (rel < nS * p) { const r = Math.floor(rel / p); ry = H0 + r * P0 + (rel - r * p); }
+            else ry += nS * (P0 - p);
+        }
+    }
+    const s0 = b * L.bandCols;
+    return { x, y: ry, ox: s0 * _canvasState.metrics.charW, oy: 0, s0, s1: Math.min(L.nSlots, s0 + L.bandCols), sticky: true, rect, band: b, last: b === L.nBands - 1, lanes: L.bandLanes[b] };
+}
+// Client position of the top-left corner of a cell (row, slot), any layout
+function _canvasCellClient(row, slot) {
+    const m = _canvasState.metrics, rect = _canvasState.canvas.getBoundingClientRect();
+    const pitch = _canvasState.rowPitch || m.charH, L = _canvasState.layout;
+    if (!L) return { x: rect.left + m.nameW + slot * m.charW - _canvasState.offsetX, y: rect.top + (m.headerH || m.charH) + row * pitch - _canvasState.offsetY };
+    const b = Math.max(0, Math.min(L.nBands - 1, Math.floor(slot / L.bandCols)));
+    return { x: rect.left + m.nameW + (slot - b * L.bandCols) * m.charW, y: rect.top + L.bandTop[b] + (m.headerH || m.charH) + row * L.bandPitch[b] - _canvasState.offsetY };
+}
+// A y in the strip's content coordinates (the rows at the strip's row pitch, as _canvasLocal gives them
+// to the hit tests) as a y in band b (its rows at the band's own pitch): the inverse of _canvasLocal's map
+function _canvasBandY(b, sy) {
+    const L = _canvasState.layout, m = _canvasState.metrics;
+    const p = L.bandPitch[b], P0 = _canvasState.rowPitch, H0 = m.headerH || m.charH;
+    if (p === P0 || sy < H0) return sy;
+    const rel = sy - H0, nS = _canvasState.seqsLen || 0;
+    if (rel < nS * P0) { const r = Math.floor(rel / P0); return H0 + r * p + Math.min(rel - r * P0, p); }
+    return sy - nS * (P0 - p);   // below the rows (the bottom consensus row)
+}
+// Client position of a point given in the strip's content coordinates: the left edge of slot `slot`,
+// and sy (HEADER_H + row * rowPitch for a row's top, the consensus band's y, ...). In the Block view
+// the point is in the band that holds the slot, at that band's row pitch. (The tooltip anchors used
+// the strip's arithmetic, so in Block they sat at band 1's place or off the view.)
+function _canvasStripClient(slot, sy) {
+    const m = _canvasState.metrics, rect = _canvasState.canvas.getBoundingClientRect(), L = _canvasState.layout;
+    if (!L) return { x: rect.left + m.nameW + slot * m.charW - _canvasState.offsetX, y: rect.top + sy - _canvasState.offsetY };
+    const b = Math.max(0, Math.min(L.nBands - 1, Math.floor(slot / L.bandCols)));
+    return { x: rect.left + m.nameW + (slot - b * L.bandCols) * m.charW, y: rect.top + L.bandTop[b] + _canvasBandY(b, sy) - _canvasState.offsetY };
+}
+// The Block layout's bands in a string: equal when a redraw laid them out the same. With codon analysis by
+// gene the bands differ in height by their translation lanes: those are part of it. (It held only the total
+// height: an annotation edit that moved a gene's lane from band 0 to band 2 kept it, and the old raw offset
+// was restored into band 1 twelve rows further down. GLM audit cb34 #5/#6/#25.)
+function _canvasBandsSig(L) {
+    return L ? L.bandCols + ':' + L.nBands + ':' + L.bandTop[L.nBands] + ':' + (_canvasState.metrics?.charW || 0) + ':' + L.bandLanes.join('') : '';
+}
+// The Canvas drawing area's height in CSS px
+function _canvasViewH() {
+    const cv = _canvasState.canvas;
+    return (cv && (parseFloat(cv.style.height) || cv.clientHeight)) || alignmentContainer?.clientHeight || 240;
+}
+// The band of the Block layout that holds column col (its shown slot, or the marker of its hidden run)
+function _canvasBandOfCol(col) {
+    const L = _canvasState.layout;
+    if (!L) return 0;
+    const s = col > 0 ? _canvasColToSlotNear(col) : 0;
+    return Math.max(0, Math.min(L.nBands - 1, Math.floor((s >= 0 ? s : col) / L.bandCols)));
+}
+// Block view (Canvas Block) navigation: the Canvas strip pans to a column, the Block view goes to the
+// band that holds it (as the DOM Block scrolled to the block holding it, centred). With a row: that
+// row's line in the band, centred. Without a column: the row in the band now in the middle of the
+// view. Without a row: the band whole and centred when it fits the view and is not all in view
+// already; a band taller than the view is entered at the rows now in view. False when not in Block.
+function _canvasBlockReveal(row, col) {
+    const L = _canvasState.layout, m = _canvasState.metrics;
+    if (!L || !m || !_canvasState.canvas) return false;
+    const viewH = _canvasViewH(), oy = _canvasState.offsetY || 0;
+    const b = Number.isInteger(col) ? _canvasBandOfCol(col) : L.bandAt(oy + viewH / 2);
+    const top = L.bandTop[b], body = L.bandBody[b], H0 = m.headerH || m.charH;
+    const n = _canvasState.seqsLen || state.seqs.length;
+    let y;
+    if (Number.isInteger(row) && row >= 0 && row < n) {
+        const p = L.bandPitch[b];
+        y = top + H0 + row * p + (m.charH || p) / 2 - viewH / 2;
+    } else if (body <= viewH) {
+        if (top >= oy && top + body <= oy + viewH) return true;   // all of it in view: stay
+        y = top - (viewH - body) / 2;
+    } else {
+        const b0 = L.bandAt(oy);
+        y = top + Math.max(0, Math.min(oy - L.bandTop[b0], body - viewH));
+    }
+    const maxY = Math.max(0, (_canvasState.totalContentH || 0) - viewH);
+    _canvasState.offsetX = 0;
+    _canvasState.offsetY = Math.max(0, Math.min(maxY, y));
+    _canvasState.scheduleDraw?.();
+    window._syncVerticalScrollbar?.();
+    _canvasState.onOffsetChange?.();
+    return true;
+}
+// Cancellation token for the Canvas mode's deferred (chunked) conservation/
+// consensus jobs; reassigned + old one cancelled on every render so a
+// superseded background job can't clobber a newer one's results.
+let _canvasDeferredToken = null;
+
+// The translation rows of sequence i for the current codon state, in the DOM's order: by gene
+// one row per lane (a second only where genes overlap), Frame: All 3 one row per frame, else
+// one row. Each: { aaData, tag (All 3: "frame N"), frame, best, frameShifts }.
+function _canvasCodonRows(i) {
+    const cd = state._codonData;
+    if (!cd || !cd.aaSeq || !cd.aaSeq[i]) return [];
+    if (cd.byGene) {
+        const n = cd.lanes || 1, rows = [];
+        for (let lane = 0; lane < n; lane++) rows.push({ aaData: cd.aaSeq[i].filter(e => (e.lane || 0) === lane), tag: null, frame: -1, best: false, frameShifts: lane === 0 ? cd.frameShifts?.[i] : null });
+        return rows;
+    }
+    if (state._codonFrames && state._codonActiveFrame === -1) {
+        const best = state._codonFrames.bestFrame;
+        return [0, 1, 2].map(fr => { const fd = state._codonFrames.frames[fr]; return { aaData: fd?.aaSeq?.[i], tag: 'frame ' + (fr + 1), frame: fr, best: fr === best, frameShifts: fd?.frameShifts?.[i] }; });
+    }
+    return [{ aaData: cd.aaSeq[i], tag: null, frame: -1, best: false, frameShifts: cd.frameShifts?.[i] }];
+}
+
+// The translation track's colours, read from the stylesheet through probe elements (.aa-data
+// > .aa-<class>, the frame tags, the best-frame name) so Canvas and Full/Block cannot differ.
+let _canvasAaPaletteCache = null;
+function _canvasAaPalette() {
+    if (_canvasAaPaletteCache) return _canvasAaPaletteCache;
+    const host = document.createElement('div');
+    host.style.cssText = 'position:absolute;visibility:hidden;left:-10000px;top:0;pointer-events:none;';
+    const data = document.createElement('div'); data.className = 'aa-data'; host.appendChild(data);
+    document.body.appendChild(host);
+    const pal = {};
+    for (const cls of ['hyd', 'aro', 'pos', 'neg', 'pol', 'gly', 'pro', 'unk', 'stop', 'fs']) {
+        const sp = document.createElement('span'); sp.className = 'aa-c aa-' + cls; data.appendChild(sp);
+        const cs = getComputedStyle(sp);
+        pal[cls] = { bg: _cssColourToHex(cs.backgroundColor) || '#ffffff', fg: _cssColourToHex(cs.color) || '#222222' };
+    }
+    pal.tag = [];
+    for (let fr = 0; fr < 3; fr++) {
+        const row = document.createElement('div'); row.className = 'aa-row aa-row-f' + fr;
+        const name = document.createElement('div'); name.className = 'aa-name';
+        const tag = document.createElement('span'); tag.className = 'aa-tag'; tag.textContent = 'x';
+        name.appendChild(tag); row.appendChild(name); host.appendChild(row);
+        pal.tag.push(_cssColourToHex(getComputedStyle(tag).color) || '#666666');
+    }
+    const bestRow = document.createElement('div'); bestRow.className = 'aa-row aa-row-best';
+    const bestName = document.createElement('div'); bestName.className = 'aa-name'; bestRow.appendChild(bestName); host.appendChild(bestRow);
+    pal.bestBold = (parseInt(getComputedStyle(bestName).fontWeight, 10) || 400) >= 600;
+    host.remove();
+    _canvasAaPaletteCache = pal;
+    return pal;
+}
+
+// Baseline of a text line in a Canvas row of height rowH, placed as CSS places it with
+// line-height 1.0 (half of the font box's overflow above, half below): the full ascent put
+// the baseline ~1.4 px lower than in Full/Block once rows became the font size (v259), and
+// each name's underscores fell under the next row's name background
+function _canvasTextBaseline(rowH) {
+    const m = _canvasState.metrics;
+    if (!m || !(m.ascent > 0)) return rowH - 3;
+    return _textBaselinePx(m.fontSizePx, rowH);   // as the DOM rows (--text-dy): the capitals centred in the row
+}
+
+function _initCanvasMetrics(ctx, fontSizePx) {
+    // Cache is keyed on font size and device pixel ratio so zoom changes (which resize the
+    // DOM font) and a move to another screen invalidate stale metrics.
+    const dpr = window.devicePixelRatio || 1;
+    if (_canvasState.metrics && _canvasState.metrics.fontSizePx === fontSizePx && _canvasState.metrics.dpr === dpr) return _canvasState.metrics;
+    ctx.font = fontSizePx + 'px "Courier New", monospace';
+    const m = ctx.measureText('X');
+    const ascent = (m.fontBoundingBoxAscent != null)
+        ? m.fontBoundingBoxAscent
+        : Math.ceil(fontSizePx * 0.8);
+    const descent = (m.fontBoundingBoxDescent != null)
+        ? m.fontBoundingBoxDescent
+        : Math.ceil(fontSizePx * 0.15);
+    // Cells are a whole number of DEVICE pixels, expressed in CSS px: at 125 % or 150 % scaling a
+    // 15 CSS px row would be 18.75 or 22.5 device px, every row edge would be antialiased, and the
+    // scroll frame copy (which ends on a row edge) would not be exact.
+    // Row height = the font size + 2 px, as in Full/Block (--row-h, _rowHeightPx): the letters sit as
+    // the DOM's half-leading puts them, with box colour above and below the ink at every zoom.
+    const charH = _rowHeightPx(fontSizePx);
+    _canvasState.metrics = {
+        charW: Math.ceil(Math.ceil(m.width) * dpr) / dpr,
+        charH,
+        fontSizePx,
+        ascent,
+        descent,
+        dpr
+    };
+    return _canvasState.metrics;
+}
+
+// ── Canvas hit-testing ─────────────────────────────────────────────────────
+// Converts a screen pixel coordinate (clientX/clientY) to a {row, col} index
+// in the alignment, or null if the point falls outside the data area (e.g. on
+// the name column, the scale ruler, or past the last row/column).
+//
+// The math mirrors the drawing code in _renderCanvasAlignment's draw():
+//   - The canvas is positioned at the top-left of alignmentContainer.
+//   - NAME_W pixels on the left are the sticky name column (no data there).
+//   - SCALE_H pixels at the top are the position ruler (no data there).
+//   - Each residue cell is CHAR_W × CHAR_H pixels.
+//   - offsetX/offsetY are the pan offsets (content scrolled away from origin).
+//
+// Worked examples (assuming CHAR_W=8, CHAR_H=15, NAME_W=208, SCALE_H=15,
+// offsetX=0, offsetY=0, canvas at screen position (100, 50)):
+//
+//   1. clientX=316, clientY=80  → canvas-relative (216, 30)
+//      col = floor((216 - 208 + 0) / 8) = floor(1) = 1
+//      row = floor((30 - 15 + 0) / 15) = floor(1) = 1
+//      → {row: 1, col: 1}  ✓ (second residue of second sequence)
+//
+//   2. clientX=100, clientY=50  → canvas-relative (0, 0)
+//      col = floor((0 - 208 + 0) / 8) = floor(-26) = -26  → negative, null
+//      → null  ✓ (top-left corner is the name column / ruler, not data)
+//
+//   3. clientX=312, clientY=65  → canvas-relative (212, 15)
+//      col = floor((212 - 208 + 0) / 8) = floor(0.5) = 0
+//      row = floor((15 - 15 + 0) / 15) = floor(0) = 0
+//      → {row: 0, col: 0}  ✓ (first residue of first sequence)
+//
+//   4. clientX=900, clientY=900 (past last col/row) → canvas-relative (800, 850)
+//      If alignment is 50 cols × 20 rows: col=74, row=55 → both out of range → null
+//      → null  ✓
+// Variable sites only lays the Canvas out in slots (shown columns and marker cells): a viewport
+// x gives a slot, these give the column. A marker maps to the column shown after it.
+function _canvasSlotToCol(slot) {
+    const sl = _canvasState.slots;
+    if (!sl) return slot;
+    if (slot >= sl.length) return -1;
+    const p = sl[slot];
+    if (p >= 0) return p;
+    const c = -1 - p;
+    if (c < (_canvasState.slotOf ? _canvasState.slotOf.length : c + 1)) return c;
+    // the marker of a fold at the end of the alignment: the column shown before it
+    for (let s = slot - 1; s >= 0; s--) if (sl[s] >= 0) return sl[s];
+    return -1;
+}
+function _canvasColToSlot(col) {
+    const so = _canvasState.slotOf;
+    return so ? (col >= 0 && col < so.length ? so[col] : -1) : col;
+}
+// The slot to go to for a column: its own, or for a hidden column the marker of its run (the next
+// shown column when no marker is drawn), so going to it lands where it is folded
+function _canvasColToSlotNear(col) {
+    const so = _canvasState.slotOf;
+    if (!so) return col;
+    if (col < 0 || col >= so.length) return -1;
+    if (so[col] >= 0) return so[col];
+    const sl = _canvasState.slots;
+    for (let c = col + 1; c < so.length; c++) if (so[c] >= 0) return so[c] > 0 && sl[so[c] - 1] < 0 ? so[c] - 1 : so[c];
+    return Math.max(0, (_canvasState.nSlots || 1) - 1);
+}
+// The folds a marker slot stands for, or null
+function _canvasSlotFolds(slot) {
+    const fb = _canvasState.foldBefore;
+    return fb ? fb.get(slot) || null : null;
+}
+function _canvasSlotIsMarker(slot) {
+    const sl = _canvasState.slots;
+    return !!sl && slot >= 0 && slot < sl.length && sl[slot] < 0;
+}
+
+function _canvasHitTest(clientX, clientY, opts) {
+    const canvas = _canvasState.canvas;
+    if (!canvas) return null;
+    const m = _canvasState.metrics;
+    if (!m || !m.nameW) return null;
+    const P = _canvasLocal(clientX, clientY);
+    const x = P.x, y = P.y;
+    const NAME_W = m.nameW;
+    const HEADER_H = m.headerH || m.charH; // ruler row plus the annotation track, when shown
+    const CHAR_W = m.charW;
+    const CHAR_H = m.charH;
+    const rowPitch = _canvasState.rowPitch || CHAR_H;
+    // The name column covers the cells that scrolled under it (sticky names), so a press
+    // there is on a name, never on a cell; without sticky names the names scroll away.
+    if (x < (P.sticky ? NAME_W : NAME_W - P.ox)) return null;
+    // Subtract the name column and scale ruler offsets, then add back the pan
+    // offset so the result is in content (not viewport) coordinates.
+    const col = Math.floor((x - NAME_W + P.ox) / CHAR_W);
+    const row = Math.floor((y - HEADER_H + P.oy) / rowPitch);
+    if (col < 0 || row < 0 || col >= P.s1) return null;
+    const nSeqs = _canvasState.seqsLen || (state.seqs ? state.seqs.length : 0);
+    const len = state.seqs && state.seqs.length > 0
+        ? _maxOf(state.seqs, s => s.seq.length)
+        : 0;
+    if (row >= nSeqs || col >= (_canvasState.nSlots || len)) return null;
+    // Codon analysis: below the bases of a row lies its translation track, which is not a cell
+    // (the DOM has no span[data-pos] there); with AA only the bases of a translated row are
+    // hidden. Only the hover tooltip asks for track hits (opts.aaRows).
+    if (P.lanes != null ? P.lanes : _canvasState.aaRows) {   // Block: the band's lanes (none in a band without genes)
+        const hasAa = !!(state._codonData?.aaSeq?.[row]?.length);
+        const baseH = (_canvasState.aaOnly && hasAa) ? 0 : (_canvasState.charH || CHAR_H);
+        const inRow = (y - HEADER_H + P.oy) - row * rowPitch;
+        if (inRow >= baseH) {
+            if (!(opts && opts.aaRows) || !hasAa) return null;
+            return { row, col: _canvasSlotToCol(col), slot: col, aaLane: Math.floor((inRow - baseH) / (_canvasState.aaRowH || 1)) };
+        }
+    }
+    if (_canvasSlotIsMarker(col)) return { row, col: _canvasSlotToCol(col), slot: col, brk: true, fold: _canvasSlotFolds(col) };
+    return { row, col: _canvasSlotToCol(col), slot: col };
+}
+

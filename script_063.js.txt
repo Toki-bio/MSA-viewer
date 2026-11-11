@@ -1,0 +1,497 @@
+[script.js lines 27010-27505 of ViewAlign fd8b8e4]
+/**
+ * Open the Add Sequences modal.
+ */
+function openAddSequencesModal() {
+    const modal = document.getElementById('addSeqModal');
+    if (modal) {
+        document.getElementById('addSeqInput').value = '';
+        document.getElementById('addSeqFileLabel').textContent = '';
+        document.getElementById('addSeqFileInput').value = '';
+        showExclusiveModal('addSeqModal');
+    }
+}
+
+/**
+ * Browse button: open file dialog to append FASTA/MSF/other files to add-seq textarea.
+ */
+function initAddSeqBrowse() {
+    const browseBtn = document.getElementById('addSeqBrowseButton');
+    const fileInput = document.getElementById('addSeqFileInput');
+    const label = document.getElementById('addSeqFileLabel');
+    const textarea = document.getElementById('addSeqInput');
+    if (!browseBtn || !fileInput || !textarea) return;
+
+    browseBtn.addEventListener('click', () => fileInput.click());
+
+    fileInput.addEventListener('change', async () => {
+        const files = Array.from(fileInput.files);
+        if (!files.length) return;
+        label.textContent = `Reading ${files.length} file(s)...`;
+        let allContent = textarea.value.trim();
+        const read = [], failed = [];
+        for (const file of files) {
+            // a SAM/BAM/CRAM picked here is reads, not sequences to add: it went into the box as raw text
+            if (await _sniffReadsKind(file)) {
+                closeAddSequencesModal();
+                await _routeReadsFile(file);
+                read.push(file.name + ' (reads, opened in the Reads view)');
+                continue;
+            }
+            try {
+                const { text } = await readSequenceFile(file);
+                const trimmed = text.trim();
+                if (allContent) allContent += '\n' + trimmed;
+                else allContent = trimmed;
+                read.push(file.name);
+            } catch (e) {
+                console.error('Error reading file:', file.name, e);
+                failed.push(file.name);
+            }
+        }
+        textarea.value = allContent;
+        label.textContent = (read.length ? `Loaded ${read.length} file(s): ${read.join(', ')}` : '')
+            + (failed.length ? `${read.length ? '. ' : ''}Could not read ${failed.length} file(s): ${failed.join(', ')}` : '');
+        fileInput.value = '';
+    });
+}
+
+/**
+ * Close the Add Sequences modal.
+ */
+function closeAddSequencesModal() {
+    const modal = document.getElementById('addSeqModal');
+    if (modal) modal.style.display = 'none';
+}
+
+/**
+ * Just add sequences (pad with gaps to alignment length, no realignment).
+ * Respects "Place at top" and "Align to consensus" checkboxes.
+ */
+async function addSequencesJustAdd() {
+    const newText = document.getElementById('addSeqInput')?.value?.trim();
+    if (!newText) {
+        showMessage("Please paste FASTA sequences to add.", 2000);
+        return;
+    }
+
+    // Parse FASTA
+    const lines = newText.split('\n');
+    const newSeqs = [];
+    let currentHeader = null;
+    let currentSeq = '';
+    for (const line of lines) {
+        const trimmed = line.trim();
+        if (trimmed.startsWith('>')) {
+            if (currentHeader !== null) {
+                newSeqs.push({ header: currentHeader.split(/\s+/)[0], fullHeader: currentHeader, seq: currentSeq });
+            }
+            currentHeader = trimmed.substring(1).trim();
+            currentSeq = '';
+        } else if (trimmed) {
+            currentSeq += trimmed;
+        }
+    }
+    if (currentHeader !== null) {
+        newSeqs.push({ header: currentHeader.split(/\s+/)[0], fullHeader: currentHeader, seq: currentSeq });
+    }
+
+    if (newSeqs.length === 0) {
+        showMessage("No valid FASTA sequences found.", 2000);
+        return;
+    }
+
+    const atTop = document.getElementById('addSeqAtTop')?.checked;
+    const alignToCons = document.getElementById('addSeqAlignCons')?.checked;
+
+    pushUndo('add-sequences');
+    // taken back on a stale result or an error only while it is still the last step: popping blindly removed the
+    // user's own edit made during the run (GLM check 2026-11-10, #8)
+    const ownStep = state.deletedHistory[state.deletedHistory.length - 1];
+    const dropOwnStep = () => { if (state.deletedHistory[state.deletedHistory.length - 1] === ownStep) state.deletedHistory.pop(); };
+
+    // If align-to-consensus, do pairwise alignment of each new seq against consensus
+    // computes its own consensus below; state.consensusSeq is only kept up to date while the row is shown
+    if (alignToCons && state.seqs.length > 0) {
+        try {
+            const { args: extraArgs, seqType } = getMafftExtraArgs();
+            const consensusArgs = [...extraArgs];
+
+            // the alignment this result is computed for: if it changes while MAFFT runs (an edit, an undo,
+            // another file), the result would bring back the old rows
+            const startSeqs = state.seqs, startFp = _seqsFingerprint();
+            let workingSeqs = state.seqs.map(seqObj => ({ ...seqObj }));
+            const alignedNewSeqs = [];
+            for (const ns of newSeqs) {
+                const currentConsensus = computeConsensusForSequences(workingSeqs.map(seqObj => seqObj.seq));
+                const alignedProfile = await alignSequenceToConsensusProfile(ns.seq, currentConsensus, consensusArgs);
+
+                workingSeqs = workingSeqs.map(seqObj => {
+                    const nextSeq = _rebuildSequenceWithInsertedProfileColumns(seqObj.seq, alignedProfile.layout, alignedProfile.extraColumnsPerSlot);
+                    return {
+                        ...seqObj,
+                        seq: nextSeq,
+                        gaplessPositions: calculateGaplessPositions(nextSeq)
+                    };
+                });
+
+                ns.seq = alignedProfile.seq;
+                ns.gaplessPositions = calculateGaplessPositions(ns.seq);
+                alignedNewSeqs.push({ ...ns });
+                workingSeqs.push({ ...ns });
+            }
+
+            if (state.seqs !== startSeqs || _seqsFingerprint() !== startFp) {
+                dropOwnStep();   // the undo entry pushed for this add: nothing was added
+                showMessage('The alignment changed while the new sequences were being aligned; nothing was added. Add them again.', 6000);
+                return;
+            }
+            const existingCount = workingSeqs.length - alignedNewSeqs.length;
+            if (atTop) {
+                state.seqs = [...alignedNewSeqs, ...workingSeqs.slice(0, existingCount)];
+            } else {
+                state.seqs = workingSeqs;
+            }
+            _dropColumnAnalysesAfterRealign();
+        } catch (err) {
+            console.error('Add-to-consensus alignment failed:', err);
+            dropOwnStep();   // nothing was added
+            showMessage(`Add-to-consensus alignment failed: ${err.message}`, 4000);
+            return;
+        }
+    } else {
+        // Pad to current alignment length
+        const alignLen = state.seqs.length > 0 ? _maxOf(state.seqs, s => s.seq.length) : 0;
+        for (const ns of newSeqs) {
+            if (alignLen > 0 && ns.seq.length < alignLen) {
+                ns.seq = ns.seq.padEnd(alignLen, '-');
+            }
+            ns.gaplessPositions = calculateGaplessPositions(ns.seq);
+        }
+    }
+
+    if (!(alignToCons && state.seqs.length > 0)) {
+        if (atTop) {
+            state.seqs.unshift(...newSeqs);
+        } else {
+            state.seqs.push(...newSeqs);
+        }
+    }
+
+    // A new sequence longer than the alignment widens it: pad every row (only shorter new
+    // sequences were padded, so a longer one left the alignment ragged)
+    const widthBefore = state.seqs.reduce((m, q) => Math.min(m, q.seq.length), Infinity);
+    if (normalizeAlignmentLengths() !== widthBefore) refreshAllGaplessPositions();
+
+    closeAddSequencesModal();
+    renderAlignment();
+    showMessage(`Added ${newSeqs.length} sequence${newSeqs.length > 1 ? 's' : ''} at ${atTop ? 'top' : 'bottom'}!`, 2000);
+}
+
+function _isGapChar(ch) {
+    return ch === '-' || ch === '.' || ch === ' ';
+}
+
+function _buildProfileColumnLayout(profile) {
+    const slots = [[]];
+    const residueColumns = [];
+    let residueCount = 0;
+
+    for (let col = 0; col < profile.length; col++) {
+        if (_isGapChar(profile[col])) {
+            slots[residueCount].push(col);
+            continue;
+        }
+
+        residueColumns.push(col);
+        residueCount++;
+        slots[residueCount] = slots[residueCount] || [];
+    }
+
+    return { slots, residueColumns, residueCount };
+}
+
+function _mapPairwiseAlignmentToProfile(alignedConsensus, alignedSeq, residueCount) {
+    const slotInsertions = Array.from({ length: residueCount + 1 }, () => []);
+    const residueChars = new Array(residueCount).fill('-');
+    let residueIndex = 0;
+
+    for (let i = 0; i < alignedConsensus.length; i++) {
+        const consChar = alignedConsensus[i];
+        const seqChar = alignedSeq[i] || '-';
+        if (_isGapChar(consChar)) {
+            slotInsertions[residueIndex].push(seqChar);
+            continue;
+        }
+
+        if (residueIndex < residueCount) {
+            residueChars[residueIndex] = seqChar;
+        }
+        residueIndex++;
+    }
+
+    return { slotInsertions, residueChars };
+}
+
+function _mergeSequenceIntoConsensusProfile(profile, alignedConsensus, alignedSeq) {
+    const layout = _buildProfileColumnLayout(profile);
+    const mapped = _mapPairwiseAlignmentToProfile(alignedConsensus, alignedSeq, layout.residueCount);
+    const extraColumnsPerSlot = mapped.slotInsertions.map((chars, slotIndex) => {
+        const existingSlots = layout.slots[slotIndex] || [];
+        return Math.max(0, chars.length - existingSlots.length);
+    });
+
+    const rebuilt = [];
+    for (let slotIndex = 0; slotIndex < layout.slots.length; slotIndex++) {
+        const existingSlotCols = layout.slots[slotIndex] || [];
+        const insertedChars = mapped.slotInsertions[slotIndex] || [];
+
+        for (let i = 0; i < existingSlotCols.length; i++) {
+            rebuilt.push(insertedChars[i] || '-');
+        }
+
+        const extraCount = extraColumnsPerSlot[slotIndex] || 0;
+        for (let i = 0; i < extraCount; i++) {
+            rebuilt.push(insertedChars[existingSlotCols.length + i] || '-');
+        }
+
+        if (slotIndex < layout.residueCount) {
+            rebuilt.push(mapped.residueChars[slotIndex] || '-');
+        }
+    }
+
+    return {
+        seq: rebuilt.join(''),
+        extraColumnsPerSlot,
+        layout
+    };
+}
+
+function _rebuildSequenceWithInsertedProfileColumns(seq, layout, extraColumnsPerSlot) {
+    const rebuilt = [];
+
+    for (let slotIndex = 0; slotIndex < layout.slots.length; slotIndex++) {
+        const existingSlotCols = layout.slots[slotIndex] || [];
+        for (const col of existingSlotCols) {
+            rebuilt.push(seq[col] || '-');
+        }
+
+        const extraCount = extraColumnsPerSlot[slotIndex] || 0;
+        for (let i = 0; i < extraCount; i++) {
+            rebuilt.push('-');
+        }
+
+        if (slotIndex < layout.residueCount) {
+            rebuilt.push(seq[layout.residueColumns[slotIndex]] || '-');
+        }
+    }
+
+    return rebuilt.join('');
+}
+
+async function alignSequenceToConsensusProfile(seq, profile, extraArgs = []) {
+    const ungappedSeq = String(seq || '').replace(/[-.\s]/g, '');
+    const ungappedProfile = String(profile || '').replace(/[-.\s]/g, '');
+    const layout = _buildProfileColumnLayout(profile || '');
+
+    if (!profile) {
+        throw new Error('Consensus profile is empty');
+    }
+    if (!ungappedProfile) {
+        throw new Error('Consensus has no residues');
+    }
+    if (!ungappedSeq) {
+        return {
+            seq: profile.replace(/[^-.\s]/g, '-'),
+            extraColumnsPerSlot: new Array(layout.slots.length).fill(0),
+            layout
+        };
+    }
+
+    const guarded = _alignerGuardInput(`>consensus\n${ungappedProfile}\n>query\n${ungappedSeq}\n`);   // keeps "*" (audit 2026-11-10, H4)
+    const mafft = new MafftWasm();
+    const result = _alignerRestoreResidues(await mafft.align(guarded.fasta, extraArgs), guarded.recs);
+    const aligned = parseMafftOutput(result);
+
+    if (aligned.length < 2) {
+        throw new Error('MAFFT pairwise alignment returned incomplete output');
+    }
+
+    // Recover original case -- see _remapCaseOntoAligned. Query and profile
+    // are recorded pre-MAFFT since this pairwise call has no adjustDir step.
+    const consensusSeq = _remapCaseOntoAligned(ungappedProfile, aligned[0].seq || '');
+    const querySeqRecased = _remapCaseOntoAligned(ungappedSeq, aligned[1].seq || '');
+
+    return _mergeSequenceIntoConsensusProfile(profile, consensusSeq, querySeqRecased);
+}
+
+/**
+ * Add new sequences and realign with existing using MAFFT WASM.
+ */
+function addSequencesAndAlign() {
+    const newText = document.getElementById('addSeqInput')?.value?.trim();
+    if (!newText) {
+        showMessage("Please paste FASTA sequences to add.", 2000);
+        return;
+    }
+    if (state.seqs.length === 0) {
+        showMessage("Load an alignment first.", 2000);
+        return;
+    }
+
+    // Save undo state
+    const redoBeforeAdd = state.redoHistory;
+    pushUndo('add-and-align');
+
+    const { args: extraArgs, seqType, adjustDir, reorder } = getMafftExtraArgs();
+    const atTop = !!document.getElementById('addSeqAtTop')?.checked;
+
+    // The pasted rows go in without gaps, as the existing ones do: sent gapped, a row skipped the '*' restore and came
+    // back with the placeholder X and its case shifted by the gaps (MK-VLA*GHH -> MKvLAXgHH; GLM check 2026-11-10, #11)
+    const ungappedNewText = newText.split('\n').map(line => line.trim().startsWith('>') ? line : line.replace(/[-.]/g, '')).join('\n');
+    // Pre-alignment: adjust direction on new sequences if requested
+    let adjustedNewText = ungappedNewText;
+    if (adjustDir && (seqType === '2' || seqType === 'codon')) {
+        // Use first existing sequence as reference orientation
+        const refFasta = `>${state.seqs[0].header}\n${state.seqs[0].seq.replace(/[-.]/g, '')}\n${ungappedNewText}`;
+        const adj = _adjustDirection(refFasta);
+        // Extract only the new sequences (skip the reference we prepended)
+        const adjLines = adj.fasta.split('\n');
+        let skip = true;
+        const newLines = [];
+        let count = 0;
+        for (const line of adjLines) {
+            if (line.startsWith('>')) {
+                count++;
+                if (count > 1) skip = false;
+            }
+            if (!skip) newLines.push(line);
+        }
+        adjustedNewText = newLines.join('\n');
+        if (adj.flipped.size > 0) {
+            console.log('Adjust direction (add&align): reverse-complemented', [...adj.flipped]);
+        }
+    }
+
+    // Rows go to MAFFT under row ids (r0, r1, ... for the rows of the alignment, then the new ones) and
+    // come back by id, as in Realign All. By name, an existing row named like a new one was taken for
+    // new and moved, rows sharing a name got one row's letter case, and a name over 254 characters
+    // came back cut (audit M14).
+    const nExisting = state.seqs.length;
+    const sources = state.seqs.map(q => ({ header: q.header, fullHeader: q.fullHeader, sent: q.seq.replace(/[-.]/g, ''), isNew: false }));
+    for (const rec of parseMafftOutput(adjustedNewText)) {
+        const full = String(rec.name || '').trim().replace(/\s+/g, ' ') || 'unnamed';
+        sources.push({ header: full.split(/\s+/)[0], fullHeader: full, sent: rec.seq.replace(/[-.\s]/g, ''), isNew: true });
+    }
+    if (sources.length === nExisting) {
+        _dropNoOpUndo(redoBeforeAdd);
+        showMessage("No valid FASTA sequences found.", 2000);
+        return;
+    }
+    const sourceById = new Map(sources.map((q, i) => ['r' + i, q]));
+    let fasta = sources.map((q, i) => `>r${i}\n${q.sent}\n`).join('');
+    let guideOrder = null;
+    if (reorder) {
+        const reordered = _reorderByGuideTree(fasta);
+        fasta = reordered.fasta;
+        guideOrder = reordered.order.map(id => String(id).split(/\s+/)[0]);
+    }
+
+    closeAddSequencesModal();
+
+    _alignRowIds = true;
+    _alignIdNames = new Map([...sourceById].map(([id, q]) => [id, q.fullHeader || q.header]));
+    let run;
+    try { run = _mafftAlignWithUi(fasta, extraArgs, 'Adding sequences and aligning with MAFFT...'); }
+    catch (err) { _alignRowIds = false; _alignIdNames = null; throw err; }
+    run.finally(() => { _alignRowIds = false; _alignIdNames = null; }).then(result => {
+        // no result (cancelled, or refused because the rows changed meanwhile): nothing changed, no undo step (audit L9)
+        if (!result) { _dropNoOpUndo(redoBeforeAdd); return; }
+        const aligned = parseMafftOutput(result);
+        if (aligned.length === 0) {
+            _dropNoOpUndo(redoBeforeAdd);
+            showMessage("Error: MAFFT returned no sequences.", 3000);
+            return;
+        }
+        const alignedById = new Map(aligned.map(a => [a.name.split(/\s+/)[0], a]));
+        const lost = [...sourceById].filter(([id, q]) => !alignedById.has(id) && q.sent.length).map(([, q]) => q.header);
+        if (lost.length) {
+            _dropNoOpUndo(redoBeforeAdd);
+            showMessage(`The aligner returned no sequence for ${lost.slice(0, 3).join(', ')}${lost.length > 3 ? ` and ${lost.length - 3} more` : ''}; the alignment was not changed.`, 6000);
+            return;
+        }
+        const newWidth = aligned.reduce((m, a) => Math.max(m, a.seq.length), 0);
+        const build = (id) => {
+            const q = sourceById.get(id), a = alignedById.get(id);
+            const seq = a ? _remapCaseOntoAligned(q.sent, a.seq) : '-'.repeat(newWidth);   // a row without residues may be dropped by the aligner
+            return { header: q.header, fullHeader: q.fullHeader, seq, gaplessPositions: calculateGaplessPositions(seq), _isNew: q.isNew };
+        };
+        const order = guideOrder ? guideOrder.filter(id => sourceById.has(id)) : [...sourceById.keys()];
+        for (const id of sourceById.keys()) if (!order.includes(id)) order.push(id);
+        let newSeqs = order.map(build);
+        // "Place at top" / at bottom: the new rows as a block, the rows of the alignment in their order
+        const added = newSeqs.filter(q => q._isNew), existing = newSeqs.filter(q => !q._isNew);
+        newSeqs = atTop ? [...added, ...existing] : [...existing, ...added];
+        newSeqs.forEach(q => { delete q._isNew; });
+
+        state.seqs = newSeqs;
+        state.selectedRows.clear();
+        state.selectedColumns.clear();
+        state.selectedNucs.clear();
+        _dropColumnAnalysesAfterRealign();
+        renderAlignment();
+        showMessage(`Aligned ${state.seqs.length} sequences successfully!`, 2000);
+    }).catch(err => {
+        _dropNoOpUndo(redoBeforeAdd);
+        showMessage("MAFFT add & align error: " + err.message, 4000);
+        console.error("MAFFT add & align error:", err);
+    });
+}
+
+// Remaps original per-base case onto a gapped MAFFT-realigned sequence.
+// MAFFT's WASM build outputs a fixed case for every base regardless of the
+// input's case (confirmed 2026-09-19: an all-lowercase-flank/uppercase-body
+// test alignment came back entirely lowercase after realigning). Since
+// realigning only inserts gaps -- it never reorders or substitutes bases --
+// walking `aligned` and consuming one character of `original` per non-gap
+// position recovers the correct per-base case exactly.
+function _remapCaseOntoAligned(original, aligned) {
+    let oi = 0;
+    let out = '';
+    for (let k = 0; k < aligned.length; k++) {
+        const c = aligned[k];
+        if (c === '-' || c === '.') { out += c; continue; }
+        const orig = original[oi++];
+        out += (orig !== undefined && orig === orig.toLowerCase()) ? c.toLowerCase() : c.toUpperCase();
+    }
+    return out;
+}
+
+/**
+ * Parse MAFFT FASTA output into array of {name, seq} objects.
+ */
+function parseMafftOutput(fastaStr) {
+    const lines = fastaStr.split('\n');
+    const result = [];
+    let current = null;
+    for (const line of lines) {
+        const trimmed = line.trim();
+        if (!trimmed) continue;
+        if (trimmed.startsWith('>')) {
+            if (current) result.push(current);
+            current = { name: trimmed.substring(1).trim(), seq: '' };
+        } else if (current) {
+            // Preserve MAFFT's original-case output (2026-08-21 TODO, root
+            // cause found 2026-09-19: this used to force .toUpperCase() here,
+            // destroying lowercase flanking bases on every realign
+            // round-trip -- an extra transformation added in this parsing
+            // layer, not something MAFFT itself requires or any of this
+            // function's 5 callers need. They all just splice the result
+            // back into state.seqs[i].seq for display/storage, which already
+            // supports mixed-case sequences (lowercase flanks) elsewhere.
+            current.seq += trimmed;
+        }
+    }
+    if (current) result.push(current);
+    return result;
+}

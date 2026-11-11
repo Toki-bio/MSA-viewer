@@ -1,0 +1,693 @@
+[block-bicluster.js lines 1211-1902 of ViewAlign fd8b8e4]
+  //    strictly smaller row count or column range than its parent, so
+  //    plain recursion (no explicit depth limit needed) is fine - but add
+  //    a hard safety cap of 200 total leaves; if exceeded, stop splitting
+  //    and return whatever leaves have been produced so far plus the
+  //    remaining un-split blocks as single leaves.
+  //
+  // When a wide range's row-split methods find nothing even though a real
+  // row-split signal exists somewhere narrower inside it, the cause is
+  // dilution: _haplotypeRowSplit/_diagnosticRowSplit both build their
+  // diagnostic-column pool from EVERY qualifying column in whatever range
+  // they're given, and a wide range can carry far more of those than the
+  // one real signal belongs to (measured on real data: 196 diagnostic
+  // columns across a 1274-col block that was mostly just "coherent
+  // enough on average," only 12 of which belonged to the actual 66-col
+  // haplotype split - the other 184 outcompeted/diluted it). Scan a
+  // sliding window of P.WINDOW_SCAN_WIDTH columns (P.WINDOW_SCAN_MAX
+  // windows max, 50% overlap) across the range, calling bestRowSplit on
+  // each window alone so its diagnostic-column pool is restricted back
+  // down to just that window. Candidates whose find row-set is a proper
+  // subset of another candidate's are dropped (a high-gain fragment of
+  // a larger block must not beat the block); among the same row-set the
+  // widest window wins, then max gain. Returns that pick, or null.
+  function _minorityFindRows(result, P) {
+    var groups = [];
+    for (var i = 0; i < result.groups.length; i++) {
+      var g = result.groups[i];
+      if (!g.residual && g.rows.length >= P.MIN_BLOCK_ROWS) groups.push(g);
+    }
+    if (!groups.length) return null;
+    var smallest = groups[0];
+    for (var j = 1; j < groups.length; j++) {
+      if (groups[j].rows.length < smallest.rows.length) smallest = groups[j];
+    }
+    return smallest.rows.slice().sort(function (a, b) { return a - b; });
+  }
+
+  function _sortedRowsSubsetOf(small, big) {
+    if (small.length >= big.length) return false;
+    var set = {};
+    for (var i = 0; i < big.length; i++) set[big[i]] = true;
+    for (var j = 0; j < small.length; j++) if (!set[small[j]]) return false;
+    return true;
+  }
+
+  function _windowedRowSplitScan(A, rows, colStart, colEnd, spans, P) {
+    var totalWidth = colEnd - colStart + 1;
+    if (totalWidth < 2 * P.MIN_BLOCK_COLS) return null;
+
+    var winWidth = P.WINDOW_SCAN_WIDTH;
+    if (totalWidth <= winWidth) {
+      winWidth = 2 * P.MIN_BLOCK_COLS;
+      if (winWidth >= totalWidth) return null;
+    }
+
+    var step = Math.max(1, Math.floor(winWidth / 2));
+    var cands = [];
+    var winStart = colStart;
+    var tried = 0;
+
+    while (winStart <= colEnd && tried < P.WINDOW_SCAN_MAX) {
+      var winEnd = Math.min(winStart + winWidth - 1, colEnd);
+      var thisWidth = winEnd - winStart + 1;
+      if (thisWidth >= P.MIN_BLOCK_COLS && !(winStart === colStart && winEnd === colEnd)) {
+        var result = bestRowSplit(A, rows, winStart, winEnd, spans, P);
+        if (result) {
+          var findRows = _minorityFindRows(result, P);
+          if (findRows) {
+            cands.push({
+              rowSplit: result, winStart: winStart, winEnd: winEnd,
+              findRows: findRows, gain: result.gain, width: thisWidth
+            });
+          }
+        }
+      }
+      tried++;
+      if (winEnd >= colEnd) break;
+      winStart += step;
+    }
+
+    if (!cands.length) return null;
+
+    // Measured on eye-test v5: the true 6-row C-block at cols 17-32
+    // scored gain 0.25, while an 8-col slice of 4 of those rows scored
+    // 0.64, so max-gain painted a fragment. Drop a candidate whose find
+    // row-set is a proper subset of another candidate's; among the same
+    // row-set keep the widest window.
+    var kept = [];
+    for (var i = 0; i < cands.length; i++) {
+      var dominated = false;
+      for (var j = 0; j < cands.length; j++) {
+        if (i === j) continue;
+        if (_sortedRowsSubsetOf(cands[i].findRows, cands[j].findRows)) {
+          dominated = true;
+          break;
+        }
+      }
+      if (!dominated) kept.push(cands[i]);
+    }
+    var byKey = {};
+    for (var k = 0; k < kept.length; k++) {
+      var key = kept[k].findRows.join(',');
+      var cur = byKey[key];
+      if (!cur
+          || kept[k].width > cur.width
+          || (kept[k].width === cur.width && kept[k].gain > cur.gain)) {
+        byKey[key] = kept[k];
+      }
+    }
+    var best = null;
+    var keys = Object.keys(byKey);
+    for (var ki = 0; ki < keys.length; ki++) {
+      var c = byKey[keys[ki]];
+      if (!best || c.gain > best.gain) best = c;
+    }
+    return { rowSplit: best.rowSplit, winStart: best.winStart, winEnd: best.winEnd };
+  }
+
+  // Return: a flat array of leaf objects, each { rows: [...], colStart,
+  // colEnd, coherence }.
+  function splitAndMerge(A, rows, colStart, colEnd, spans, P) {
+    // Safety cap on total leaves
+    if (_splitLeafCount >= 200) {
+      _splitLeafCount++;
+      return [{ rows: rows.slice(), colStart: colStart, colEnd: colEnd, coherence: blockCoherence(A, rows, colStart, colEnd, spans, P) }];
+    }
+
+    // Step 1: too small to split in both dimensions
+    if (rows.length < 2 * P.MIN_BLOCK_ROWS && (colEnd - colStart + 1) < 2 * P.MIN_BLOCK_COLS) {
+      _splitLeafCount++;
+      return [{ rows: rows.slice(), colStart: colStart, colEnd: colEnd, coherence: blockCoherence(A, rows, colStart, colEnd, spans, P) }];
+    }
+
+    // Step 2: try splits (only in dimensions that can support one)
+    var colSplit = null, rowSplit = null;
+    if ((colEnd - colStart + 1) >= 2 * P.MIN_BLOCK_COLS) {
+      colSplit = bestColumnSplit(A, rows, colStart, colEnd, spans, P);
+    }
+    if (rows.length >= 2 * P.MIN_BLOCK_ROWS) {
+      rowSplit = bestRowSplit(A, rows, colStart, colEnd, spans, P);
+    }
+
+    // Step 3: neither found a real split at the full range - before
+    // giving up, check whether a narrower window inside this range hides
+    // a row-split signal that the full range's diagnostic-column dilution
+    // was hiding (see _windowedRowSplitScan's comment). Only tried here,
+    // not on every call, to keep the extra cost bounded to genuinely
+    // stuck cases.
+    if (!colSplit && !rowSplit) {
+      var windowed = (colEnd - colStart + 1) >= 2 * P.MIN_BLOCK_COLS
+        ? _windowedRowSplitScan(A, rows, colStart, colEnd, spans, P)
+        : null;
+      if (windowed) {
+        var wLeaves = [];
+        if (windowed.winStart > colStart) {
+          wLeaves = wLeaves.concat(splitAndMerge(A, rows, colStart, windowed.winStart - 1, spans, P));
+        }
+        for (var wg = 0; wg < windowed.rowSplit.groups.length; wg++) {
+          wLeaves = wLeaves.concat(splitAndMerge(A, windowed.rowSplit.groups[wg].rows, windowed.winStart, windowed.winEnd, spans, P));
+        }
+        if (windowed.winEnd < colEnd) {
+          wLeaves = wLeaves.concat(splitAndMerge(A, rows, windowed.winEnd + 1, colEnd, spans, P));
+        }
+        return wLeaves;
+      }
+      _splitLeafCount++;
+      return [{ rows: rows.slice(), colStart: colStart, colEnd: colEnd, coherence: blockCoherence(A, rows, colStart, colEnd, spans, P) }];
+    }
+
+    // Prefer a column split whenever one qualifies. See splitAndMerge
+    // docstring: row vs column gains are not comparable, and taking the
+    // row split first paints row-groups across conserved flanks.
+    var useColSplit = !!colSplit;
+
+    var leaves = [];
+    if (useColSplit) {
+      var leftLeaves = splitAndMerge(A, rows, colStart, colSplit.splitCol, spans, P);
+      var rightLeaves = splitAndMerge(A, rows, colSplit.splitCol + 1, colEnd, spans, P);
+      leaves = leftLeaves.concat(rightLeaves);
+    } else {
+      for (var g = 0; g < rowSplit.groups.length; g++) {
+        var groupLeaves = splitAndMerge(A, rowSplit.groups[g].rows, colStart, colEnd, spans, P);
+        leaves = leaves.concat(groupLeaves);
+      }
+    }
+
+    return leaves;
+  }
+
+  // Merge adjacent (by column range) leaves that have the EXACT SAME row
+  // set (same rows, any order - compare as sets) when doing so doesn't
+  // hurt: sort leaves by colStart. Walk left to right; for two
+  // column-adjacent leaves (leafA.colEnd + 1 === leafB.colStart) with
+  // identical row sets, compute the coherence of the merged range
+  // (blockCoherence over [leafA.colStart, leafB.colEnd] for those rows).
+  // If merged coherence >= min(leafA.coherence, leafB.coherence) -
+  // P.MERGE_TOLERANCE (treating a null coherence as 0 for this
+  // comparison), replace the two leaves with one merged leaf (recompute
+  // its coherence via blockCoherence, don't just average the two). Repeat
+  // until no more merges apply (a single left-to-right sweep repeated
+  // until it makes no changes in a full pass is sufficient - this does
+  // not need to be maximally optimal, just correct and terminating).
+  //
+  // Return the resulting (possibly shorter) array of leaves, still sorted
+  // by colStart.
+  // Fractional variance-reduction of splitting [colStart,colEnd] at
+  // splitCol (single evaluation, not a search) - the exact same criterion
+  // bestColumnSplit uses to accept a split, reused here so merging is
+  // never allowed to undo a split that would have been worth taking in
+  // the first place. This directly replaces a mean/coherence-based merge
+  // test (removed - same mathematical flaw as the original gain formula:
+  // a coherence-tolerance check comparing the merged mean to the min of
+  // two parts is satisfied by almost any high+low combination, which is
+  // exactly why it was silently re-merging genuine splits back together).
+  function _columnSplitVarianceGain(A, rows, colStart, splitCol, colEnd, spans, P) {
+    var sum = 0, sumSq = 0, n = 0;
+    var lSum = 0, lSumSq = 0, lN = 0;
+    var rSum = 0, rSumSq = 0, rN = 0;
+    for (var j = colStart; j <= colEnd; j++) {
+      var cs = columnStats(A, rows, j, spans);
+      if (cs.covered < P.MIN_COL_COVERAGE) continue;
+      var p = cs.dominantCount / cs.covered;
+      sum += p; sumSq += p * p; n++;
+      if (j <= splitCol) { lSum += p; lSumSq += p * p; lN++; }
+      else { rSum += p; rSumSq += p * p; rN++; }
+    }
+    if (n === 0 || lN === 0 || rN === 0) return 0;
+    var wholeMean = sum / n, wholeVar = (sumSq / n) - wholeMean * wholeMean;
+    if (wholeVar <= 1e-9) return 0;
+    var lMean = lSum / lN, lVar = (lSumSq / lN) - lMean * lMean;
+    var rMean = rSum / rN, rVar = (rSumSq / rN) - rMean * rMean;
+    var weightedVar = (lVar * lN + rVar * rN) / n;
+    return (wholeVar - weightedVar) / wholeVar;
+  }
+
+  function mergeAdjacentLeaves(leaves, A, spans, P) {
+    var sorted = leaves.slice().sort(function(a, b) { return a.colStart - b.colStart; });
+
+    var changed = true;
+    while (changed) {
+      changed = false;
+      var i = 0;
+      while (i < sorted.length - 1) {
+        var leafA = sorted[i];
+        var leafB = sorted[i + 1];
+        if (leafA.colEnd + 1 !== leafB.colStart || !sameRowSet(leafA.rows, leafB.rows)) {
+          i++;
+          continue;
+        }
+
+        var mergedCoherence = blockCoherence(A, leafA.rows, leafA.colStart, leafB.colEnd, spans, P);
+        var splitGain = _columnSplitVarianceGain(A, leafA.rows, leafA.colStart, leafA.colEnd, leafB.colEnd, spans, P);
+
+        // Only merge if splitting right back at this exact boundary
+        // would NOT have been worth doing - i.e. the two parts aren't
+        // meaningfully different regimes, just an arbitrary top-down
+        // fragment of one uniform region.
+        if (splitGain < P.MIN_VARIANCE_REDUCTION) {
+          var merged = {
+            rows: leafA.rows.slice(),
+            colStart: leafA.colStart,
+            colEnd: leafB.colEnd,
+            coherence: mergedCoherence
+          };
+          sorted.splice(i, 2, merged);
+          changed = true;
+        } else {
+          i++;
+        }
+      }
+    }
+
+    return sorted;
+  }
+
+  // Top-level entry point. Parse the alignment, run splitAndMerge from the
+  // whole matrix (rows = every row index 0..A.length-1, colStart=0,
+  // colEnd=ncols-1), merge adjacent leaves, and return:
+  // { n_rows, n_cols, row_headers: names, blocks: [ { rows: "all" | [idx,
+  // ...], col_start, col_end, coherence }, ... ] } sorted by col_start.
+  // "rows" is the string "all" if the leaf's row set is every row index
+  // 0..n_rows-1, otherwise a sorted array of row indices (0-based into
+  // row_headers). This function has NO concept of a consensus/reference
+  // row - every row is on equal footing, including whatever the alignment
+  // calls its "consensus" row if it has one; do not special-case it.
+  // splitAndMerge's recursion termination ("too small to split further -
+  // return whatever's left as a leaf") does not itself enforce
+  // MIN_BLOCK_ROWS: a residual/leftover group can recurse down to a
+  // single row and still come back as its own standalone leaf, even
+  // though MIN_BLOCK_ROWS=3 is supposed to mean a group that small is
+  // never treated as meaningful. Confirmed live in the UI: a 1-row leaf
+  // rendered as its own colored block, which is not a real finding -
+  // there is nothing for one row to share a pattern WITH. Fold any leaf
+  // under MIN_BLOCK_ROWS into whichever SIBLING leaf shares its exact
+  // column range (the group it was originally split off from) and is
+  // largest, recomputing that sibling's coherence over the merged rows,
+  // rather than leaving it to exist - and be colored - as if it were a
+  // group.
+  //
+  // Same treatment for a leaf whose coherence is null: that means every
+  // one of its rows is gap across the ENTIRE leaf range (no real base
+  // data anywhere in it) - confirmed live on a real 3-row leaf that read
+  // as pure gaps at every column. That is not a group that failed to
+  // reach a coherence threshold, it is a group with literally zero
+  // measurable evidence, and merging it away is the same fix as the
+  // undersized case for the same underlying reason (do not let a group
+  // exist - and be colored as a find - that mechanically cannot
+  // demonstrate anything).
+  function _mergeUndersizedLeaves(leaves, A, spans, P) {
+    var byRange = {};
+    for (var i = 0; i < leaves.length; i++) {
+      var key = leaves[i].colStart + ':' + leaves[i].colEnd;
+      if (!byRange[key]) byRange[key] = [];
+      byRange[key].push(leaves[i]);
+    }
+    var toRemove = {};
+    var keys = Object.keys(byRange);
+    for (var k = 0; k < keys.length; k++) {
+      var group = byRange[keys[k]];
+      if (group.length < 2) continue; // no sibling to merge into
+      for (var g = 0; g < group.length; g++) {
+        var leaf = group[g];
+        if (leaf.rows.length >= P.MIN_BLOCK_ROWS && leaf.coherence !== null) continue;
+        var target = null;
+        for (var g2 = 0; g2 < group.length; g2++) {
+          if (g2 === g || toRemove[group[g2]._id]) continue;
+          if (!target || group[g2].rows.length > target.rows.length) target = group[g2];
+        }
+        if (!target) continue;
+        target.rows = target.rows.concat(leaf.rows);
+        target.coherence = blockCoherence(A, target.rows, target.colStart, target.colEnd, spans, P);
+        leaf._id = leaf._id || (k + '-' + g);
+        toRemove[leaf._id] = true;
+        // mark so a later leaf in this same group doesn't try to merge
+        // into something already merged away
+        leaf._merged = true;
+      }
+    }
+    return leaves.filter(function(l) { return !l._merged; });
+  }
+
+  // Global version of the identical-rows-same-group invariant
+  // (_rowsIdenticalInRange / _enforceIdenticalRowsSameGroup in
+  // bestRowSplit, which only catches this WITHIN one row-split call's
+  // own returned groups). Confirmed the narrower, within-call fix did
+  // NOT reduce the real-file counts at all (still 34 and 497 pairs) -
+  // the actual cases are two leaves produced by INDEPENDENT recursive
+  // branches (different parent row-splits, each doing its own further
+  // column-splitting) that happen to land on the exact same
+  // [colStart, colEnd] boundary later, without ever being part of the
+  // same bestRowSplit call's group list. Runs over the FINAL flat leaf
+  // list, same "group siblings by exact column range" pattern as
+  // _mergeUndersizedLeaves, merging any pair of same-range sibling
+  // leaves that share an identical-row pair.
+  function _mergeIdenticalRowSiblings(leaves, A, spans, P) {
+    var byRange = {};
+    for (var i = 0; i < leaves.length; i++) {
+      var key = leaves[i].colStart + ':' + leaves[i].colEnd;
+      if (!byRange[key]) byRange[key] = [];
+      byRange[key].push(leaves[i]);
+    }
+    var toRemove = {};
+    var keys = Object.keys(byRange);
+    for (var k = 0; k < keys.length; k++) {
+      var group = byRange[keys[k]];
+      if (group.length < 2) continue;
+      var cs = group[0].colStart, ce = group[0].colEnd;
+      var changed = true;
+      while (changed) {
+        changed = false;
+        for (var gi = 0; gi < group.length && !changed; gi++) {
+          if (toRemove[group[gi]._idr]) continue;
+          for (var gj = gi + 1; gj < group.length && !changed; gj++) {
+            if (toRemove[group[gj]._idr]) continue;
+            outer:
+            for (var a = 0; a < group[gi].rows.length; a++) {
+              for (var b = 0; b < group[gj].rows.length; b++) {
+                if (_rowsIdenticalInRange(A, group[gi].rows[a], group[gj].rows[b], cs, ce, spans)) {
+                  group[gi].rows = group[gi].rows.concat(group[gj].rows);
+                  group[gi].coherence = blockCoherence(A, group[gi].rows, cs, ce, spans, P);
+                  group[gj]._idr = group[gj]._idr || (k + '-' + gj);
+                  toRemove[group[gj]._idr] = true;
+                  group[gj]._merged = true;
+                  changed = true;
+                  break outer;
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+    return leaves.filter(function(l) { return !l._merged; });
+  }
+
+  // Header pattern this app's own fixtures/pipeline use:
+  // ACCESSION:START-END(strand)(strand) - two rows sharing the same
+  // ACCESSION and START are the SAME genomic locus extracted with two
+  // different end coordinates (a known artifact, not independent
+  // biological evidence), e.g. "AYEL01072234.1:54276-54551(+)(+)" and
+  // "AYEL01072234.1:54276-54620(+)(+)". Confirmed live: exactly this
+  // pair counted as 2 of 4 rows "supporting" a weak block, doubling its
+  // apparent weight. Returns the accession+start key, or null if the
+  // header doesn't match this pattern (nothing to dedup against).
+  function _duplicateLocusKey(name) {
+    var m = /^([^:]+):(\d+)-\d+/.exec(name);
+    return m ? (m[1] + ':' + m[2]) : null;
+  }
+
+  // Parses ACCESSION:START-END from a header, or null if it doesn't
+  // match this app's fixture/pipeline convention.
+  function _duplicateLocusRange(name) {
+    var m = /^([^:]+):(\d+)-(\d+)/.exec(name);
+    return m ? { accession: m[1], start: +m[2], end: +m[3] } : null;
+  }
+
+  // Collapses same-locus duplicates into one representative row for
+  // CLUSTERING purposes only - every row-split/coherence computation sees
+  // at most one row per real locus, so a duplicate can never inflate a
+  // group's apparent support. The final leaf output expands each
+  // representative back out to all of its duplicate members afterward
+  // (via expandRow, built alongside this), so every original row still
+  // appears in the returned blocks, always in the same group as its
+  // duplicate(s).
+  function _dedupLocusRows(names, A) {
+    var keyOf = names.map(_duplicateLocusKey);
+    var repOfKey = {};
+    var repOf = new Array(names.length);
+    var membersOf = {};
+    for (var i = 0; i < names.length; i++) {
+      var key = keyOf[i];
+      if (key === null) { repOf[i] = i; membersOf[i] = [i]; continue; }
+      if (!(key in repOfKey)) { repOfKey[key] = i; membersOf[i] = []; }
+      var rep = repOfKey[key];
+      repOf[i] = rep;
+      membersOf[rep].push(i);
+    }
+    // Second pass: the accession+start key misses same-accession entries
+    // extracted with a DIFFERENT start but overlapping range - confirmed
+    // live that two such rows (AYEL01077556.1:1911-2265 and
+    // AYEL01077556.1:1951-2265) are byte-identical, the same
+    // double-counting problem in a different shape.
+    //
+    // Tried matching by raw sequence-content identity instead of header
+    // coordinates - measured to be a real bug two different ways: (1)
+    // simple full-width equality treated "both are gap over this narrow
+    // crop" as "identical," wrongly deduping 11 unrelated rows that share
+    // nothing but both being absent from this range; (2) even restricted
+    // to agreement on real (non-gap) bases only, it still incorrectly
+    // matched genuinely different, related copies that simply share a
+    // long conserved ancestral region - shared descent, not the same
+    // physical locus. Sequence content cannot reliably distinguish "same
+    // locus, re-extracted" from "different locus, closely related" on
+    // real biological data. Reverted to the header's own coordinates:
+    // same accession with OVERLAPPING [start,end] ranges is the specific,
+    // known artifact this app's fixtures/pipeline produce (a locus
+    // re-extracted with different flank boundaries) - content identity
+    // was never the right signal for it.
+    var repIndices = [];
+    for (var r = 0; r < names.length; r++) if (repOf[r] === r) repIndices.push(r);
+    var rangeOf = names.map(_duplicateLocusRange);
+    for (var a = 0; a < repIndices.length; a++) {
+      for (var b = a + 1; b < repIndices.length; b++) {
+        var ra = repIndices[a], rb = repIndices[b];
+        if (repOf[ra] !== ra || repOf[rb] !== rb) continue; // rb already folded into another rep
+        var rra = rangeOf[ra], rrb = rangeOf[rb];
+        var sameLocus = rra && rrb && rra.accession === rrb.accession &&
+          rra.start <= rrb.end && rrb.start <= rra.end; // overlapping ranges
+        if (sameLocus) {
+          for (var mi = 0; mi < membersOf[rb].length; mi++) {
+            repOf[membersOf[rb][mi]] = ra;
+            membersOf[ra].push(membersOf[rb][mi]);
+          }
+          delete membersOf[rb];
+        }
+      }
+    }
+    var dedupedRows = [];
+    for (var r2 = 0; r2 < names.length; r2++) if (repOf[r2] === r2) dedupedRows.push(r2);
+    return { dedupedRows: dedupedRows, membersOf: membersOf };
+  }
+
+  function _sortedRows(rows) {
+    return rows.slice().sort(function (a, b) { return a - b; });
+  }
+
+  function _rowKey(rows) {
+    return _sortedRows(rows).join(',');
+  }
+
+  function _isProperSubset(inner, outer) {
+    if (inner.length >= outer.length) return false;
+    var set = {};
+    for (var i = 0; i < outer.length; i++) set[outer[i]] = true;
+    for (var j = 0; j < inner.length; j++) if (!set[inner[j]]) return false;
+    return true;
+  }
+
+  function _intersectRows(a, b) {
+    var set = {};
+    for (var i = 0; i < b.length; i++) set[b[i]] = true;
+    var out = [];
+    for (var j = 0; j < a.length; j++) if (set[a[j]]) out.push(a[j]);
+    return out;
+  }
+
+  function _qualityThresh(gsize, opts) {
+    if (gsize < opts.sizeSmallMedium) return opts.qualitySmall;
+    if (gsize < opts.sizeMediumLarge) return opts.qualityMedium;
+    return opts.qualityLarge;
+  }
+
+  function _expandGroupFeatures(A, group, colStart, colEnd, spans, background, opts) {
+    var gsize = group.rows.length;
+    if (gsize < 2) return group.feats || [];
+    var thresh = _qualityThresh(gsize, opts);
+    var gSet = {};
+    for (var i = 0; i < group.rows.length; i++) gSet[group.rows[i]] = true;
+    var feats = [];
+    for (var col = colStart; col <= colEnd; col++) {
+      var counts = [0, 0, 0, 0, 0];
+      var covered = 0;
+      for (var k = 0; k < group.rows.length; k++) {
+        var r = group.rows[k];
+        var sp = spans[r];
+        if (sp[0] === -1 || col < sp[0] || col > sp[1]) continue;
+        var v = A[r][col];
+        counts[(v === GAP) ? 4 : v]++;
+        covered++;
+      }
+      if (covered < opts.minSize) continue;
+      var state = 0;
+      for (var s = 1; s < 5; s++) if (counts[s] > counts[state]) state = s;
+      var inside = counts[state];
+      var totalAt = 0;
+      for (var b = 0; b < background.length; b++) {
+        var j = background[b];
+        var spb = spans[j];
+        if (spb[0] === -1 || col < spb[0] || col > spb[1]) continue;
+        var vj = A[j][col];
+        if (((vj === GAP) ? 4 : vj) === state) totalAt++;
+      }
+      var outside = totalAt - inside;
+      var outsidePool = background.length - gsize;
+      var inP = (inside / gsize) * 100;
+      var outP = outsidePool > 0 ? (outside / outsidePool) * 100 : 0;
+      var qual = Math.max(0, inP - outP);
+      if (outside === 0 || qual >= thresh) feats.push({ col: col, state: state });
+    }
+    return feats.length ? feats : (group.feats || []);
+  }
+
+  function _dominantLetters(A, rows, colStart, colEnd, spans) {
+    var s = '';
+    for (var c = colStart; c <= colEnd; c++) {
+      var counts = [0, 0, 0, 0, 0];
+      var covered = 0;
+      for (var k = 0; k < rows.length; k++) {
+        var i = rows[k];
+        var sp = spans[i];
+        if (sp[0] === -1 || c < sp[0] || c > sp[1]) continue;
+        var v = A[i][c];
+        counts[(v === GAP) ? 4 : v]++;
+        covered++;
+      }
+      if (!covered) { s += '?'; continue; }
+      var best = 0;
+      for (var st = 1; st < 5; st++) if (counts[st] > counts[best]) best = st;
+      s += STATE_LETTER.charAt(best);
+    }
+    return s;
+  }
+
+  function _coveringRows(rows, col, spans) {
+    var out = [];
+    for (var k = 0; k < rows.length; k++) {
+      var i = rows[k];
+      var sp = spans[i];
+      if (sp[0] === -1 || col < sp[0] || col > sp[1]) continue;
+      out.push(i);
+    }
+    return out;
+  }
+
+  function _coverKey(rows) {
+    return _sortedRows(rows).join(',');
+  }
+
+  function _growFeatureRanges(feats, minW, bridge) {
+    if (!feats || !feats.length) return [];
+    var byCol = feats.slice().sort(function (a, b) { return a.col - b.col; });
+    var runs = [];
+    var run = [byCol[0]];
+    for (var i = 1; i < byCol.length; i++) {
+      if (byCol[i].col - run[run.length - 1].col - 1 <= bridge) run.push(byCol[i]);
+      else {
+        if (run.length >= minW) runs.push(run);
+        run = [byCol[i]];
+      }
+    }
+    if (run.length >= minW) runs.push(run);
+    return runs.map(function (r) {
+      return { colStart: r[0].col, colEnd: r[r.length - 1].col, feats: r };
+    });
+  }
+
+  function _pruneDiagnosticGroup(A, group, rows, spans, opts) {
+    if (!group || group.feats.length <= 2) return group;
+    var minMatches = group.feats.length <= 5 ? 2 : Math.ceil(group.feats.length * 0.30);
+    var kept = [];
+    for (var s = 0; s < group.rows.length; s++) {
+      var i = group.rows[s], n = 0;
+      for (var f = 0; f < group.feats.length; f++) {
+        var col = group.feats[f].col, state = group.feats[f].state;
+        var sp = spans[i];
+        if (sp[0] === -1 || col < sp[0] || col > sp[1]) continue;
+        var v = A[i][col];
+        var st = (v === GAP) ? 4 : v;
+        if (st === state) n++;
+      }
+      if (n >= minMatches) kept.push(i);
+    }
+    if (kept.length < opts.minSize) return null;
+    group.rows = kept;
+    return group;
+  }
+
+  function _clusterOptsFrom(P, extra) {
+    var o = {
+      minSize: Math.max(2, P.minSize || P.MIN_BLOCK_ROWS || 3),
+      minPerfect: P.minPerfect || 5,
+      minOccurrences: P.minOccurrences || 3,
+      qualitySmall: P.qualitySmall != null ? P.qualitySmall : 80,
+      qualityMedium: P.qualityMedium != null ? P.qualityMedium : 70,
+      qualityLarge: P.qualityLarge != null ? P.qualityLarge : 60,
+      sizeSmallMedium: P.sizeSmallMedium || 11,
+      sizeMediumLarge: P.sizeMediumLarge || 20,
+      relaxUpperBound: false,
+      returnAll: false
+    };
+    if (extra) for (var k in extra) if (extra.hasOwnProperty(k)) o[k] = extra[k];
+    if (o.minOccurrences > o.minPerfect) o.minOccurrences = o.minPerfect;
+    return o;
+  }
+
+  function _addRect(rects, seen, A, rows, colStart, colEnd, spans, P, kind, feats) {
+    if (!rows || rows.length < 2) return;
+    var minH = Math.max(2, P.minSize || P.MIN_BLOCK_ROWS || 3);
+    if (rows.length < minH) return;
+    if (colEnd < colStart) return;
+    var key = _rowKey(rows) + ':' + colStart + '-' + colEnd;
+    if (seen[key]) return;
+    seen[key] = true;
+    var coh = blockCoherence(A, rows, colStart, colEnd, spans, P);
+    if (kind !== 'conserved' && (coh == null || coh < 0.7)) return;
+    rects.push({
+      rows: _sortedRows(rows),
+      colStart: colStart,
+      colEnd: colEnd,
+      kind: kind,
+      feats: feats || [],
+      coherence: coh,
+      supporting_bases: _dominantLetters(A, rows, colStart, colEnd, spans)
+    });
+  }
+
+  function _emitGroupRanges(rects, seen, A, group, spans, P, kind, allRows) {
+    var minW = P.minPerfect || 5;
+    var bridge = P.FEATURE_BRIDGE != null ? P.FEATURE_BRIDGE : 2;
+    var opts = _clusterOptsFrom(P);
+    var nCols = A[0].length;
+    var feats = _expandGroupFeatures(A, group, 0, nCols - 1, spans, allRows, opts);
+    var nuc = [];
+    for (var fi = 0; fi < feats.length; fi++) {
+      if (feats[fi].state !== GAP && feats[fi].state !== 4) nuc.push(feats[fi]);
+    }
+    if (nuc.length < minW) return;
+    var ranges = _growFeatureRanges(nuc, minW, bridge);
+    for (var i = 0; i < ranges.length; i++) {
+      _addRect(rects, seen, A, group.rows, ranges[i].colStart, ranges[i].colEnd, spans, P, kind, ranges[i].feats);
+    }
+  }
+
+  // Extract overlapping similarity rectangles: Cluster Now groups plus a
+  // contiguous column extent. Not a partition of the matrix.
+  function extractSimilarityRectangles(A, allRows, spans, P) {
+    if (!A.length) return [];          // no FASTA records (text without '>' headers)
+    var nCols = A[0].length;
+    var minH = Math.max(2, P.minSize || P.MIN_BLOCK_ROWS || 3);
+    var minW = P.minPerfect || 5;
+    var bridge = P.FEATURE_BRIDGE != null ? P.FEATURE_BRIDGE : 2;
+    var consP = P.CONSERVED_PURITY != null ? P.CONSERVED_PURITY : 0.8;
+    var maxIter = P.maxIterations || 10;

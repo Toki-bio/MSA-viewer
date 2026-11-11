@@ -1,0 +1,401 @@
+[script.js lines 35647-36046 of ViewAlign fd8b8e4]
+function _dotBlend(spin, strength) {   // strength 0 = paper, 1 = ink
+    const k = _dotInkPaper(spin), a = k.pr, b = k.ir;
+    return [Math.round(a[0] + (b[0] - a[0]) * strength), Math.round(a[1] + (b[1] - a[1]) * strength), Math.round(a[2] + (b[2] - a[2]) * strength)];
+}
+function _dotPutPixel(d, j, v, spin) {
+    if (!_dotCustomColours()) d[j] = d[j + 1] = d[j + 2] = v;
+    else {
+        const k = _dotInkPaper(spin), a = k.pr, b = k.ir, t = spin ? v / 255 : 1 - v / 255;
+        d[j] = Math.round(a[0] + (b[0] - a[0]) * t); d[j + 1] = Math.round(a[1] + (b[1] - a[1]) * t); d[j + 2] = Math.round(a[2] + (b[2] - a[2]) * t);
+    }
+    d[j + 3] = 255;
+}
+function _dotDotterStroke(g) {
+    if (!_dotCustomColours()) return `rgb(${g},${g},${g})`;
+    const c = _dotBlend(false, 1 - g / 255); return `rgb(${c[0]},${c[1]},${c[2]})`;
+}
+function _dotColourInputs() { return { dot: 'dotColDot', bg: 'dotColBg', stretch: 'dotColStretch', marker: 'dotColMarker', tint: 'dotColTint' }; }
+// Put the colour inputs in line with S.colours (an unset colour shows the default)
+function _dotSyncColourInputs() {
+    const S = _dotPlotState, c = S.colours || {}, ids = _dotColourInputs();
+    const def = { dot: _dotInk(S.spinMode), bg: _dotPaper(S.spinMode), stretch: DOT_STRETCH_DEFAULT, marker: DOT_MARKER_DEFAULT, tint: DOT_TINT_DEFAULT };
+    DOT_COLOUR_KEYS.forEach(k => { const i = document.getElementById(ids[k]); if (i) i.value = c[k] || def[k]; });
+}
+// Apply S.colours everywhere: the plot is rebuilt (the overview image holds the dot colours), the overlay is redrawn and
+// the alignment tint is changed (marks repaint)
+function _dotApplyColours() {
+    const S = _dotPlotState, c = S.colours || {};
+    const oldTint = DOT_REGION_TINT;
+    DOT_REGION_TINT = c.tint || DOT_TINT_DEFAULT;
+    if (oldTint !== DOT_REGION_TINT) _overlayForgetColour(oldTint);
+    // the pixels of the plot only depend on the dot and background colours: a marker, stretch or tint colour needs no rebuild
+    const key = (c.dot || '') + '|' + (c.bg || '');
+    if (S.overview && S._ovKey !== key) { S.overview = _dotPooledCanvas(S.overviewBin); S._pool = null; S._ovKey = key; _dotRender(); }
+    if (S.lastRow >= 0) _dotDrawOverlay(S.lastRow, S.lastCol);
+    else if (S.pinnedRow >= 0) _dotDrawOverlay(S.pinnedRow, S.pinnedCol);
+    else _dotClearOverlay();
+    if (state.dotRegionMarks) { bumpSearchLayer?.(); syncResidueOverlays(); }
+}
+// A colour picker fires 'input' dozens of times a second while it is dragged: the colour is stored at once and the plot
+// (and the alignment's tint) is rebuilt once per frame, with the last colour.
+let _dotColourPending = 0;
+function _dotSetColour(key, hex) {
+    const S = _dotPlotState;
+    if (!DOT_COLOUR_KEYS.includes(key) || !/^#[0-9a-f]{6}$/i.test(hex || '')) return;
+    S.colours = Object.assign({}, S.colours || {}, { [key]: hex.toLowerCase() });
+    if (_dotColourPending) return;
+    const run = () => { if (!_dotColourPending) return; _dotColourPending = 0; _dotApplyColours(); };
+    _dotColourPending = 1;
+    if (typeof requestAnimationFrame === 'function') requestAnimationFrame(run);
+    setTimeout(run, 100);   // a hidden tab pauses animation frames
+}
+function _dotResetColours() { _dotColourPending = 0; _dotPlotState.colours = null; _dotSyncColourInputs(); _dotApplyColours(); }
+
+function _dotBuildImage() {
+    const S = _dotPlotState;
+    if (!S.matchMap && !S.scores) return;
+    _dotBuildRuns();
+    const bin = Math.max(1, Math.ceil(Math.max(S.rows, S.cols) / DOT_OVERVIEW_MAX));
+    S.overview = _dotPooledCanvas(bin);
+    S.overviewBin = bin;
+    S._ovKey = (S.colours?.dot || '') + '|' + (S.colours?.bg || '');
+    S._pool = null;
+}
+
+// Canvas with one pixel per bin x bin cells, keeping the strongest cell
+function _dotPooledCanvas(bin) {
+    const S = _dotPlotState;
+    const w = Math.ceil(S.cols / bin), h = Math.ceil(S.rows / bin);
+    const img = new ImageData(w, h);
+    const d = img.data;
+    for (let by = 0; by < h; by++) {
+        for (let bx = 0; bx < w; bx++) {
+            const HB = _dotHalf(by * bin + (bin >> 1), bx * bin + (bin >> 1));
+            const spin = HB.spinMode && !!HB.matchMap;
+            let best = spin ? 0 : 255;
+            const r1 = Math.min(S.rows, (by + 1) * bin), c1 = Math.min(S.cols, (bx + 1) * bin);
+            for (let r = by * bin; r < r1; r++) {
+                const base = r * S.cols;
+                for (let c = bx * bin; c < c1; c++) {
+                    const v = _dotCellValue(base + c);
+                    if (spin ? v > best : v < best) best = v;
+                }
+            }
+            const j = (by * w + bx) * 4;
+            _dotPutPixel(d, j, best, spin);
+        }
+    }
+    const cv = document.createElement('canvas');
+    cv.width = w; cv.height = h;
+    cv.getContext('2d').putImageData(img, 0, 0);
+    return cv;
+}
+
+// Source image for drawing at zoom z. Below 1 px per cell a plain downscale
+// would skip rows and columns and break diagonals into dots, so pool first.
+function _dotSourceFor(z) {
+    const S = _dotPlotState;
+    const need = z < 1 ? Math.ceil(1 / z) : 1;
+    if (need <= S.overviewBin) return { canvas: S.overview, bin: S.overviewBin };
+    if (!S._pool || S._pool.bin !== need) S._pool = { bin: need, canvas: _dotPooledCanvas(need) };
+    return S._pool;
+}
+
+// The ticks of an axis for the plot indices i0..i1-1: [{ num, idx }], the residue numbers that are multiples of step (the
+// row's own numbers, see _dotBNum) and the plot index each sits at; the order follows the axis (B runs down with RevComp)
+function _dotAxisTicks(which, step, i0, i1) {
+    const S = _dotPlotState, n = which === 'A' ? S.rows : S.cols, out = [];
+    i0 = Math.max(0, i0); i1 = Math.min(n, i1);
+    if (!(i1 > i0) || !(step > 0)) return out;
+    const numAt = i => which === 'A' ? _dotShownA(i) : _dotShownB(i);
+    const idxOf = num => which === 'A' ? num - 1 - S.offA : _dotBIndexOfNum(num);
+    const a = numAt(i0), b = numAt(i1 - 1), lo = Math.min(a, b), hi = Math.max(a, b);
+    for (let num = Math.ceil(lo / step) * step; num <= hi; num += step) if (num >= 1) out.push({ num, idx: idxOf(num) });
+    if (which === 'B' && _dotPlotRevB()) out.reverse();
+    return out;
+}
+function _dotNiceStep(seqLen, maxTicks) {
+    const raw = seqLen / maxTicks;
+    const mag = Math.pow(10, Math.floor(Math.log10(raw)));
+    const norm = raw / mag;
+    let step;
+    if (norm <= 1) step = 1;
+    else if (norm <= 2) step = 2;
+    else if (norm <= 5) step = 5;
+    else step = 10;
+    return Math.max(1, step * mag);
+}
+
+// Paint the part of the plot that is visible through a vw x vh window whose
+// top-left shows plot pixel (sl, st) at zoom z. Axes stay pinned to the top
+// and left edges. Used for the screen (window = viewport) and for export
+// (window = whole plot, sl = st = 0).
+function _dotPaint(ctx, z, sl, st, vw, vh) {
+    const S = _dotPlotState;
+    const P = DOT_AXIS_PAD;
+    ctx.fillStyle = '#fff';
+    ctx.fillRect(0, 0, vw, vh);
+    if (!S.overview) return;
+    const plotW = S.cols * z, plotH = S.rows * z;
+    // Visible cells
+    const c0 = Math.max(0, Math.floor(sl / z)), r0 = Math.max(0, Math.floor(st / z));
+    const c1 = Math.min(S.cols, Math.ceil((sl + vw - P) / z)), r1 = Math.min(S.rows, Math.ceil((st + vh - P) / z));
+    ctx.save();
+    ctx.beginPath(); ctx.rect(P, P, vw - P, vh - P); ctx.clip();
+    ctx.imageSmoothingEnabled = false;
+    let vectorDone = false;
+    if (c1 > c0 && r1 > r0 && S.runs) {
+        // SPIN draws white dots on black: fill its half (or the whole plot) black
+        const x0 = P - sl, y0 = P - st;
+        const upperSpin = S.spinMode && !!S.matchMap;
+        const lower = S.lower && S.lower.ready ? S.lower : null;
+        const lowerSpin = lower ? (lower.spinMode && !!lower.matchMap) : upperSpin;
+        if (S.colours?.bg) { ctx.fillStyle = S.colours.bg; ctx.fillRect(x0, y0, plotW, plotH); }   // custom background: under both halves
+        ctx.fillStyle = _dotPaper(true);
+        if (upperSpin && lowerSpin) ctx.fillRect(x0, y0, plotW, plotH);
+        else if (upperSpin || lowerSpin) {
+            ctx.beginPath();
+            if (upperSpin) { ctx.moveTo(x0, y0); ctx.lineTo(x0 + plotW, y0); ctx.lineTo(x0 + plotW, y0 + plotH); }
+            else { ctx.moveTo(x0, y0); ctx.lineTo(x0, y0 + plotH); ctx.lineTo(x0 + plotW, y0 + plotH); }
+            ctx.closePath(); ctx.fill();
+        }
+        vectorDone = _dotPaintRuns(ctx, z, sl, st, vw, vh, c0, c1, r0, r1);
+        if (!vectorDone) { ctx.fillStyle = '#fff'; ctx.fillRect(P, P, vw - P, vh - P); }
+    }
+    if (!vectorDone && c1 > c0 && r1 > r0) {
+        const dx = P + c0 * z - sl, dy = P + r0 * z - st;
+        const bin = S.overviewBin;
+        if (bin > 1 && z * bin >= 2 && (c1 - c0) * (r1 - r0) <= 4e6) {
+            // Zoomed in past the overview's resolution: draw the visible cells exactly
+            const w = c1 - c0, h = r1 - r0;
+            const img = new ImageData(w, h);
+            const d = img.data;
+            const custom = _dotCustomColours();
+            for (let r = 0; r < h; r++) {
+                for (let c = 0; c < w; c++) {
+                    const v = _dotCellValue((r0 + r) * S.cols + c0 + c);
+                    const j = (r * w + c) * 4;
+                    if (custom) { const Hc = _dotHalf(r0 + r, c0 + c); _dotPutPixel(d, j, v, Hc.spinMode && !!Hc.matchMap); } else { d[j] = d[j + 1] = d[j + 2] = v; d[j + 3] = 255; }
+                }
+            }
+            const tmp = document.createElement('canvas');
+            tmp.width = w; tmp.height = h;
+            tmp.getContext('2d').putImageData(img, 0, 0);
+            ctx.drawImage(tmp, dx, dy, w * z, h * z);
+        } else {
+            const src = _dotSourceFor(z);
+            ctx.drawImage(src.canvas, c0 / src.bin, r0 / src.bin, (c1 - c0) / src.bin, (r1 - r0) / src.bin,
+                dx, dy, (c1 - c0) * z, (r1 - r0) * z);
+        }
+    }
+    ctx.strokeStyle = '#333'; ctx.lineWidth = 1;
+    ctx.strokeRect(P + 0.5 - sl, P + 0.5 - st, plotW, plotH);
+    ctx.restore();
+
+    // Axis strips (pinned)
+    ctx.fillStyle = '#fff';
+    ctx.fillRect(0, 0, vw, P); ctx.fillRect(0, 0, P, vh);
+    ctx.font = '11px system-ui, sans-serif';
+    ctx.strokeStyle = '#333'; ctx.lineWidth = 1;
+    const stepX = _dotNiceStep(S.cols, Math.max(2, Math.floor(plotW / 50)));
+    const stepY = _dotNiceStep(S.rows, Math.max(2, Math.floor(plotH / 40)));
+    ctx.fillStyle = '#555'; ctx.textAlign = 'center'; ctx.textBaseline = 'bottom';
+    // ticks at round numbers of the sequence's own residue numbers, on the middle of that residue's cell (a range starts
+    // partway in; with RevComp B the numbers run down along the axis)
+    for (const t of _dotAxisTicks('B', stepX, c0, c1)) {
+        const x = P + Math.round((t.idx + 0.5) * z - sl) + 0.5;
+        if (x < P || x > vw) continue;
+        ctx.beginPath(); ctx.moveTo(x, P); ctx.lineTo(x, P - 5); ctx.stroke();
+        ctx.fillText(String(t.num), x, P - 6);
+    }
+    ctx.textAlign = 'right'; ctx.textBaseline = 'middle';
+    for (const t of _dotAxisTicks('A', stepY, r0, r1)) {
+        const y = P + Math.round((t.idx + 0.5) * z - st) + 0.5;
+        if (y < P || y > vh) continue;
+        ctx.beginPath(); ctx.moveTo(P, y); ctx.lineTo(P - 5, y); ctx.stroke();
+        ctx.fillText(String(t.num), P - 7, y);
+    }
+    ctx.fillStyle = '#333'; ctx.textAlign = 'center'; ctx.textBaseline = 'top';
+    ctx.font = 'bold 11px system-ui, sans-serif';
+    const nameB = (S.nameB.length > 30 ? S.nameB.substring(0, 30) + '...' : S.nameB) + _dotRangeText('B');
+    const nameA = (S.nameA.length > 30 ? S.nameA.substring(0, 30) + '...' : S.nameA) + _dotRangeText('A');
+    ctx.fillText(nameB, P + Math.min(plotW, vw - P) / 2, 2);
+    ctx.save(); ctx.translate(12, P + Math.min(plotH, vh - P) / 2); ctx.rotate(-Math.PI / 2);
+    ctx.fillText(nameA, 0, 0); ctx.restore();
+}
+
+// Size a canvas to the viewport (HiDPI backing store) and return its context
+function _dotSizeToViewport(canvas, vw, vh) {
+    const dpr = window.devicePixelRatio || 1;
+    if (canvas.width !== Math.round(vw * dpr) || canvas.height !== Math.round(vh * dpr)) {
+        canvas.width = Math.round(vw * dpr); canvas.height = Math.round(vh * dpr);
+    }
+    // the CSS box is the bitmap's own size (a rounded bitmap in an unrounded box was stretched, blurred at 1.25 / 1.5)
+    canvas.style.width = (canvas.width / dpr) + 'px'; canvas.style.height = (canvas.height / dpr) + 'px';
+    const ctx = canvas.getContext('2d');
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    return ctx;
+}
+
+function _dotRender() {
+    const S = _dotPlotState;
+    if (!S.overview) return;
+    const canvas = document.getElementById('dotPlotCanvas');
+    const overlay = document.getElementById('dotPlotOverlay');
+    const { vp, vw, vh } = _dotViewport();
+    if (!canvas || !overlay || !vp) return;
+    _dotSetSpacer();
+    const ctx = _dotSizeToViewport(canvas, vw, vh);
+    _dotSizeToViewport(overlay, vw, vh);
+    _dotPaint(ctx, S.zoom, vp.scrollLeft, vp.scrollTop, vw, vh);
+}
+
+function _dotFitView() {
+    const S = _dotPlotState;
+    if ((!S.scores && !S.matchMap)) return;
+    const { vp } = _dotViewport();
+    if (!vp || S.cols === 0 || S.rows === 0) return;
+    // 12 px spare on the far sides so the last tick labels are not clipped
+    const fit = Math.min((vp.clientWidth - DOT_AXIS_PAD - 12) / S.cols, (vp.clientHeight - DOT_AXIS_PAD - 12) / S.rows);
+    const z = Math.min(24, Math.max(0.001, fit));
+    S.zoom = z >= 1 ? Math.floor(z * 10) / 10 : Math.floor(z * 1000) / 1000;
+    vp.scrollLeft = vp.scrollTop = 0;
+    _dotRender();
+}
+
+// Detect top-scoring diagonal runs for the side navigation list
+// Regions for the side list. One region is one similar stretch: the diagonal runs that
+// continue the same alignment across mismatches (short gaps) and small indels (a shift of a
+// few diagonals) are chained into one entry. Listing raw runs split a single homologous
+// stretch into many entries on neighbouring diagonals. A self-plot lists only the upper
+// triangle, the lower one being its mirror image (the list was also empty there: no single
+// unbroken run reached the old minimum length).
+function _dotDetectRegions() {
+    const S = _dotPlotState;
+    S.regions = [];
+    if ((!S.scores && !S.matchMap)) { _dotRenderRegionList(); return; }
+    const spin = S.spinMode && !!S.matchMap;
+    const w = S.windowSize || 1;
+    const isSelf = S.seqA === S.seqB && S.offA === S.offB && S.rows === S.cols && !_dotPlotRevB();
+    const seedMin = spin ? 2 : 3;               // shorter runs are mostly chance hits
+    const minMatched = spin ? Math.max(8, 2 * w)
+                            : Math.max(6, Math.min(15, Math.floor(Math.min(S.rows, S.cols) * 0.12)));
+    // mismatches bridged along the diagonal; a SPIN cell is the first base of a w-long word,
+    // so the gap between words is w - 1 cells shorter in bases
+    const gapTol = Math.max(10, 2 * w) + (spin ? w - 1 : 0);
+    const shiftTol = 8;                         // indels: diagonals a chain may drift by
+
+    // Raw runs (row, diagonal, length, mean identity), from the drawing runs when present
+    const raw = [];
+    const push = (r, d, L, ident) => { if (L >= seedMin && (!isSelf || d > 0)) raw.push({ r, d, L, ident }); };
+    const rows = S.rows;
+    if (S.runs) {
+        const R = S.runs;
+        for (let k = 0; k < rows + S.cols - 1; k++) {
+            const d = k - (rows - 1);
+            if (isSelf && d <= 0) continue;
+            for (let t = R.diagStart[k]; t < R.diagStart[k + 1]; t++) push(R.R[t], d, R.L[t], spin ? 1 : 1 - R.V[t] / 255);
+        }
+    } else {
+        const thr = S.threshold * w;
+        for (let d = isSelf ? 1 : -(rows - 1); d < S.cols; d++) {
+            const r0 = d < 0 ? -d : 0, r1 = Math.min(rows, S.cols - d);
+            let rs = -1, sum = 0;
+            for (let r = r0; r <= r1; r++) {
+                const i = r * S.cols + r + d;
+                const on = r < r1 && (spin ? S.matchMap[i] === 1 : S.scores[i] >= thr);
+                if (on) { if (rs < 0) { rs = r; sum = 0; } sum += spin ? 1 : S.scores[i] / w; }
+                else if (rs >= 0) { push(rs, d, r - rs, sum / (r - rs)); rs = -1; }
+            }
+        }
+    }
+    raw.sort((a, b) => a.r - b.r || a.d - b.d);
+
+    // Chain runs that continue each other
+    const chains = [];
+    let active = [];
+    for (const run of raw) {
+        let best = null, bestCost = Infinity;
+        const keep = [];
+        for (const ch of active) {
+            if (ch.endR + gapTol < run.r) continue;          // too far behind: retire
+            keep.push(ch);
+            if (run.r < ch.endR - shiftTol || Math.abs(run.d - ch.d) > shiftTol) continue;
+            const cost = Math.max(0, run.r - ch.endR) + 2 * Math.abs(run.d - ch.d);
+            if (cost < bestCost) { bestCost = cost; best = ch; }
+        }
+        active = keep;
+        const c = run.r + run.d;
+        if (best) {
+            // count each row once: Dotter windows next to a match also pass on nearby diagonals
+            const fresh = Math.max(0, run.r + run.L - Math.max(run.r, best.endR));
+            best.endR = Math.max(best.endR, run.r + run.L);
+            best.endC = Math.max(best.endC, c + run.L);
+            best.startC = Math.min(best.startC, c);
+            best.matched += fresh; best.identSum += fresh * run.ident; best.d = run.d;
+            if (run.L > best.longest.L) best.longest = run;
+        } else {
+            const ch = { startR: run.r, endR: run.r + run.L, startC: c, endC: c + run.L, d: run.d,
+                matched: run.L, identSum: run.L * run.ident, longest: run };
+            chains.push(ch); active.push(ch);
+        }
+    }
+
+    // Best first; drop a chain that covers mostly the same stretch as a better one
+    chains.sort((a, b) => b.matched - a.matched || b.identSum - a.identSum);
+    const overlap = (a0, a1, b0, b1) => Math.max(0, Math.min(a1, b1) - Math.max(a0, b0));
+    const kept = [];
+    for (const ch of chains) {
+        if (ch.matched < minMatched) break;
+        const span = Math.max(1, ch.endR - ch.startR);
+        const dup = kept.some(k => overlap(ch.startR, ch.endR, k.startR, k.endR) >= 0.5 * span
+            && overlap(ch.startC, ch.endC, k.startC, k.endC) >= 0.5 * Math.max(1, ch.endC - ch.startC));
+        if (!dup) kept.push(ch);
+        if (kept.length >= 30) break;
+    }
+
+    // Sequence coordinates: SPIN marks every cell of a matched word, so a run already covers the
+    // matched bases; a Dotter cell is the centre of a window, which reaches (w - 1) / 2 bases each way
+    const before = spin ? 0 : (w - 1) >> 1, after = spin ? 0 : w - 1 - ((w - 1) >> 1);
+    S.regions = kept.map(ch => {
+        const a0 = Math.max(0, ch.startR - before), a1 = Math.min(S.seqA.length, ch.endR + after);
+        const b0 = Math.max(0, ch.startC - before), b1 = Math.min(S.seqB.length, ch.endC + after);
+        return { row: ch.longest.r, col: ch.longest.r + ch.longest.d, length: ch.longest.L,
+            aStart: a0, aEnd: a1, bStart: b0, bEnd: b1, matched: ch.matched,
+            avgScore: ch.identSum ? ch.identSum / ch.matched : ch.longest.ident, diagonal: ch.longest.d,
+            spanRows: ch.endR - ch.startR, spanCols: ch.endC - ch.startC, cellStartR: ch.startR, cellStartC: ch.startC };
+    });
+    _dotRenderRegionList();
+}
+
+function _dotRenderRegionList() {
+    const S = _dotPlotState;
+    const listEl = document.getElementById('dotPlotRegionList');
+    const itemsEl = document.getElementById('dotPlotRegionItems');
+    if (!listEl || !itemsEl) return;
+    listEl.style.display = 'block';
+    _dotRenderBookmarks();
+    if (!S.regions || S.regions.length === 0) {
+        itemsEl.innerHTML = '<div style="padding:4px 6px;color:#888;">No similar stretches above the current settings.</div>';
+        return;
+    }
+    const spin = S.spinMode && !!S.matchMap;
+    const canShow = _dotHasRows();
+    itemsEl.innerHTML = S.regions.map((r, i) => {
+        const pct = Math.round(r.avgScore * 100);
+        const len = r.aEnd - r.aStart;
+        const tip = spin ? `${len} bp stretch; ${r.matched} matching word positions` : `${len} bp stretch; mean window identity ${pct}%`;
+        const active = S._shownRegion === i;
+        return `<div class="dot-region${active ? ' dot-region-active' : ''}" style="padding:3px 6px;cursor:pointer;border-bottom:1px solid #eee;"
+            onmouseenter="if (!this.classList.contains('dot-region-active')) this.style.background='#d0e4ff'"
+            onmouseleave="this.style.background=''"
+            onclick="_dotGoToRegion(${i})"
+            title="${tip}. Runs broken by mismatches or small indels are counted as one stretch. Click: centre it in the plot.">
+            <button type="button" class="dot-star" title="${_dotRegionBookmarked(r) ? 'In the collection' : 'Add this stretch to the collection (the list below)'}" onclick="event.stopPropagation(); _dotBookmarkRegion(${i})">${_dotRegionBookmarked(r) ? '&#9733;' : '&#9734;'}</button>
+            ${canShow ? `<button type="button" class="dot-goto" title="Show this stretch in the alignment and go there: both copies are tinted, the alignment scrolls to the first; the dot plot window folds into a small bar in the corner so that it does not hide them (the bar's arrow brings it back)" onclick="event.stopPropagation(); _dotShowRegionInAlignment(${i})">&#8674;</button>` : ''}
+            <b>#${i + 1}</b> ${len}bp${spin ? '' : ' ' + pct + '%'}
+            <span style="color:#888;font-size:10px;">A${_dotSpanA(r.aStart, r.aEnd)} / B${_dotSpanB(r.bStart, r.bEnd)}</span>
+          </div>`;
+    }).join('');
+}

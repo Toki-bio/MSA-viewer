@@ -1,0 +1,513 @@
+[script.js lines 6106-6617 of ViewAlign fd8b8e4]
+// Hit-test the scale ruler area (top row, y < SCALE_H in canvas coords).
+// Returns { col } or null if outside the ruler's column range.
+// The cell nearest to a client point, for a drag whose pointer has left the cells: past the last
+// column or row, over the names, above the ruler, outside the canvas. A drag used to stop growing
+// there, so a quick drag off the edge left the last columns or rows out (audit M17).
+function _canvasDragCell(clientX, clientY) {
+    const canvas = _canvasState.canvas, m = _canvasState.metrics;
+    if (!canvas || !m || !m.nameW) return null;
+    const nSeqs = _canvasState.seqsLen || (state.seqs ? state.seqs.length : 0);
+    const nSlots = _canvasState.nSlots || (state.seqs && state.seqs.length ? _maxOf(state.seqs, q => q.seq.length) : 0);
+    if (!nSeqs || !nSlots) return null;
+    const rect = canvas.getBoundingClientRect();
+    const H = m.headerH || m.charH, pitch = _canvasState.rowPitch || m.charH;
+    const cy = Math.max(rect.top + 1, Math.min(rect.bottom - 1, clientY));
+    const P = _canvasLocal(Math.max(rect.left, Math.min(rect.right - 1, clientX)), cy);
+    const leftEdge = P.sticky ? m.nameW : Math.max(0, m.nameW - P.ox);
+    const x = Math.max(leftEdge, P.x);
+    let slot = Math.floor((x - m.nameW + P.ox) / m.charW);
+    slot = Math.max(P.s0 || 0, Math.min(Math.min(P.s1, nSlots) - 1, slot));
+    let row = Math.floor((Math.max(H, P.y) - H + P.oy) / pitch);
+    row = Math.max(0, Math.min(nSeqs - 1, row));
+    return { row, col: _canvasSlotToCol(slot), slot };
+}
+function _canvasHitTestRuler(clientX, clientY) {
+    const canvas = _canvasState.canvas;
+    if (!canvas) return null;
+    const m = _canvasState.metrics;
+    if (!m || !m.nameW) return null;
+    const P = _canvasLocal(clientX, clientY);
+    const x = P.x, y = P.y;
+    const trackH = m.trackH || 0;             // annotation track above the ruler
+    if (y < trackH || y >= trackH + m.charH) return null;  // not in ruler row
+    if (x < (P.sticky ? m.nameW : m.nameW - P.ox)) return null;   // name column corner
+    const col = Math.floor((x - m.nameW + P.ox) / m.charW);
+    if (col >= P.s1) return null;
+    const len = state.seqs && state.seqs.length > 0
+        ? _maxOf(state.seqs, s => s.seq.length)
+        : 0;
+    if (col < 0 || col >= (_canvasState.nSlots || len)) return null;
+    return { col: _canvasSlotToCol(col), slot: col, fold: _canvasSlotFolds(col) };
+}
+
+// Hit-test the name column area (left side, x < NAME_W in canvas coords).
+// Returns { row } or null if outside the name column's row range.
+// The trim / soft-trim note for a consensus column (Full/Block: the span's title)
+function _consensusTrimHint(pos) {
+    const t = state.trimBoundaries, st = state.softTrimBoundaries;
+    let msg = '';
+    if (t && pos <= t.leftTrimEnd) msg = 'Will be removed (left end). Drag to move this border.';
+    else if (t && pos >= t.rightTrimStart) msg = 'Will be removed (right end). Drag to move this border.';
+    else if (!t && st && (pos <= st.leftTrimEnd || pos >= st.rightTrimStart)) msg = 'Excluded from clustering (soft trim)';
+    return msg ? `<div class="trim-row">${msg}</div>` : '';
+}
+// Canvas: the hover text of a length badge or a name, or null
+function _canvasSideTooltip(clientX, clientY) {
+    const m = _canvasState.metrics, canvas = _canvasState.canvas;
+    if (!m || !canvas || !state.seqs.length) return null;
+    const P = _canvasLocal(clientX, clientY);
+    const x = P.x, y = P.y;
+    const nameHit = _canvasHitTestName(clientX, clientY);
+    if (nameHit) return _seqNameTitle(nameHit.row, nameCellLook(nameHit.row));
+    const bx = (_canvasState.badgeX || 0) - P.ox;
+    if (!P.last || _canvasState.badgeX == null || x < bx || x >= bx + (_canvasState.badgeBoxW || 0)) return null;
+    const pitch = _canvasState.rowPitch || m.charH;
+    const row = Math.floor((y - (m.headerH || m.charH) + P.oy) / pitch);
+    if (row >= 0 && row < state.seqs.length) { const g = _linkGapless(state.seqs[row]); return `Sequence length: ${g[g.length - 1] || 0} (gapless)`; }
+    const b = _canvasState.consBand;
+    const cy = y + P.oy;
+    const bv = _canvasConsValues();
+    if (b && bv && cy >= b.y + b.textOff && cy < b.y + b.textOff + m.charH) {
+        let n = 0; for (const c of bv) if (c && c !== '-' && c !== '.' && c !== ' ') n++;
+        return `Consensus length: ${n} (gapless)`;
+    }
+    return null;
+}
+// The consensus row's column under a point (Canvas), or -1
+function _canvasConsValues() {
+    const b = _canvasState.consBand;
+    if (!b) return null;
+    // edits recompute the consensus into state.consensusCache without a re-render; above 2 M residues it comes after it
+    const c = state.consensusCache, len = state.seqs[0]?.seq.length;
+    if (c?.values && c.len === len) b.values = c.values;
+    return b.values;
+}
+function _canvasHitTestConsensus(clientX, clientY) {
+    const b = _canvasState.consBand, m = _canvasState.metrics, canvas = _canvasState.canvas;
+    if (!b || !m || !canvas) return -1;
+    const P = _canvasLocal(clientX, clientY);
+    const x = P.x, y = P.y + P.oy;
+    if (y < b.y + b.textOff || y >= b.y + b.textOff + m.charH) return -1;
+    if (x < (P.sticky ? m.nameW : m.nameW - P.ox)) return -1;
+    const slot = Math.floor((x - m.nameW + P.ox) / m.charW);
+    if (slot < 0 || slot >= P.s1 || slot >= (_canvasState.nSlots || 0) || _canvasSlotIsMarker(slot)) return -1;
+    return _canvasSlotToCol(slot);
+}
+function _canvasHitTestName(clientX, clientY) {
+    const canvas = _canvasState.canvas;
+    if (!canvas) return null;
+    const m = _canvasState.metrics;
+    if (!m || !m.nameW) return null;
+    const P = _canvasLocal(clientX, clientY);
+    const x = P.x, y = P.y;
+    const nx = P.sticky ? 0 : -P.ox;   // static names scroll with the content
+    if (x < nx || x >= nx + m.nameW) return null;   // not in name column
+    if (y < (m.headerH || m.charH)) return null; // ruler / annotation corner
+    const row = Math.floor((y - (m.headerH || m.charH) + P.oy) / (_canvasState.rowPitch || m.charH));
+    const nSeqs = _canvasState.seqsLen || (state.seqs ? state.seqs.length : 0);
+    if (row < 0 || row >= nSeqs) return null;
+    return { row };
+}
+
+// Where a dragged row would land for a pointer at clientY: the row under the pointer and
+// whether the drop goes above it (upper half) or below. Clamped to the first/last row.
+function _canvasRowDropTarget(clientY) {
+    const canvas = _canvasState.canvas, m = _canvasState.metrics;
+    if (!canvas || !m) return null;
+    const nSeqs = _canvasState.seqsLen || (state.seqs ? state.seqs.length : 0);
+    if (!nSeqs) return null;
+    const pitch = _canvasState.rowPitch || m.charH;
+    const P = _canvasLocal(0, clientY);
+    const y = P.y - (m.headerH || m.charH) + P.oy;
+    const row = Math.max(0, Math.min(nSeqs - 1, Math.floor(y / pitch)));
+    const above = row === 0 ? y < pitch / 2 : (row === nSeqs - 1 ? y < row * pitch + pitch / 2 : (y - row * pitch) < pitch / 2);
+    return { row, above };
+}
+
+// Rename in Canvas mode: an input laid over the name cell (position: absolute inside the
+// container), the same keys and commit as the DOM view's _startSeqNameEdit.
+// clientY: where the rename was asked for (the double-click, the context menu's right-click). The Block
+// view has the name in every band: the box goes over it in the band at clientY, or else in a band
+// where that name is in view (it went to the strip's place: over band 1's row or off the view).
+function _startSeqNameEditCanvas(index, clientY) {
+    const m = _canvasState.metrics, canvas = _canvasState.canvas;
+    if (!m || !canvas || !state.seqs[index]) return;
+    if (alignmentContainer.querySelector('.seq-name-edit')) return;
+    const obj = state.seqs[index];   // the sequence, not its row number: rows can move while the box is open
+    hideTooltip();
+    const sticky = !!el('stickyNames')?.checked;
+    const pitch = _canvasState.rowPitch || m.charH;
+    let y = (m.headerH || m.charH) + index * pitch - _canvasState.offsetY;
+    let x = sticky ? 0 : -_canvasState.offsetX;
+    const L = _canvasState.layout;
+    if (L) {
+        const oy = _canvasState.offsetY, viewH = _canvasViewH(), H0 = m.headerH || m.charH;
+        const rowY = b => L.bandTop[b] + H0 + index * L.bandPitch[b] - oy;
+        let b = clientY != null ? _canvasLocal(0, clientY).band : -1;
+        if (b < 0 || rowY(b) + m.charH <= 0 || rowY(b) >= viewH) {
+            // the first band in view whose row is in view; none: the band in the middle of the view
+            b = -1;
+            for (let k = L.bandAt(oy); k < L.nBands && L.bandTop[k] < oy + viewH; k++) if (rowY(k) >= 0 && rowY(k) + m.charH <= viewH) { b = k; break; }
+            if (b < 0) b = L.bandAt(oy + viewH / 2);
+        }
+        // The box is whole in the view: a row cut by the view's edge, or out of it (the view moved after the menu
+        // opened), is scrolled in first. (The box sat at the row's place: half below the view, or off it and hidden
+        // by the container's overflow, the typing going to an unseen box. GLM audit cb34 #22 #23.)
+        const r0 = rowY(b);
+        if (r0 < 1 || r0 + m.charH + 1 > viewH) {
+            const partly = r0 + m.charH > 0 && r0 < viewH;   // cut by an edge: the least scroll; else the row centred
+            const want = !partly ? oy + r0 + m.charH / 2 - viewH / 2 : r0 < 1 ? oy + r0 - 1 : oy + r0 + m.charH + 1 - viewH;
+            const maxY = Math.max(0, (_canvasState.totalContentH || 0) - viewH);
+            _canvasState.offsetY = Math.max(0, Math.min(maxY, want));
+            _canvasState.scheduleDrawMoved?.();
+            window._syncVerticalScrollbar?.();
+            _canvasState.onOffsetChange?.();
+        }
+        y = rowY(b) + oy - _canvasState.offsetY;
+        x = 0;   // the Block view's names are fixed
+    }
+    const input = document.createElement('input');
+    input.type = 'text';
+    input.className = 'seq-name-edit canvas-name-edit';
+    input.value = state.seqs[index].header;
+    input.spellcheck = false;
+    input.setAttribute('aria-label', 'Sequence name');
+    Object.assign(input.style, {
+        position: 'absolute', left: (x + 2) + 'px', top: (y - 1) + 'px', width: (m.nameW - 4) + 'px', height: (m.charH + 2) + 'px',
+        boxSizing: 'border-box', margin: '0', padding: '0 2px', border: '1px solid #1976D2', borderRadius: '2px', outline: 'none',
+        background: '#fff', color: '#000', font: 'bold ' + m.fontSizePx + 'px "Courier New", monospace', zIndex: 70,
+    });
+    alignmentContainer.appendChild(input);
+    input.focus();
+    input.select();
+    let done = false;
+    const finish = (commit) => {
+        if (done) return;
+        done = true;
+        document.removeEventListener('mousedown', onOutside, true);
+        const newName = input.value.trim();
+        input.remove();
+        canvas.removeEventListener('wheel', onWheel);
+        const row = state.seqs.indexOf(obj);
+        if (commit && row >= 0 && _commitSeqRename(row, newName)) _canvasState.scheduleDraw?.();
+    };
+    input.addEventListener('keydown', (e) => {
+        e.stopPropagation();
+        if (e.key === 'Enter') { e.preventDefault(); finish(true); }
+        else if (e.key === 'Escape') { e.preventDefault(); finish(false); }
+    });
+    input.addEventListener('keyup', e => e.stopPropagation());
+    input.addEventListener('keypress', e => e.stopPropagation());
+    ['mousedown', 'click', 'dblclick', 'wheel'].forEach(t => input.addEventListener(t, e => e.stopPropagation()));
+    input.addEventListener('blur', () => finish(true));
+    const onOutside = (e) => { if (e.target !== input) finish(true); };
+    document.addEventListener('mousedown', onOutside, true);
+    // the box is placed once: scrolling the Canvas under it left it over another row
+    const onWheel = () => finish(true);
+    canvas.addEventListener('wheel', onWheel, { passive: true });
+}
+
+// Get the row index from a y coordinate in canvas viewport space.
+// Unlike _canvasHitTestName, this works for any x (used during drag).
+function _canvasRowFromClientY(clientY) {
+    const canvas = _canvasState.canvas;
+    if (!canvas) return -1;
+    const m = _canvasState.metrics;
+    if (!m || !m.nameW) return -1;
+    const P = _canvasLocal(0, clientY);
+    const row = Math.floor((P.y - (m.headerH || m.charH) + P.oy) / (_canvasState.rowPitch || m.charH));
+    const nSeqs = _canvasState.seqsLen || (state.seqs ? state.seqs.length : 0);
+    if (row < 0 || row >= nSeqs) return -1;
+    return row;
+}
+
+// Get the column index from a client point. Unlike _canvasHitTestRuler, this works for any y in the
+// strip (used during drag); in Block the band, and so the column, depends on clientY: pass it (a call
+// with clientX only read the band at the top of the view).
+function _canvasColFromClientX(clientX, clientY) {
+    const canvas = _canvasState.canvas;
+    if (!canvas) return -1;
+    const m = _canvasState.metrics;
+    if (!m || !m.nameW) return -1;
+    const P = _canvasLocal(clientX, clientY);
+    const x = P.x;
+    if (x < (P.sticky ? m.nameW : m.nameW - P.ox)) return -1;
+    const col = Math.floor((x - m.nameW + P.ox) / m.charW);
+    if (col >= P.s1) return -1;
+    const len = state.seqs && state.seqs.length > 0
+        ? _maxOf(state.seqs, s => s.seq.length)
+        : 0;
+    if (col < 0 || col >= (_canvasState.nSlots || len)) return -1;
+    return _canvasSlotToCol(col);
+}
+
+// Module-level hover tracking: updated by mousemove, read by future phases
+// (tooltip, redraw-on-hover). No visual feedback yet — Phase 0 only.
+let _canvasHoverCell = null;
+let _gapCursorOn = false, _gapHoverKey = '';   // the gap tools' cursor and outlined cell in Canvas
+
+// Hover after a scroll under a still pointer (owner, 2026-10-31). A wheel, a scrollbar drag, a page key or a
+// go-to moves the Canvas / Canvas Block cells without a pointer event (nothing in the DOM scrolls, so the
+// browser's own post-scroll hover update - which keeps Full and DOM Block right - never reaches the canvas),
+// and the tooltip kept naming the residue that had been under the pointer before the scroll. Now the first
+// moved frame hides it, and once the view has been still for ~100 ms the canvas's own mousemove handler runs
+// once at the resting pointer, so every hover tooltip (residue, consensus, annotation, names and length
+// badges, folds) follows. One timer per scroll, one hit test after it: nothing per frame but a time stamp.
+let _canvasHoverPt = null;   // { canvas, x, y, modifier keys } of the last pointer move over the canvas
+let _canvasRehoverTimer = 0, _canvasRehoverDue = 0;
+const CANVAS_REHOVER_MS = 100;
+function _canvasRehoverSoon() {
+    if (tooltip && tooltip.style.display !== 'none') hideTooltip();   // stale from the first moved frame on
+    _canvasRehoverDue = performance.now() + CANVAS_REHOVER_MS;
+    if (!_canvasRehoverTimer) _canvasRehoverTimer = setTimeout(_canvasRehoverTick, CANVAS_REHOVER_MS);
+}
+function _canvasRehoverTick() {
+    const wait = _canvasRehoverDue - performance.now();
+    if (wait > 1) { _canvasRehoverTimer = setTimeout(_canvasRehoverTick, wait); return; }
+    _canvasRehoverTimer = 0;
+    const p = _canvasHoverPt, canvas = _canvasState.canvas;
+    if (!p || !canvas || p.canvas !== canvas || !canvas.isConnected) return;
+    if (document.elementFromPoint(p.x, p.y) !== canvas) return;   // a dialog or menu now lies over that point
+    const ev = new MouseEvent('mousemove', { bubbles: false, cancelable: true, view: window, clientX: p.x, clientY: p.y,
+        ctrlKey: p.ctrlKey, altKey: p.altKey, shiftKey: p.shiftKey, metaKey: p.metaKey });
+    ev.__vaRehover = true;
+    canvas.dispatchEvent(ev);   // not bubbling: the window's drag handlers never see it
+}
+
+// Phase 4: reusable 1×1 px element positioned at a canvas cell, used as the
+// positioning anchor for showTooltipAt (which calls getBoundingClientRect on
+// its target).  Created lazily so it only exists when Canvas mode is active.
+let _canvasTooltipTarget = null;
+
+function _getCanvasTooltipTarget() {
+    if (!_canvasTooltipTarget || !_canvasTooltipTarget.isConnected) {
+        _canvasTooltipTarget = document.createElement('div');
+        _canvasTooltipTarget.style.cssText = 'position:fixed;width:1px;height:1px;pointer-events:none;z-index:-1;';
+        document.body.appendChild(_canvasTooltipTarget);
+    }
+    return _canvasTooltipTarget;
+}
+
+// Reads the shading palette from the same CSS custom properties the DOM
+// renderer uses (customizable via the black/dark/light colour pickers), so
+// Canvas mode's conservation colours stay in sync with Normal mode instead
+// of drifting to a hardcoded, unrelated palette.
+function _getCanvasShadePalette() {
+    const rs = getComputedStyle(document.documentElement);
+    const v = (name, fallback) => (rs.getPropertyValue(name) || '').trim() || fallback;
+    return {
+        blackBg: v('--blackShading', '#000'), blackFg: v('--blackText', 'white'),
+        darkBg: v('--darkShading', '#555'), darkFg: v('--darkText', 'white'),
+        lightBg: v('--lightShading', '#ccc'), lightFg: v('--lightText', 'black'),
+    };
+}
+
+// Canvas cells take the colours a Full/Block cell with the same class list
+// gets from the stylesheet (read once per class list through the export
+// probe and cached until the scheme or shading colours change), so the two
+// renderers cannot disagree.
+let _canvasStyleCache = { sig: '', map: new Map(), ann: new Map() };
+function _canvasCellStyler(scheme, pal, config) {
+    const sig = scheme + '|' + Object.values(pal).join(',');
+    if (_canvasStyleCache.sig !== sig) _canvasStyleCache = { sig, map: new Map(), ann: new Map() };
+    const { map, ann } = _canvasStyleCache;
+    const noData = { hasData: false, hasValidCoverage: false };
+    let probe = null;
+    return function (base, posData, extraCls) {
+        const shade = applyConservationShadeClass(base.toUpperCase(), posData || noData, config);
+        const key = shade + '|' + base + (extraCls ? '|' + extraCls : '');
+        let st = map.get(key);
+        if (!st) {
+            let a = ann.get(base);
+            if (a === undefined) { a = getResidueAnnotationClasses(base, RENDER_STANDARD_BASES, RENDER_AMBIGUOUS_BASES, scheme); ann.set(base, a); }
+            if (!probe) probe = _makeCellStyleProbe();
+            st = probe.style((a ? shade + ' ' + a : shade) + (extraCls ? ' ' + extraCls : ''));
+            map.set(key, st);
+            // the probe is only needed while new class lists turn up
+            queueMicrotask(() => { if (probe) { probe.dispose(); probe = null; } });
+        }
+        return st;
+    };
+}
+
+// Fits a fixed-height alignment viewport (Canvas, windowed Full/Block) to the window: the space
+// below the container's top less what must stay visible under it, the horizontal scrollbar (8 px
+// since 2026-10-23) and the body's bottom margin, both measured, then the border-box overrun
+// trimmed. A hard-coded 28 px reserve (sized for the old thick scrollbar) left 12-17 px white
+// under the slim one. Returns the height set (CSS px).
+function _fitAlignmentViewport() {
+    const top = alignmentContainer.getBoundingClientRect().top;
+    const sb = document.querySelector('#viewer-container .horizontal-scrollbar');
+    const need = (sb && sb.offsetHeight ? sb.offsetHeight : 8) + (parseFloat(getComputedStyle(document.body).marginBottom) || 0);
+    let h = Math.max(100, Math.floor(window.innerHeight - top - need));
+    alignmentContainer.style.height = h + 'px';
+    const over = Math.ceil(alignmentContainer.getBoundingClientRect().bottom + need - window.innerHeight);
+    if (over > 0) { h = Math.max(100, h - over); alignmentContainer.style.height = h + 'px'; }
+    return h;
+}
+
+function _renderCanvasAlignment(len, conservationData, shadeMode, blackThresh, darkThresh, lightThresh,
+                                  enableBlack, enableDark, enableLight, nameLen, stickyNames, consInfo = null) {
+    // Block layout (isBlockLayout()): every band shows its names
+    const blockLayout = isBlockLayout();
+    if (blockLayout) stickyNames = true;
+    // A Block redraw can change the bands (Block size slider, Screen, codon lanes, hidden columns): the
+    // old offsetY is then another place. Keep the place by its anchor (band's first column, row), unless
+    // a zoom or mode switch already holds one. (Before batch 3 the raw offsetY was kept.) A window resize does
+    // not render: it re-wraps the bands in relayout(), which keeps the place by the same anchor (cb34 #14).
+    if (blockLayout && _canvasState.layout && !_canvasState.pendingAnchor && state.seqs?.length) {
+        const a = _captureViewAnchor(true);
+        // the same bands again (a colour or display change): exactly where it was, not snapped to a row
+        if (a && (a.row > 0 || a.col > 0)) _canvasState.pendingAnchor = { ...a, oy: _canvasState.offsetY, bands: _canvasBandsSig(_canvasState.layout) };
+    }
+    _canvasState.layout = null;
+    alignmentContainer.innerHTML = '';
+    alignmentContainer.style.overflow = 'hidden';
+    alignmentContainer.style.position = 'relative';
+    // Canvas mode needs explicit height since absolute canvas has no flow height.
+    // Coming from a small Full/Block view the page may be scrolled (the container's top above the
+    // window): the height would then be measured from that negative top and overrun the window.
+    if (window.scrollY) window.scrollTo(0, 0);
+    _fitAlignmentViewport();
+
+    const canvas = document.createElement('canvas');
+    canvas.id = 'alignmentCanvas';
+    canvas.style.display = 'block';
+    canvas.style.position = 'absolute';
+    canvas.style.top = '0';
+    canvas.style.left = '0';
+    alignmentContainer.appendChild(canvas);
+    // Overlay layer (selections, pending/edit cell, row drag indicator): transparent, above
+    // the content, no pointer events. Selection changes redraw only this layer.
+    const overlay = document.createElement('canvas');
+    overlay.id = 'alignmentCanvasOverlay';
+    overlay.style.cssText = 'display:block;position:absolute;top:0;left:0;pointer-events:none';
+    alignmentContainer.appendChild(overlay);
+    // let, as ctx below: _canvasState.drawToSvg draws the same frame into SVG recorders in their place
+    let octx = overlay.getContext('2d');
+    _canvasState.overlay = overlay;
+
+    // Opaque: Chrome gives text on an opaque canvas the same subpixel (ClearType) antialiasing
+    // as DOM text; on a transparent canvas it falls back to greyscale, which next to the DOM
+    // text of the page reads as blurred (owner: "canvas loads sequences in low resolution").
+    // The glyph canvases and the scroll scratch copy are opaque for the same reason, and
+    // every clear below is a white fill.
+    let ctx = canvas.getContext('2d', { alpha: false });
+    const dpr = window.devicePixelRatio || 1;
+    const clearWhite = (c, x, y, cw, ch) => { c.fillStyle = '#fff'; c.fillRect(x, y, cw, ch); };
+    // Match the current zoom level so Canvas mode's text size tracks Normal
+    // mode's font-size (set on this same container by setZoom) instead of
+    // staying pinned at a hardcoded size regardless of the zoom slider.
+    const fontSizePx = parseFloat(getComputedStyle(alignmentContainer).fontSize) || 13;
+    const fontStr = fontSizePx + 'px "Courier New", monospace';
+    const nameFontStr = 'bold ' + fontStr; // matches Normal mode's bold .seq-name
+    const m = _initCanvasMetrics(ctx, fontSizePx);
+    const CHAR_W = m.charW;
+    const CHAR_H = m.charH;
+    // The 8 px pad after the names in whole device pixels: at 0.9x, 1.1x or 1.33x it was a fraction, every cell
+    // then sat between device pixels and neighbouring shaded cells were parted by a pale seam (owner's report)
+    const NAME_W = nameLen * CHAR_W + Math.round(8 * dpr) / dpr;
+    // Store nameW in metrics so _canvasHitTest can use it without re-deriving
+    m.nameW = NAME_W;
+    // Store canvas reference for hit-testing
+    _canvasState.canvas = canvas;
+    // Codon analysis: AA translation rows increase the per-row pitch.
+    // All-frames mode (state._codonActiveFrame === -1) draws 3 AA rows per
+    // sequence (frames 0, 1, 2), matching DOM mode's 3-row layout.
+    const hasCodon = !!(state._codonData && state._codonData.aaSeq);
+    const aaRowCount = hasCodon ? (state._codonData.byGene ? (state._codonData.lanes || 1) : (state._codonActiveFrame === -1 ? 3 : 1)) : 0;
+    // The translation track (DOM .aa-row): codon boxes 1.3 em tall with 1 px above and 3 px
+    // below, on device pixels so the frame copy stays exact. AA only (body.aa-only): the first
+    // track row takes the place of the bases, so the row pitch is the track's.
+    const dpx = v => Math.ceil(v * dpr) / dpr;
+    const AA_BOX_H = hasCodon ? dpx(fontSizePx * 1.3) : 0;
+    const AA_PAD_T = hasCodon ? dpx(1) : 0;
+    const aaRowH = hasCodon ? AA_PAD_T + AA_BOX_H + dpx(3) : 0;
+    const aaOnly = hasCodon && _aaOnlyActive();
+    // Pitch of a row with k translation rows. Block layout: codon analysis by gene gives each band only
+    // the lanes of the genes in its columns (as the DOM Block gives each block), so rowPitch is set per
+    // band while a band is drawn (setBand); basePitch, the strip's, is what the hit tests see
+    // (_canvasLocal maps a band's rows onto it).
+    const pitchOf = k => (aaOnly && k > 0 ? 0 : CHAR_H) + k * aaRowH;
+    const basePitch = pitchOf(aaRowCount);
+    let rowPitch = basePitch;
+    _canvasState.rowPitch = basePitch;
+    _canvasState.aaRowH = aaRowH;
+    _canvasState.aaRows = aaRowCount;
+    _canvasState.aaOnly = aaOnly;
+    _canvasState.charH = CHAR_H;
+    const aaPal = hasCodon ? _canvasAaPalette() : null;
+    const aaFontStr = 'bold ' + fontStr;                                   // .aa-data > span.aa-c
+    const aaTagFont = 'italic ' + (Math.round(fontSizePx * 0.75 * 100) / 100) + 'px "Courier New", monospace';   // .aa-tag
+    const CSS1 = Math.max(1 / dpr, Math.round(dpr) / dpr);                   // one CSS pixel on device pixels
+    // Annotation track above the ruler: its height shifts the ruler and every
+    // row down, and the hit tests read it from the metrics.
+    const TRACK_H = _annotTrackHeightPx(CHAR_H);
+    m.trackH = TRACK_H;
+    // Consensus row: letters CHAR_H high plus the DOM row's 1 px rule and 4 px margin
+    // (.consensus-top / .consensus-bottom). At the top it is part of the header, so hit
+    // tests and scroll anchors (m.headerH) see the rows start below it.
+    const CONS_GAP = Math.ceil(5 * dpr) / dpr;             // the DOM row's 1 px rule + 4 px margin, on device pixels
+    const HAIR = 1 / dpr;                                   // one device pixel
+    const CONS_H = consInfo ? CHAR_H + CONS_GAP : 0;
+    const consTop = !!consInfo && consInfo.position !== 'bottom';
+    _canvasState.consensus = consInfo ? { len, values: consInfo.values, position: consInfo.position,
+        threshold: consInfo.threshold, caseCache: null } : null;
+    m.headerH = CHAR_H + TRACK_H + (consTop ? CONS_H : 0);
+    // Glyph cache: pre-rendered (char, bg-color, fg-color) -> off-screen canvas
+    // Turns fillRect()+fillText() into a single drawImage() per cell after warm-up
+    const _glyphCache = new Map();
+    // Rounded end of a codon box (one cell wide), with its 1 px white seam, on an opaque white
+    // cell: side 'l', 'r' or 'lr' (a one-column codon)
+    const _boxEndCache = new Map();
+    function _boxEnd(bg, side) {
+        const k = bg + '|' + side;
+        let g = _boxEndCache.get(k);
+        if (!g) {
+            g = document.createElement('canvas');
+            g.width = Math.ceil(CHAR_W * dpr);
+            g.height = Math.ceil(AA_BOX_H * dpr);
+            const c2 = g.getContext('2d', { alpha: false });
+            c2.setTransform(dpr, 0, 0, dpr, 0, 0);
+            c2.fillStyle = '#fff'; c2.fillRect(0, 0, CHAR_W, AA_BOX_H);
+            c2.fillStyle = bg;
+            const l = side.includes('l'), r = side.includes('r');
+            if (typeof c2.roundRect === 'function') { c2.beginPath(); c2.roundRect(0, 0, CHAR_W, AA_BOX_H, [l ? 3 : 0, r ? 3 : 0, r ? 3 : 0, l ? 3 : 0]); c2.fill(); }
+            else c2.fillRect(0, 0, CHAR_W, AA_BOX_H);
+            c2.fillStyle = '#fff';
+            if (l) c2.fillRect(0, 0, CSS1, AA_BOX_H);
+            if (r) c2.fillRect(CHAR_W - CSS1, 0, CSS1, AA_BOX_H);
+            g._svg = { box: true, bg, side };   // what it holds, for the SVG recorder (_makeSvgRecorder)
+            _boxEndCache.set(k, g);
+        }
+        return g;
+    }
+    // variant: '' or the overlay's font ('b' bold, 'i' italic, 's' second font), same cell size
+    function _makeGlyph(ch, bg, fg, variant = '') {
+        const k = ch + '| ' + (bg||' ') + '| ' + fg + '| ' + dpr + '| ' + variant;
+        let g = _glyphCache.get(k);
+        if (!g) {
+            g = document.createElement('canvas');
+            g.width = Math.ceil(CHAR_W * dpr);
+            g.height = Math.ceil(CHAR_H * dpr);
+            const c2 = g.getContext('2d', { alpha: false });
+            c2.setTransform(dpr, 0, 0, dpr, 0, 0);
+            const sans = variant.includes('s');
+            c2.font = (variant.includes('i') ? 'italic ' : '') + (variant.includes('b') ? 'bold ' : '')
+                + (sans ? fontSizePx + 'px ' + _OVERLAY_SANS : fontStr);
+            c2.textBaseline = 'alphabetic';
+            c2.fillStyle = '#fff'; c2.fillRect(0, 0, CHAR_W, CHAR_H);          // the row is white under every cell
+            if (bg) { c2.fillStyle = bg; c2.fillRect(0, 0, CHAR_W, CHAR_H); }   // a translucent tint composes over it as in the DOM
+            c2.fillStyle = fg;
+            const base = _canvasTextBaseline(CHAR_H);                            // the font box centred in the row, as the DOM's half-leading does
+            if (sans) { c2.textAlign = 'center'; c2.fillText(ch, CHAR_W / 2, base); }
+            else c2.fillText(ch, 0, base);
+            g._svg = { ch, bg, fg, font: c2.font, base, h: CHAR_H, sans };   // what it holds, for the SVG recorder (_makeSvgRecorder)
+            _glyphCache.set(k, g);
+        }
+        return g;
+    }
+
+    const nSeqs = state.seqs.length;
+    _canvasState.seqsLen = nSeqs;

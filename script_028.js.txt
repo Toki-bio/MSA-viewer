@@ -1,0 +1,360 @@
+[script.js lines 11617-11975 of ViewAlign fd8b8e4]
+function _readsGeneTip(g) {
+    return `<b>${_escapeHtml(g.name)}</b><br>${(g.start + 1).toLocaleString()} to ${g.end.toLocaleString()} (${(g.end - g.start).toLocaleString()} bp), ${g.strand === '-' ? 'minus' : 'plus'} strand<br><i>click: go to this gene</i>`;
+}
+
+function _readsWireMouse(v) {
+    const { canvas } = v;
+    const hit = e => {
+        const b = canvas.getBoundingClientRect(), x = e.clientX - b.left, y = e.clientY - b.top;
+        const p = bamState.refStart + Math.floor((x + _readsLeft() - _READS_NAME_W) / v.cell);
+        const inPlot = p >= bamState.refStart && p < bamState.refEnd;
+        const covTop = _READS_REF_H + _READS_SCALE_H, geneTop = covTop + _COV_H;
+        if (y >= covTop && y < geneTop) return inPlot ? { p, cov: true } : null;
+        if (y >= geneTop && y < geneTop + v.geneH) {
+            // a gene under a pixel or two is still hit
+            const lane = Math.floor((y - geneTop - 2) / _READS_GENE_LANE), slack = 3 / v.cell;
+            const gene = v.genes.find(g => g.lane === lane && g.start - slack <= p && p < g.end + slack);
+            return gene ? { p, gene } : null;
+        }
+        const vcfTop = geneTop + v.geneH;
+        if (y >= vcfTop && y < vcfTop + v.vcfH) {
+            const slack = Math.ceil(3 / v.cell), sites = bamState.vcf.sites;
+            for (let i = _readsVcfFirst(sites, p - slack); i < sites.length && sites[i].pos <= p + slack; i++) return { p, site: sites[i] };
+            return null;
+        }
+        if (y < _readsHeadH() || !inPlot || _readsCoverageOnly(v)) return null;
+        const read = _readsReadAt(Math.floor((y - _readsHeadH() + alignmentContainer.scrollTop) / _readsTrackH()), p);
+        return read ? { p, read } : null;
+    };
+    const at = e => ({ getBoundingClientRect: () => ({ left: e.clientX, right: e.clientX + 1, top: e.clientY, bottom: e.clientY + 1, width: 1, height: 1 }) });
+    let shown = null, drag = null, moved = false;
+    // Drag moves the view, as in IGV; a press that does not move stays a click
+    canvas.addEventListener('mousedown', e => {
+        if (e.button !== 0) return;
+        drag = { x: e.clientX, y: e.clientY, left: _readsLeft(), top: alignmentContainer.scrollTop };
+        moved = false;
+        const onMove = ev => {
+            if (!moved && Math.abs(ev.clientX - drag.x) + Math.abs(ev.clientY - drag.y) < 4) return;
+            moved = true;
+            canvas.style.cursor = 'grabbing';
+            hideTooltip();
+            _readsSetLeft(drag.left - (ev.clientX - drag.x));
+            alignmentContainer.scrollTop = drag.top - (ev.clientY - drag.y);
+        };
+        const onUp = () => { window.removeEventListener('mousemove', onMove); window.removeEventListener('mouseup', onUp); drag = null; canvas.style.cursor = ''; };
+        window.addEventListener('mousemove', onMove);
+        window.addEventListener('mouseup', onUp);
+    });
+    canvas.addEventListener('dblclick', e => {
+        const x = e.clientX - canvas.getBoundingClientRect().left;
+        if (x >= _READS_NAME_W) _readsZoomBy(2, x);
+    });
+    canvas.addEventListener('mousemove', e => {
+        if (drag) return;
+        const h = hit(e), key = h ? (h.read || h.gene || h.site || 'c' + h.p) : null;
+        canvas.style.cursor = h ? 'pointer' : '';
+        if (key === shown) return;
+        shown = key;
+        if (!h) hideTooltip();
+        else showTooltipAt(h.read ? _readsTooltipHtml(h.read) : h.gene ? _readsGeneTip(h.gene) : h.site ? _readsVcfTip(h.site) : _readsCountsHtml(h.p), at(e), { html: true, className: 'reads-tooltip' });
+    });
+    canvas.addEventListener('mouseleave', () => { shown = null; hideTooltip(); });
+    canvas.addEventListener('contextmenu', e => {
+        const h = hit(e);
+        if (!h || !h.read) return;
+        e.preventDefault();
+        hideTooltip();
+        _readsOpenMenu(e, h.read, h.p);
+    });
+    // Ctrl+wheel zooms round the mouse, as Canvas mode leaves it to the browser only outside the Reads view
+    canvas.addEventListener('wheel', e => {
+        if (!e.ctrlKey) return;
+        e.preventDefault();
+        _readsZoomBy(e.deltaY < 0 ? _READS_ZOOM_STEP : 1 / _READS_ZOOM_STEP, Math.max(_READS_NAME_W, e.clientX - canvas.getBoundingClientRect().left));
+    }, { passive: false });
+    canvas.addEventListener('click', e => {
+        if (moved) { moved = false; return; }
+        const h = hit(e);
+        if (!h) return;
+        if (h.site) { readsGoTo(h.site.pos, { sort: true }); if (_readsView && _readsView.cell < _READS_CELL) { _readsView.cell = _READS_CELL; _readsSizeSpacer(_readsView); _readsCentre(h.site.pos); } return; }
+        if (h.cov) { readsGoTo(h.p, { sort: true, scroll: false }); return; }
+        if (h.gene) { _readsFit(Math.max(h.gene.start, bamState.refStart), Math.min(h.gene.end, bamState.refEnd) - 1); return; }
+        const read = h.read, rev = !!(read.flag & 0x10);
+        v.selected = v.selected === read ? null : read;
+        v.status = v.selected ? `${read.name}  |  pos: ${read.pos + 1}  |  ${rev ? 'reverse' : 'forward'} strand  |  cigar: ${read.cigar.map(c => c.len + c.op).join('')}  |  mapq: ${read.mapq}` : null;
+        _readsDraw();
+    });
+}
+
+function _readsDraw() {
+    const v = _readsView;
+    if (!v || !v.canvas.isConnected) return;
+    const { ctx, w, h, groups } = v, cell = v.cell, NAME_W = _READS_NAME_W;
+    const { refSeq, refStart, refEnd } = bamState;
+    const sl = _readsLeft(), st = alignmentContainer.scrollTop, head = _readsHeadH();
+    const a = Math.max(refStart, refStart + Math.floor((sl - NAME_W) / cell));
+    const b = Math.min(refEnd, a + Math.ceil(w / cell) + 2);
+    const letters = cell >= _READS_LETTERS, covOnly = _readsCoverageOnly(v);
+    const span = document.getElementById('readsZoomSpan');
+    if (span) span.textContent = _readsSpanText(v);
+    const X = p => NAME_W + (p - refStart) * cell - sl;
+    ctx.clearRect(0, 0, w, h);
+    ctx.fillStyle = '#fff'; ctx.fillRect(0, 0, w, h);
+    ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+
+    // -- Tracks: under the header, which stays --
+    ctx.save();
+    ctx.beginPath(); ctx.rect(0, head, w, h - head); ctx.clip();
+    const H = _readsTrackH(), t0 = Math.floor(st / H), t1 = covOnly ? -1 : Math.min(groups.length - 1, Math.floor((st + h - head) / H));
+    const plotR = Math.min(w, v.fullW - sl), drawn = [];
+    ctx.font = '9px monospace';
+    for (let t = t0; t <= t1; t++) {
+        const y = head + t * H - st;
+        ctx.fillStyle = t % 2 === 0 ? '#f0f4f8' : '#ffffff';
+        ctx.fillRect(0, y, plotR, H);
+        const g = groups[t];
+        for (let i = _readsFirstAt(g, a - v.maxClip); i < g.length && g[i].start < b + v.maxClip; i++) {
+            const r = g[i];
+            if (r._mateLeft && r._mate.start > r.end + 1) {
+                // the line between mates, behind them
+                const c0 = Math.max(X(r.end + 1), -2), c1 = Math.min(X(r._mate.start), w + 2);
+                if (c1 > c0) { ctx.fillStyle = '#a0a0a0'; ctx.fillRect(c0, y + Math.floor(H / 2), c1 - c0, 1); }
+            }
+            if (r.end + v.maxClip < a) continue;
+            _readsPaintRead(ctx, r, y, a, b, sl, X, v.selected === r, cell);
+            drawn.push(r);
+        }
+    }
+    v.drawn = drawn;
+    // each group's label, on its own row, at the left of the screen
+    if (!covOnly) {
+        ctx.font = 'bold 10px sans-serif'; ctx.textAlign = 'left';
+        const LH = _READS_TRACK_H;
+        for (const gr of bamState.groupRanges || []) {
+            const y = head + (gr.from - 1) * H - st;
+            if (y + H < head || y > h) continue;
+            ctx.fillStyle = '#fff'; ctx.fillRect(0, y, w, H);
+            ctx.fillStyle = '#c0c8d4'; ctx.fillRect(0, y + H - 1, w, 1);
+            if (H >= 12) { ctx.fillStyle = '#334'; ctx.fillText(gr.label, 4, y + H / 2); }
+        }
+        ctx.font = '9px monospace'; ctx.textAlign = 'center';
+    }
+    if (covOnly && !(_genome && _genome.tooWide)) {
+        ctx.fillStyle = '#666'; ctx.font = '12px sans-serif'; ctx.textAlign = 'left';
+        ctx.fillText('Too many reads to draw at this width: zoom in to see them', NAME_W, head + 24);
+        ctx.textAlign = 'center';
+    }
+    if (bamState.focusPos != null && bamState.focusPos >= a && bamState.focusPos < b) {
+        // the selected column (a variant, or a click on the coverage row): a translucent band over every track
+        const x = X(bamState.focusPos);
+        ctx.fillStyle = 'rgba(255, 193, 7, 0.28)'; ctx.fillRect(x, head, Math.max(1, cell), h - head);
+        ctx.strokeStyle = '#e0a800'; ctx.lineWidth = 1; ctx.strokeRect(x, head, Math.max(1, cell), h - head);
+    }
+    ctx.restore();
+
+    // -- Reference --
+    ctx.fillStyle = '#fafafa'; ctx.fillRect(0, 0, w, _READS_REF_H - 2);
+    ctx.fillStyle = '#333'; ctx.fillRect(0, _READS_REF_H - 2, w, 2);
+    ctx.font = 'bold 10px monospace';
+    if (letters) for (let p = a; p < b; p++) {
+        const base = _readsRefChar(p) || (_genome ? '' : 'N');   // bases not read yet are blank, not N
+        if (!base) continue;
+        ctx.fillStyle = baseColorRef(base);
+        ctx.fillText(base, X(p) + cell / 2, (_READS_REF_H - 2) / 2);
+    }
+    // the name stays as the reference scrolls under it
+    ctx.fillStyle = '#fafafa'; ctx.fillRect(0, 0, NAME_W, _READS_REF_H - 2);
+    ctx.fillStyle = '#000'; ctx.font = 'bold 11px monospace'; ctx.textAlign = 'right';
+    let name = String(bamState.refName);
+    if (name.length > 24) name = name.slice(0, 23) + '…';
+    ctx.fillText(name, NAME_W - 4, (_READS_REF_H - 2) / 2);
+    ctx.textAlign = 'center';
+
+    // -- Scale: a number every 10 bases --
+    const sy = _READS_REF_H;
+    ctx.fillStyle = '#f5f5f5'; ctx.fillRect(0, sy, w, _READS_SCALE_H);
+    ctx.fillStyle = '#ddd'; ctx.fillRect(0, sy + _READS_SCALE_H - 1, w, 1);
+    ctx.fillStyle = '#888'; ctx.font = '7px monospace';
+    if (letters) for (let p = a; p < b; p++) {
+        const n = p + 1;
+        if (n % 10 === 0) ctx.fillText(String(n), X(p) + cell / 2, sy + _READS_SCALE_H / 2);
+        else if (n % 5 === 0) ctx.fillText('.', X(p) + cell / 2, sy + _READS_SCALE_H / 2);
+    } else {
+        // a round step at least 70 px apart
+        let step = 1;
+        while (step * cell < 70) step *= (String(step)[0] === '2' ? 2.5 : 2);
+        ctx.font = '9px monospace';
+        for (let n = Math.ceil((a + 1) / step) * step; n <= b; n += step) ctx.fillText(n.toLocaleString(), X(n - 1), sy + _READS_SCALE_H / 2);
+    }
+
+    _readsDrawCoverage(v, a, b, X);
+    const geneTop = _READS_REF_H + _READS_SCALE_H + _COV_H;
+    if (v.geneH) _readsDrawGenes(v, a, b, X, geneTop);
+    if (v.vcfH) _readsDrawVcf(v, a, b, X, geneTop + v.geneH);
+
+    // -- Status: the selected read, or the counts --
+    const y2 = geneTop + v.geneH + v.vcfH;
+    ctx.fillStyle = '#e8f0fe'; ctx.fillRect(0, y2, w, _READS_STATUS_H - 1);
+    ctx.fillStyle = '#c5d8ee'; ctx.fillRect(0, y2 + _READS_STATUS_H - 1, w, 1);
+    ctx.fillStyle = '#333'; ctx.font = '11px monospace'; ctx.textAlign = 'left';
+    ctx.fillText(v.status || _readsDefaultStatus(), 8, y2 + (_READS_STATUS_H - 1) / 2);
+    ctx.textAlign = 'center';
+    if (_genome) _genomeAfterDraw(v, a, b, X);
+}
+
+// One read, between positions a and b only. Walks the CIGAR once: on a long read a table of every base per read
+// (_getReadCigarFeatures) is too much per frame.
+function _readsPaintRead(ctx, read, y, a, b, sl, X, selected, cell) {
+    const H = _readsTrackH(), compact = H < 8, pad = compact ? 0 : 2, rh = compact ? H - 1 : H - 4, fine = cell >= 2 && !compact;
+    const geom = _readsBarGeom(read), rx = geom.x - sl, rw = geom.w;
+    const minX = -cell, maxX = X(b) + cell, [barFill, barEdge] = _readsBarColour(read);
+    for (const box of [geom.left, geom.right]) {
+        if (!box || !box.w || !fine || !_readsOpts.clips) continue;
+        // soft clips: lighter fill, dashed edge
+        ctx.fillStyle = '#e8eef5'; ctx.fillRect(box.x - sl, y + pad, box.w, rh);
+        ctx.strokeStyle = '#a0b8d0'; ctx.lineWidth = 1; ctx.setLineDash([3, 2]);
+        ctx.strokeRect(box.x - sl, y + pad, box.w, rh);
+        ctx.setLineDash([]);
+    }
+    // the aligned stretches; a skipped region (N: an intron) is a thin line, it was not sequenced
+    const segs = [];
+    let from = read.pos, q = read.pos;
+    for (const { op, len } of read.cigar) {
+        if (op === 'N') {
+            segs.push([from, q]);
+            const g0 = Math.max(X(q), minX), g1 = Math.min(X(q + len), maxX);
+            if (g1 > g0) { ctx.fillStyle = 'rgb(150, 170, 170)'; ctx.fillRect(g0, y + pad + Math.floor(rh / 2), g1 - g0, 1); }
+            q += len; from = q;
+        } else if (op === 'M' || op === '=' || op === 'X' || op === 'D') q += len;
+    }
+    segs.push([from, q]);
+    // strand, as igv.js colours by strand: forward pink, reverse blue (the bars were one colour, so a change seen on
+    // one strand only - a common artefact - could not be told from a real one); MAPQ 0 faded
+    ctx.globalAlpha = read.mapq ? 1 : 0.35;
+    for (const [s0, e0] of segs) {
+        const lo = Math.max(X(s0), minX), hi = Math.min(X(e0), maxX);
+        if (hi <= lo) continue;
+        ctx.fillStyle = barFill; ctx.fillRect(lo, y + pad, hi - lo, rh);
+        if (fine || selected) {
+            ctx.strokeStyle = selected ? '#d9402b' : barEdge; ctx.lineWidth = selected ? (compact ? 1 : 3) : 1.5;
+            ctx.beginPath();
+            ctx.moveTo(lo, y + pad); ctx.lineTo(hi, y + pad); ctx.moveTo(lo, y + pad + rh); ctx.lineTo(hi, y + pad + rh);
+            ctx.stroke();
+        }
+    }
+    ctx.globalAlpha = 1;
+    const letters = [], withLetters = cell >= _READS_LETTERS && !compact, showAll = withLetters && _readsDisplayMode !== 'diff', ticks = [];
+    const refSeq = bamState.refSeq, seq = read.seq, rb = bamState.refBase || 0;
+    // a genome's bases are a window: outside it nothing can be called changed (charCodeAt there paints every base)
+    const rLo = _genome ? rb : -Infinity, rHi = _genome ? rb + refSeq.length : Infinity;
+    let rp = 0;
+    q = read.pos;
+    for (const { op, len } of read.cigar) {
+        if (op === 'M' || op === '=' || op === 'X') {
+            const s = Math.max(q, a, rLo), e = Math.min(q + len, b, rHi);
+            for (let p = s; p < e; p++) {
+                // & 0xDF: upper case, without a string per base (at low zoom this runs over many reads). '=' (61) in SEQ is
+                // the reference base: it was drawn as a red mismatch letter '='
+                const sc = seq.charCodeAt(rp + p - q), eq = sc === 61;
+                const mism = op === 'X' || (op === 'M' && !eq && (sc & 0xDF) !== (refSeq.charCodeAt(p - rb) & 0xDF));
+                if (showAll || mism) letters.push(p, eq ? (refSeq[p - rb] || 'N').toUpperCase() : (seq[rp + p - q] || 'N').toUpperCase(), mism ? _readsBaseAlpha(read, rp + p - q) : 1);
+            }
+            q += len; rp += len;
+        } else if (op === 'D') {
+            const s = Math.max(q, a), e = Math.min(q + len, b);
+            if (e > s) { ctx.fillStyle = '#b0b0b0'; ctx.fillRect(X(s), y + pad, Math.max(1, (e - s) * cell), rh); }
+            q += len;
+        } else if (op === 'N') q += len;
+        else if (op === 'I') { if (q >= a && q <= b) ticks.push(q); rp += len; }
+        else if (op === 'S') rp += len;
+    }
+    ctx.strokeStyle = '#e67e22'; ctx.lineWidth = 1.5;
+    for (const p of ticks) { const x = X(p); ctx.beginPath(); ctx.moveTo(x, y + (compact ? 0 : 1)); ctx.lineTo(x, y + H - (compact ? 0 : 1)); ctx.stroke(); }
+    // caps: a line at each end of the read
+    ctx.strokeStyle = '#2c5d80'; ctx.lineWidth = 2;
+    if (fine) for (const x of [rx, rx + rw]) if (x >= minX && x <= maxX) { ctx.beginPath(); ctx.moveTo(x, y); ctx.lineTo(x, y + H); ctx.stroke(); }
+    if (!withLetters) {
+        // too small for a letter: a changed base is a tick, at least a pixel wide
+        ctx.fillStyle = '#e74c3c';
+        for (let i = 0; i < letters.length; i += 3) { ctx.globalAlpha = letters[i + 2]; ctx.fillRect(X(letters[i]), y + pad, Math.max(1, cell), rh); }
+        ctx.globalAlpha = 1;
+        return;
+    }
+    for (let i = 0; i < letters.length; i += 3) {
+        ctx.globalAlpha = letters[i + 2];
+        ctx.fillStyle = showAll ? baseColorRef(letters[i + 1]) : '#e74c3c';
+        ctx.fillText(letters[i + 1], X(letters[i]) + cell / 2, y + pad + rh / 2);
+    }
+    ctx.globalAlpha = 1;
+}
+
+// Coverage from every read (before downsampling), the allele mix where it is mixed, the downsampled windows. One
+// scale for the whole reference, so a bar does not change height as it scrolls.
+function _readsDrawCoverage(v, a, b, X) {
+    const { ctx, w } = v, cell = v.cell, top = _READS_REF_H + _READS_SCALE_H, sl = _readsLeft();
+    ctx.fillStyle = '#fff'; ctx.fillRect(0, top, w, _COV_H);
+    ctx.fillStyle = '#ddd'; ctx.fillRect(0, top + _COV_H - 1, w, 1);
+    ctx.fillStyle = '#666'; ctx.font = '10px monospace'; ctx.textAlign = 'right';
+    ctx.fillText('coverage', _READS_NAME_W - 4 - sl, top + _COV_H / 2);
+    ctx.textAlign = 'center';
+    if (_genome && _genome.tooWide) return;
+    // the reads go on screen first: counting every read takes most of a second on a large file, then the bars come
+    if (!bamState.calls) {
+        if (!v.callsQueued) { v.callsQueued = true; requestAnimationFrame(() => setTimeout(() => { if (_readsView === v) { _readsCalls(); _readsDraw(); } }, 0)); }
+        return;
+    }
+    const cs = bamState.calls.counts, refStart = bamState.refStart, refEnd = bamState.refEnd;
+    if (v.covMax == null) {
+        let max = 1;
+        for (let p = Math.max(refStart, cs.lo); p < Math.min(refEnd, cs.hi); p++) max = Math.max(max, cs.depth[p - cs.lo]);
+        v.covMax = max;
+    }
+    const max = v.covMax, H = _COV_H - 6;
+    const COL = { A: '#4caf50', C: '#2196f3', G: '#ff9800', T: '#f44336' };
+    const totals = i => ({ A: cs.fwd[0][i] + cs.rev[0][i], C: cs.fwd[1][i] + cs.rev[1][i], G: cs.fwd[2][i] + cs.rev[2][i], T: cs.fwd[3][i] + cs.rev[3][i] });
+    const isMixed = (p, t) => { const i = p - cs.lo, n = t.A + t.C + t.G + t.T; return n > 0 && (n - (t[(_readsRefChar(p) || 'N').toUpperCase()] || 0)) / n >= 0.2 || cs.del[i] / Math.max(1, cs.depth[i]) >= 0.2; };
+    // stacked: bases (reference first), deletions on top
+    const stack = (p, t, x, bw) => {
+        const i = p - cs.lo, refB = (_readsRefChar(p) || 'N').toUpperCase();
+        let y = H;
+        const seg = (cnt, col) => { if (!cnt) return; const hh = H * cnt / max; y -= hh; ctx.fillStyle = col; ctx.fillRect(x, top + y, bw, hh); };
+        if (t[refB]) seg(t[refB], COL[refB]);
+        for (const c of ['A', 'C', 'G', 'T']) if (c !== refB) seg(t[c], COL[c]);
+        seg(cs.del[i], '#555');
+    };
+    const lo = Math.max(a, cs.lo), hi = Math.min(b, cs.hi);
+    if (cell >= 1) {
+        for (let p = lo; p < hi; p++) {
+            const i = p - cs.lo, x = X(p), t = totals(i);
+            if (isMixed(p, t)) { stack(p, t, x, cell); continue; }
+            const hh = Math.round(H * cs.depth[i] / max * 2) / 2;
+            if (hh > 0) { ctx.fillStyle = '#b4b4b4'; ctx.fillRect(x, top + H - hh, cell, hh); }
+        }
+    } else {
+        // several bases to a pixel: the deepest one's bar, then the mixed sites over it, so none is lost (found once)
+        if (!v.mixed) {
+            const m = [];
+            for (let p = Math.max(refStart, cs.lo); p < Math.min(refEnd, cs.hi); p++) if (isMixed(p, totals(p - cs.lo))) m.push(p);
+            v.mixed = Int32Array.from(m);
+        }
+        ctx.fillStyle = '#b4b4b4';
+        for (let px = Math.floor(X(lo)); px < Math.min(w, X(hi)); px++) {
+            const p0 = Math.max(lo, Math.floor(refStart + (px + sl - _READS_NAME_W) / cell)), p1 = Math.min(hi, Math.ceil(refStart + (px + 1 + sl - _READS_NAME_W) / cell));
+            let d = 0;
+            for (let p = p0; p < p1; p++) if (cs.depth[p - cs.lo] > d) d = cs.depth[p - cs.lo];
+            const hh = H * d / max;
+            if (hh > 0) ctx.fillRect(px, top + H - hh, 1, hh);
+        }
+        for (const p of v.mixed) if (p >= lo && p < hi) stack(p, totals(p - cs.lo), Math.floor(X(p)), 1);
+    }
+    // windows whose reads were not all drawn
+    ctx.fillStyle = '#222';
+    for (const d of bamState.downsampled || []) {
+        const s = Math.max(d.start, a), e = Math.min(d.end, b);
+        if (e > s) ctx.fillRect(X(s), top + _COV_H - 4, Math.max(1, (e - s) * cell), 3);
+    }
+    const f = bamState.focusPos;
+    if (f != null && f >= a && f < b) { ctx.strokeStyle = '#e0a800'; ctx.lineWidth = 2; ctx.strokeRect(X(f), top, Math.max(2, cell), _COV_H); }
+}
+

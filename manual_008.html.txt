@@ -1,0 +1,356 @@
+[manual.html lines 2370-2724 of ViewAlign fd8b8e4]
+<!-- ════════════════════════════════════════ -->
+<section id="shortcuts">
+  <h2>10. Keyboard Shortcuts</h2>
+
+  <p><strong>Find a function</strong> (the bar in the menu row, or <kbd>Ctrl+K</kbd>) lists every function of the program, menu by menu. Type part of its name or of its tooltip; <kbd>Enter</kbd> or a click runs it as the control itself would, a switch is flipped, an option is chosen, and a number or colour opens its menu with the cursor in it. What cannot run now is shown dimmed. The functions of the right-click menus are listed too, each with what to right-click: they work on the row or read under the pointer, so they run only from there.</p>
+  <h3 id="sc-general">10.1 General</h3>
+  <table>
+    <tr><th>Shortcut</th><th>Action</th></tr>
+    <tr><td><kbd>Ctrl+K</kbd></td><td>Find a function</td></tr>
+    <tr><td><kbd>Ctrl+L</kbd></td><td>Load the pasted input</td></tr>
+    <tr><td><kbd>Ctrl+H</kbd></td><td>Hide / show menu bar</td></tr>
+    <tr><td><kbd>Ctrl+M</kbd></td><td>Shows the note "Menus now work on hover". It no longer toggles menu sections, because the menus open when the pointer is over them</td></tr>
+    <tr><td><kbd>Ctrl+I</kbd></td><td>Show keyboard shortcuts reference</td></tr>
+    <tr><td><kbd>Ctrl+Shift+S</kbd></td><td>Save preset</td></tr>
+    <tr><td><kbd>Ctrl+O</kbd></td><td>Load preset</td></tr>
+    <tr><td><kbd>Alt+T</kbd></td><td>Open selected sequences in a new tab (Ctrl+T also works in an installed-app window; browsers keep Ctrl+T for their own tabs)</td></tr>
+    <tr><td><kbd>Ctrl+F</kbd></td><td>Open the Search box; search the motif in it</td></tr>
+    <tr><td><kbd>Ctrl+Shift+F</kbd></td><td>Clear last search highlight</td></tr>
+    <tr><td><kbd>Ctrl+Alt+F</kbd></td><td>Clear all search highlights</td></tr>
+    <tr><td><kbd>Ctrl++ / Ctrl+-</kbd></td><td>Zoom in / out</td></tr>
+    <tr><td><kbd>Ctrl+0</kbd></td><td>Reset zoom</td></tr>
+    <tr><td><kbd>PgUp / PgDn</kbd></td><td>Scroll the alignment one page</td></tr>
+    <tr><td><kbd>Esc</kbd></td><td>Close popups and menus; with nothing open, clear the selection (rows, columns, residues; Undo in the Selections panel brings it back). While typing in a cell, leave the cell</td></tr>
+  </table>
+
+  <h3 id="sc-editing">10.2 Editing</h3>
+  <table>
+    <tr><th>Shortcut</th><th>Action</th></tr>
+    <tr><td><kbd>Ctrl+A</kbd></td><td>Select / deselect all sequences</td></tr>
+    <tr><td><kbd>Ctrl+C</kbd></td><td>Copy the selected bases, or the selected sequences as ungapped FASTA</td></tr>
+    <tr><td><kbd>Ctrl+Del</kbd></td><td>Delete selected sequences</td></tr>
+    <tr><td><kbd>Ctrl+Z</kbd></td><td>Undo</td></tr>
+    <tr><td><kbd>Ctrl+Y</kbd> or <kbd>Ctrl+Shift+Z</kbd></td><td>Redo</td></tr>
+    <tr><td><kbd>Ctrl+R</kbd></td><td>Reverse complement selected</td></tr>
+    <tr><td><kbd>Ctrl+U</kbd></td><td>Duplicate selected</td></tr>
+    <tr><td><kbd>Ctrl+↑</kbd></td><td>Move selected rows up</td></tr>
+    <tr><td><kbd>Ctrl+↓</kbd></td><td>Move selected rows down</td></tr>
+    <tr><td><kbd>Ctrl+Home</kbd></td><td>Move selected to top</td></tr>
+    <tr><td><kbd>Ctrl+End</kbd></td><td>Move selected to bottom</td></tr>
+    <tr><td><kbd>Ctrl+B</kbd></td><td>Insert consensus of the selection below it</td></tr>
+    <tr><td><kbd>Ctrl+Shift+K</kbd></td><td>Copy consensus</td></tr>
+    <tr><td><kbd>Alt+H</kbd> / <kbd>Alt+Shift+H</kbd></td><td>Hide the selected columns / hide all but the selected columns (Actions &gt; Columns: Hide Cols / Only Sel)</td></tr>
+    <tr><td><kbd>Alt+U</kbd></td><td>Show all hidden columns again (Reveal)</td></tr>
+    <tr><td><kbd>Alt+J</kbd></td><td>Copy consensus of the selected sequences (Ctrl+Shift+J also works where the browser lets it through; Chrome, Edge and Firefox keep it for their developer tools)</td></tr>
+    <tr><td><kbd>Alt+C</kbd></td><td>Copy the selected sequences as ungapped FASTA (the Copy Sel button)</td></tr>
+    <tr><td><kbd>Ctrl+Shift+V</kbd></td><td>Copy selected columns</td></tr>
+    <tr><td><kbd>Ctrl+Shift+D</kbd></td><td>Delete selected columns (asks first)</td></tr>
+    <tr><td><kbd>Ctrl+D</kbd></td><td>Delete selected columns without asking (undoable). With residues selected instead (a plain drag), deletes the columns they span, asking first when they are not in every sequence</td></tr>
+    <tr><td><kbd>Ctrl+Shift+R</kbd></td><td>Realign selected block (MAFFT)</td></tr>
+  </table>
+
+  <h3 id="sc-mouse">10.3 Mouse Actions</h3>
+  <table>
+    <tr><th>Action</th><th>Result</th></tr>
+    <tr><td>Click sequence name</td><td>Select that row only (replaces the row selection; clicking the only selected row again unselects it). Double-click renames</td></tr>
+    <tr><td>Ctrl+Click name</td><td>Toggle row selection. Shift+Click selects the range from the last clicked row; Shift+Click on a row that is already selected deselects that range. Ctrl+drag over names selects the rows passed, or deselects them when the drag starts on a selected row</td></tr>
+    <tr><td>Hover</td><td>The same in every view: a residue shows its row and position (and the mark it is in: TSD, repeat, dot-plot stretch, SNP letter); a name its full text, length and colour or group; a length box the gapless length; the consensus its column's coverage and bases, with the trim or soft-trim note. In the Canvas and Block views the trim borders are dragged on the consensus row as in Full</td></tr>
+    <tr><td>Right-click with residues selected</td><td>The menu starts with <em>Copy selected bases: plain text</em> (one line per row, as <kbd>Ctrl+C</kbd>) and <em>Copy selected bases: FASTA</em> (each row as <code>&gt;name:first-last</code>, residue numbers of the ungapped row)</td></tr>
+    <tr><td>Click / Ctrl+Click residue</td><td>Select residues (bases) in that row; a second click in the same row extends to a range, or drag. A drag across rows, or a second click in another row, selects the rectangle of rows &times; columns between the two cells (Realign Block then realigns that block, &sect;3.2.1). In Edit mode, Ctrl is required (a plain click is for the edit tools)</td></tr>
+    <tr><td>Ctrl+Alt+Click residue</td><td>Select column; Ctrl+Alt+drag selects a column range (§8.2)</td></tr>
+    <tr><td>Drag sequence name</td><td>Reorder rows</td></tr>
+    <tr><td>Drag the boundary between the names and the sequences</td><td>Set the width of the name column (the cursor becomes &#8596; over it); double-click the boundary to fit the longest name</td></tr>
+    <tr><td>Right-click alignment</td><td>Context menu with 15+ options: Copy as FASTA (gapped/ungapped), Copy as plain text (gapped/ungapped), Copy by colour (gapped/ungapped), Edit Sequence, View Chromatogram (AB1 rows), Reverse complement, Rename, Replace with consensus, Add consensus below, Delete, Clear selection, Move to Top/Bottom, Insert/Remove gap, BLAST Search, Re-align against consensus, Dot-plot (self) or Dot-plot (A vs B) with two rows selected, Find repeats, Find TSD (SINE)</td></tr>
+    <tr><td>Right-button drag on empty space</td><td>Pan viewport (the context menu is suppressed after a drag)</td></tr>
+    <tr><td>Scroll wheel</td><td>Vertical scroll</td></tr>
+    <tr><td>Shift + scroll wheel</td><td>Horizontal scroll</td></tr>
+  </table>
+</section>
+
+<!-- ════════════════════════════════════════ -->
+<section id="server">
+  <h2>11. Server Features</h2>
+  <p>
+    The optional Node.js server (<code>server.js</code>) provides backend services.
+    Start it from the project directory:
+  </p>
+  <pre>node server.js</pre>
+  <p>The server listens on port 3000 by default.</p>
+  <div class="note">
+    <strong>Access key.</strong> When it starts, the server prints a link such as
+    <code>http://localhost:3000/?key=...</code> (<code>start-server.bat</code> shows it too). Open that link
+    once in each browser you use; after that <code>http://localhost:3000</code> works there. The key is kept in
+    <code>~/.viewalign/access-key</code>, readable by you only, and stays the same across restarts (delete the
+    file and restart for a new one). Without the key the viewer opens and says so in a note, and the server
+    refuses to read files, reach SSH servers, add or delete databases or run MAFFT/BLAST. This keeps other
+    users and programs on the same computer from using your server.
+  </div>
+
+  <h3 id="sv-setup">11.1 Setup</h3>
+  <p>Requirements:</p>
+  <ul>
+    <li>Node.js - the server code needs version 14 or later (optional chaining, <code>??</code>); tested with Node.js 24</li>
+    <li><strong>MAFFT</strong> - only for the <code>/api/mafft</code> endpoint (optional; path set by <code>MAFFT_BIN</code>). The viewer itself realigns in the browser</li>
+    <li><strong>BLAST+</strong> - for local BLAST search (optional)</li>
+    <li><strong>samtools</strong> - only for the <code>/api/bam2sam</code> endpoint (optional; the viewer reads BAM and CRAM itself)</li>
+    <li><strong>SSH key and PuTTY <code>plink</code></strong> - for remote file access (optional): the server reaches SSH hosts by running <code>plink</code>, which must be on the PATH</li>
+  </ul>
+  <p>Environment variables:</p>
+  <table>
+    <tr><th>Variable</th><th>Purpose</th></tr>
+    <tr><td><code>CORS_ORIGIN</code></td><td>Allowed origin for cross-origin requests (default: localhost only)</td></tr>
+    <tr><td><code>SSH_KEY_PATH</code></td><td>Path to SSH private key for remote access</td></tr>
+    <tr><td><code>MAFFT_BIN</code></td><td>Path to the native MAFFT binary used by <code>POST /api/mafft</code></td></tr>
+    <tr><td><code>PORT</code>, <code>HOST</code></td><td>Port (default 3000) and bind address (default <code>127.0.0.1</code>; set <code>HOST=0.0.0.0</code> to accept other machines)</td></tr>
+    <tr><td><code>ALLOW_REMOTE_FILE_ACCESS</code></td><td>Reading files, SSH, adding or deleting databases and running MAFFT/BLAST answer only clients on the same machine; <code>1</code> lets other machines use them (they still need the access key)</td></tr>
+    <tr><td><code>LOCAL_FILE_ROOTS</code></td><td>Folders the server may read files from (default: the server folder and your home folder; never hidden folders such as <code>~/.ssh</code>)</td></tr>
+    <tr><td><code>STATIC_SERVE_ALL</code></td><td>The server serves only the viewer's own files, snapshots and added databases; <code>1</code> serves the whole folder (development pages)</td></tr>
+    <tr><td><code>CHILD_OUTPUT_MAX_BYTES</code></td><td>Largest output accepted from a program the server runs (ssh, samtools)</td></tr>
+    <tr><td><code>ALLOWED_HOSTS</code>, <code>TAILSCALE_IP</code></td><td>Host names (comma-separated) or a Tailscale address, besides <code>localhost</code>, that requests may use; blocks DNS-rebinding pages</td></tr>
+  </table>
+
+  <h3 id="sv-mafft">11.2 MAFFT Integration</h3>
+  <p>
+    The server executes MAFFT as a child process with whitelisted options only.
+    Input is sanitised - only recognised MAFFT flags are passed to the binary.
+    Strategy flags such as <code>--auto</code>, <code>--localpair</code>, <code>--globalpair</code>,
+    <code>--genafpair</code> and <code>--maxiterate</code> are accepted. The viewer's Realign buttons do
+    not use this endpoint (they run MAFFT in the browser, §3.1).
+  </p>
+
+  <h3 id="sv-ssh">11.3 SSH Remote Access</h3>
+  <p>
+    Fetch alignment files from remote servers via SSH. The servers are listed in
+    <code>ssh-servers.json</code> beside <code>server.js</code> (copy <code>ssh-servers.example.json</code>), and reached with PuTTY's <code>plink</code> and the key path.
+    <strong>Check Queue</strong> in the Input menu loads a file whose path was written to a queue file on the remote host (see <code>REMOTE_PUSH_TO_LOAD_GUIDE.md</code>); the browser never polls by itself. Files are read with <code>cat</code> and streamed
+    to the browser - no temporary files on disk.
+  </p>
+  <div class="note">
+    <strong>Security:</strong> Paths may contain letters, digits, spaces and
+    <code>_ @ % + = : , . / ~ -</code> only, and may be absolute, relative, or start with
+    <code>~</code> (expanded on the remote host). Blocked: a <code>..</code> segment, quotes,
+    <code>$</code>, backticks, backslashes, newlines, redirections and a leading <code>-</code>.
+  </div>
+
+  <h3 id="sv-bam">11.4 BAM/CRAM Support</h3>
+  <p><strong>Endpoint:</strong> <code>POST /api/bam2sam</code></p>
+  <pre>{
+  "bamPath": "/data/alignments/sample.bam",
+  "region": "chr1:1000-5000"
+}</pre>
+  <p>
+    Converts BAM/CRAM to SAM using <code>samtools view -h</code>.
+    The <code>region</code> field is optional and restricts output to a genomic interval.
+    Resulting SAM is parsed client-side with CIGAR expansion.
+  </p>
+
+  <h3 id="sv-security">11.5 Security</h3>
+  <ul>
+    <li><strong>Access key</strong> - file, SSH, database and MAFFT/BLAST routes need the key cookie set by the link the server prints (above)</li>
+    <li><strong>CORS</strong> - restricted to localhost by default; configurable via <code>CORS_ORIGIN</code></li>
+    <li><strong>Request body limit</strong> - capped at 10 MB</li>
+    <li><strong>Path traversal</strong> - <code>..</code> and shell metacharacters blocked in file paths</li>
+    <li><strong>MAFFT argument whitelist</strong> - only recognised options pass to the binary</li>
+    <li><strong>BLAST parameter validation</strong> - no arbitrary flag injection</li>
+    <li><strong>SSH key path</strong> - auto-detected from <code>os.homedir()</code>, overridable via <code>SSH_KEY_PATH</code></li>
+  </ul>
+</section>
+
+<!-- ════════════════════════════════════════ -->
+<section id="tips">
+  <h2>12. Tips &amp; Best Practices</h2>
+
+  <h3 id="tp-large">12.1 Large Alignments</h3>
+  <ul>
+    <!-- Compact mode removed -->
+    <li>Turn on <strong>Highlight Diffs</strong> to visually compress conserved regions</li>
+    <li>Use <strong>Block mode</strong> with smaller block sizes (40-60 columns; the minimum is 40) for very wide alignments</li>
+    <li><strong>Canvas</strong> is the default view and scrolls smoothly at any size; <strong>Block</strong> is drawn the same way; from about 100,000 residues, <strong>Full</strong> draws a window of the alignment instead of every cell</li>
+    <li>For extremely large files (&gt; 500 sequences x 5,000 columns), consider splitting the input</li>
+    <li>Use <strong>Variable sites only</strong> with the <strong>threshold slider</strong> to strip conserved columns and focus on variation. Set the threshold to ≥20% or higher to highlight only the most polymorphic sites.</li>
+  </ul>
+
+  <h3 id="tp-figures">12.2 Publication Figures</h3>
+  <ul>
+    <li><strong>Block mode</strong> + <strong>Amino Acid: Jalview-like</strong> colour scheme for amino acid alignments</li>
+    <li><strong>Export SVG</strong> for vector graphics - refine in Inkscape or Illustrator</li>
+    <li><strong>Export RTF</strong> for Word-compatible alignments with conservation shading</li>
+    <li><strong>Dot plot -> Export SVG</strong> for high-quality dot plots</li>
+    <li>Use <strong>Snapshots</strong> to save exact figure settings for reproducibility</li>
+    <li>Set Name Length to a short value (e.g., 10-15 characters) for cleaner figures</li>
+    <li>Adjust zoom to fit the alignment width on your target page</li>
+  </ul>
+
+  <h3 id="tp-coding">12.3 Coding Sequence Analysis</h3>
+  <ul>
+    <li>Codon mode is for coding sequences; on non-coding alignments (repeats, SINEs) most gaps are not multiples of 3 and the track fills with stops and <code>!</code> marks</li>
+    <li>Select the correct genetic code - mitochondrial genes use different codes than nuclear</li>
+    <li>Red <code>!</code> marks (frameshifts) in a coding alignment often indicate sequencing errors or pseudogenes</li>
+    <li>Clusters of non-synonymous mutations (red underline) may indicate positive selection</li>
+    <li>Mid-CDS stop codons suggest pseudogenisation or misannotation</li>
+    <li>Combine <strong>Highlight Diffs</strong> + <strong>Codon Analysis</strong> to rapidly scan for impactful mutations</li>
+    <li>The translation track confirms the reading frame - if it looks garbled, check your frame</li>
+  </ul>
+
+  <h3 id="tp-clustering">12.4 Clustering Best Practices</h3>
+  <ul>
+    <li><strong>Always trim</strong> alignment ends before SNP grouping — ragged edges inflate gap-based scores</li>
+    <li>Start with <strong>Group by k-mer</strong> for an overall split, then <strong>Find SNP groups</strong> (optionally with Split existing groups) for exclusive columns</li>
+    <li>Start SNP knobs from <strong>Defaults</strong>, then tighten if groups look noisy</li>
+    <li>If a run returns nothing, press <strong>Clusterability</strong> before changing settings by hand — it shows which parameters move the result on your data and which are inert</li>
+    <li>Use <strong>Preview</strong> (trim) and review the Group explorer before treating colours as a classification</li>
+    <li>For small families, lower <em>Min Size</em> to 2 and reduce quality thresholds</li>
+    <li>For highly conserved families, increase quality thresholds (90%+ for small groups)</li>
+    <li>After grouping, copy FASTA from the explorer or use <strong>+ Consensus Below</strong> to insert a representative row</li>
+    <li><strong>Show 2D</strong> maps where a pattern sits; it does not replace SNP grouping. Paint modes never reorder; Alt+click a rectangle to stack that type (Undoable)</li>
+    <li>Save working SNP parameter sets as named presets for reproducibility</li>
+    <li>Groups of size 1 are discarded — they may represent singletons or sequencing artefacts</li>
+  </ul>
+</section>
+
+<!-- ════════════════════════════════════════ -->
+<section id="credits">
+  <h2>13. Credits &amp; Attribution</h2>
+  <p>
+    ViewAlign is original software that builds upon, integrates, and draws inspiration
+    from the following open-source tools and published methods:
+  </p>
+
+  <h3>Software Used Directly</h3>
+  <table>
+    <tr><th>Software</th><th>How Used</th><th>License</th><th>Citation</th></tr>
+    <tr>
+      <td><strong>MAFFT</strong></td>
+      <td>Alignment engine compiled to WebAssembly (<code>disttbfast.js</code>, v7.525). Also callable via native binary on the optional server. The Emscripten runtime glue inside <code>disttbfast.js</code> is MIT (Emscripten authors).</td>
+      <td>BSD (MAFFT); MIT (Emscripten runtime)</td>
+      <td>Katoh K, Standley DM (2013) <em>Mol Biol Evol</em> 30:772-780</td>
+    </tr>
+    <tr>
+      <td><strong>MACSE</strong></td>
+      <td>Default codon-aware aligner (section 3.2.2): <code>macse-align.js</code> is a JavaScript port of MACSE v2.07 <code>alignSequences</code> that gives MACSE's alignments.</td>
+      <td>CeCILL 2.1</td>
+      <td>Ranwez V et al. (2011) <em>PLoS ONE</em> 6:e22594; Ranwez V et al. (2018) <em>Mol Biol Evol</em> 35:2582-2584</td>
+    </tr>
+    <tr>
+      <td><strong>@gmod/cram</strong></td>
+      <td>CRAM decoding in the browser (<code>vendor/gmod-cram</code>, v14.1.1, unmodified); the bundle includes is-buffer (Feross Aboukhadijeh, MIT)</td>
+      <td>MIT</td>
+      <td>Diesh C et al. (2023) <em>Genome Biol</em> 24:74</td>
+    </tr>
+    <tr>
+      <td><strong>samtools</strong></td>
+      <td>BAM/CRAM to SAM conversion for the optional server endpoint (<code>samtools view</code>)</td>
+      <td>MIT</td>
+      <td>Li H et al. (2009) <em>Bioinformatics</em> 25:2078-2079</td>
+    </tr>
+    <tr>
+      <td><strong>NCBI BLAST</strong></td>
+      <td><code>makeblastdb</code> indexing of databases added through the optional server (§3.5), and <code>blastn</code> behind the server's <code>/api/blast</code> endpoints, when BLAST+ is installed; the viewer's own search (§3.4) runs in the browser and does not call BLAST</td>
+      <td>Public Domain</td>
+      <td>Camacho C et al. (2009) <em>BMC Bioinformatics</em> 10:421</td>
+    </tr>
+  </table>
+
+  <h3>Design &amp; Methodology Inspired By</h3>
+  <table>
+    <tr><th>Tool / Method</th><th>Inspiration</th><th>Citation</th></tr>
+    <tr>
+      <td><strong>GeneDoc</strong></td>
+      <td>Edit mode tools (Move NoGaps = GeneDoc Arrange/MoveText; Slide KeepGaps = GeneDoc SlideText). RTF export format.</td>
+      <td>Nicholas KB et al. (1997) <em>EMBNEW.NEWS</em> 4:14</td>
+    </tr>
+    <tr>
+      <td><strong>IGV</strong> and <strong>igv.js</strong></td>
+      <td>The Reads view follows IGV's conventions: compact read packing, bases faded by quality (Phred 5 to 20), strand colours, downsampling of deep coverage, sort by base. Original code; no IGV source is included.</td>
+      <td>Robinson JT et al. (2011) <em>Nat Biotechnol</em> 29:24-26; Robinson JT et al. (2023) <em>Bioinformatics</em> 39:btac830</td>
+    </tr>
+    <tr>
+      <td><strong>MACSE</strong></td>
+      <td>Codon-aware visualization with frameshift detection, synonymous/non-synonymous annotation; the default codon aligner (section 3.2.2) is a port of MACSE, and the fast one follows MACSE's alignment model (codon columns, frameshift and stop-codon costs)</td>
+      <td>Ranwez V et al. (2011) <em>PLoS ONE</em> 6:e22594; Ranwez V et al. (2018) <em>Mol Biol Evol</em> 35:2582-2584</td>
+    </tr>
+    <tr>
+      <td><strong>Clustal</strong></td>
+      <td>The &ldquo;Clustal-like&rdquo; amino-acid colours group residues by property after the ClustalX colour scheme (in ViewAlign's own colours; the conservation shading is ViewAlign's own, by identity); reader for the <code>.aln</code> format</td>
+      <td>Thompson JD et al. (1997) <em>Nucleic Acids Res</em> 25:4876-4882 (ClustalX); Sievers F et al. (2011) <em>Mol Syst Biol</em> 7:539</td>
+    </tr>
+    <tr>
+      <td><strong>BLOSUM62</strong></td>
+      <td>Amino-acid scoring matrix of the codon aligners (the fast engine and the MACSE port) and of MAFFT in protein mode (MAFFT's other protein matrix offered is JTT 200: Jones DT, Taylor WR, Thornton JM (1992) <em>CABIOS</em> 8:275-282)</td>
+      <td>Henikoff S, Henikoff JG (1992) <em>PNAS</em> 89:10915-10919</td>
+    </tr>
+    <tr>
+      <td><strong>Jalview</strong></td>
+      <td>The &ldquo;Jalview-like&rdquo; amino-acid colours: residues grouped by physico-chemical property in the manner of Jalview's property schemes, in ViewAlign's own colours (it is not Jalview's Zappo table)</td>
+      <td>Waterhouse AM et al. (2009) <em>Bioinformatics</em> 25:1189-1191</td>
+    </tr>
+    <tr>
+      <td><strong>SPIN</strong> (Staden package)</td>
+      <td>Word-match dot plot. The comparison is original code; SPIN itself is not included.</td>
+      <td>Staden R, Beal KF, Bonfield JK (2000) <em>Methods Mol Biol</em> 132:115-130</td>
+    </tr>
+    <tr>
+      <td><strong>Dotter</strong></td>
+      <td>Sliding-window dot plot. Original code; Dotter is not included.</td>
+      <td>Sonnhammer ELL, Durbin R (1995) <em>Gene</em> 167:GC1-GC10</td>
+    </tr>
+    <tr>
+      <td><strong>EMBOSS</strong> <code>water</code></td>
+      <td>EDNAFULL scoring numbers only (match +5, mismatch &minus;4, gap open 10, gap extend 0.5), as one preset. No EMBOSS source.</td>
+      <td>Rice P, Longden I, Bleasby A (2000) <em>Trends Genet</em> 16:276-277</td>
+    </tr>
+    <tr>
+      <td><strong>Easel</strong> <code>esl-alistat</code> / <code>esl-alipid</code></td>
+      <td>Sean R. Eddy's Easel library (the HMMER project). Alignment summary (the values esl-alistat prints) and pairwise identity, reimplemented from the Easel manual pages and source (<code>esl_dst_XPairId</code>, <code>esl_dst_XAverageId</code>): identity is identical residues over the shorter unaligned length, as esl-alipid, or optionally over shared columns. No Easel or HMMER code is included. Easel is BSD and is distributed with HMMER.</td>
+      <td>Eddy SR (2011) <em>PLoS Comput Biol</em> 7:e1002195; <a href="https://github.com/EddyRivasLab/easel" target="_blank">github.com/EddyRivasLab/easel</a></td>
+    </tr>
+  </table>
+
+  <h3>Published Methods Implemented Here</h3>
+  <p>Each of these is ViewAlign's own code written from the published description.</p>
+  <table>
+    <tr><th>Method</th><th>Where</th><th>Citation</th></tr>
+    <tr><td>UPGMA</td><td>Tree window; guide trees of the grouping tools</td><td>Sokal RR, Michener CD (1958) <em>Univ Kansas Sci Bull</em> 38:1409-1438</td></tr>
+    <tr><td>Neighbor-Joining</td><td>Tree window</td><td>Saitou N, Nei M (1987) <em>Mol Biol Evol</em> 4:406-425</td></tr>
+    <tr><td>Jukes-Cantor and Kimura two-parameter distances</td><td>Statistics, Tree window</td><td>Jukes TH, Cantor CR (1969) in <em>Mammalian Protein Metabolism</em>, pp. 21-132; Kimura M (1980) <em>J Mol Evol</em> 16:111-120</td></tr>
+    <tr><td>Equal-angle layout of unrooted trees</td><td>Tree window</td><td>Felsenstein J (2004) <em>Inferring Phylogenies</em>, Sinauer</td></tr>
+    <tr><td>Local alignment with affine gaps; E-values and bit scores</td><td>Sequence search (§3.4), codon aligner</td><td>Smith TF, Waterman MS (1981) <em>J Mol Biol</em> 147:195-197; Gotoh O (1982) <em>J Mol Biol</em> 162:705-708; Karlin S, Altschul SF (1990) <em>PNAS</em> 87:2264-2268. The score colour bands follow NCBI BLAST's graphic summary.</td></tr>
+    <tr><td>Centre-star multiple alignment</td><td>Fast codon aligner</td><td>Gusfield D (1993) <em>Bull Math Biol</em> 55:141-154</td></tr>
+    <tr><td>Gaps as missing data or as a state</td><td>Variable sites, 2D grouping</td><td>Simmons MP, Ochoterena H (2000) <em>Syst Biol</em> 49:369-381</td></tr>
+    <tr><td>Copy number of tandem repeats as in Tandem Repeats Finder</td><td>Repeat Finder</td><td>Benson G (1999) <em>Nucleic Acids Res</em> 27:573-580</td></tr>
+    <tr><td>Phred quality scores</td><td>Reads view, sample row, chromatograms</td><td>Ewing B, Green P (1998) <em>Genome Res</em> 8:186-194</td></tr>
+    <tr><td>HGVS-style names of changes (<code>c.</code>, <code>p.</code>)</td><td>Variants window</td><td>den Dunnen JT et al. (2016) <em>Hum Mutat</em> 37:564-569</td></tr>
+    <tr><td>SubFam k-mer ordering and workflow</td><td>Group by k-mer reproduces the row order of SubFam; Peel follows its workflow</td><td><a href="https://github.com/Toki-bio/SubFam" target="_blank">github.com/Toki-bio/SubFam</a></td></tr>
+  </table>
+
+  <h3>Colours and Reference Data</h3>
+  <ul>
+    <li><strong>ColorBrewer</strong> - the heat-map palettes YlOrRd, RdBu and Greens and the distinct group colours are colour specifications from ColorBrewer by Cynthia A. Brewer, Pennsylvania State University (<a href="https://colorbrewer2.org" target="_blank">colorbrewer2.org</a>), Apache License 2.0. Harrower M, Brewer CA (2003) <em>Cartogr J</em> 40:27-37</li>
+    <li><strong>Viridis</strong> - colour map by St&eacute;fan van der Walt and Nathaniel Smith for matplotlib (CC0)</li>
+    <li><strong>Colour-blind safe nucleotide colours</strong> - the palette of Okabe M, Ito K (2008) <em>Color Universal Design</em></li>
+    <li><strong>Restriction enzyme sites</strong> - recognition sequences as listed in REBASE: Roberts RJ, Vincze T, Posfai J, Macelis D (2015) <em>Nucleic Acids Res</em> 43:D298-D299</li>
+    <li><strong>Records fetched by accession</strong> come from NCBI through the E-utilities service</li>
+    <li><strong>AB1 chromatograms</strong> - read from the Applied Biosystems ABIF file format specification</li>
+  </ul>
+
+  <h3>Format Standards</h3>
+  <ul>
+    <li><strong>FASTA</strong> - Pearson WR, Lipman DJ (1988) <em>PNAS</em> 85:2444-2448</li>
+    <li><strong>SAM/BAM</strong> - Li H et al. (2009) <em>Bioinformatics</em> 25:2078-2079</li>
+    <li><strong>Clustal</strong> - Thompson JD et al. (1994) <em>Nucleic Acids Res</em> 22:4673-4680</li>
+    <li><strong>PHYLIP</strong> - Felsenstein J (1989) <em>Cladistics</em> 5:164-166</li>
+    <li><strong>NEXUS</strong> - Maddison DR et al. (1997) <em>Syst Biol</em> 46:590-621</li>
+    <li><strong>Stockholm</strong> - the alignment format of Pfam and HMMER: Sonnhammer ELL, Eddy SR, Durbin R (1997) <em>Proteins</em> 28:405-420. The parser reads the format used by HMMER and Pfam. HMMER source is not included.</li>
+    <li><strong>NCBI Genetic Codes</strong> - <a href="https://www.ncbi.nlm.nih.gov/Taxonomy/Utils/wprintgc.cgi" target="_blank">NCBI Taxonomy</a></li>
+  </ul>
+
+  <p style="margin-top:16px;font-size:13px;color:var(--muted);">
+    MAFFT is included as a compiled WebAssembly binary under the BSD license (<code>LICENSE-MAFFT</code>), and MAFFT's own copyright applies to that binary; the Emscripten runtime generated inside <code>disttbfast.js</code> is MIT. The JBrowse CRAM reader (@gmod/cram) is included unmodified in <code>vendor/gmod-cram</code> under the MIT license, with its licence file; the bundle contains is-buffer (MIT). <code>THIRD_PARTY_NOTICES.md</code> in the repository lists every bundled component and data set. samtools and BLAST+ are optional external programs and are not in this repository. GeneDoc, SPIN, Dotter, EMBOSS, Easel, and HMMER are cited for methods or formats; their source is not included.
+    The MACSE port (<code>macse-align.js</code>, <code>macse-worker.js</code>, <code>macse-dp-wasm.js</code>) is distributed under MACSE's CeCILL 2.1 licence (<code>LICENSE-MACSE</code>); it runs in its own worker and exchanges only messages with the rest of ViewAlign.
+    The rest of the ViewAlign source code is released under the <strong>MIT License</strong>.
+  </p>
+</section>
+
+</div>
+

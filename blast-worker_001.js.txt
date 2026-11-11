@@ -1,0 +1,436 @@
+[blast-worker.js lines 1-435 of ViewAlign fd8b8e4]
+'use strict';
+// ============================================================
+//  blast-worker.js — Smith-Waterman-based sequence search in the browser
+//  Runs as a Web Worker; communicates via postMessage.
+//  Caches downloaded FASTA files in IndexedDB so subsequent
+//  searches are instant (no re-download needed).
+//
+//  NOT real NCBI BLAST — see features-inventory.md "Sequence search" section
+//  for the full story (what this is, what it isn't, and an incident where its
+//  wiring silently broke: commit c38abf2 dropped `url`, fixed 2026-08-23).
+//
+//  2026-08-23 rewrite — fixed every known limitation except protein support:
+//   - Affine-gap Smith-Waterman (Gotoh), not linear-gap — matches real indel
+//     biology (opening a gap costs more than extending one)
+//   - No silent length truncation. Full query and full database sequences are
+//     indexed/searched; a k-mer-seeded diagonal anchors a window around the
+//     true match location for the DP step, so a hit deep inside a long
+//     database entry (a whole contig, say) is no longer invisible.
+//   - Real, size-aware E-values via a Karlin-Altschul lambda solved for this
+//     tool's own actual match/mismatch scores (previously hardcoded to 0).
+//   - IUPAC ambiguity codes (N, R, Y, ...) are excluded from k-mer seeding
+//     instead of silently encoded as 'A' (previously: false seeds through
+//     N-masked regions, missed seeds spanning an ambiguous base). They are
+//     still handled correctly as ordinary mismatches inside the DP step.
+// ============================================================
+
+// ── DNA encoding ─────────────────────────────────────────────
+// 0-3 = A/C/G/T. 255 = anything else (N, ambiguity codes, gaps) — a sentinel
+// so k-mer seeding can explicitly skip ambiguous positions.
+const AMBIG = 255;
+const BASE_MAP = new Uint8Array(128).fill(AMBIG);
+BASE_MAP['A'.charCodeAt(0)] = 0; BASE_MAP['C'.charCodeAt(0)] = 1;
+BASE_MAP['G'.charCodeAt(0)] = 2; BASE_MAP['T'.charCodeAt(0)] = 3;
+BASE_MAP['a'.charCodeAt(0)] = 0; BASE_MAP['c'.charCodeAt(0)] = 1;
+BASE_MAP['g'.charCodeAt(0)] = 2; BASE_MAP['t'.charCodeAt(0)] = 3;
+
+// Full IUPAC complement lookup (string-indexed for readability)
+const COMPL = {A:'T',C:'G',G:'C',T:'A',R:'Y',Y:'R',S:'S',W:'W',
+               K:'M',M:'K',B:'V',D:'H',H:'D',V:'B',N:'N',
+               a:'t',c:'g',g:'c',t:'a',r:'y',y:'r',s:'s',w:'w',
+               k:'m',m:'k',b:'v',d:'h',h:'d',v:'b',n:'n'};
+
+// maxLen is a safety cap only (guards against a pathological multi-MB "sequence"),
+// not a feature limit — leave undefined/0 to encode the whole thing.
+function encodeSeq(s, maxLen) {
+    const len = maxLen ? Math.min(s.length, maxLen) : s.length;
+    const arr = new Uint8Array(len);
+    for (let i = 0; i < len; i++) {
+        const code = BASE_MAP[s.charCodeAt(i)];
+        arr[i] = code === undefined ? AMBIG : code;
+    }
+    return arr;
+}
+
+function revComp(s) {
+    const out = new Array(s.length);
+    for (let i = 0; i < s.length; i++) out[s.length - 1 - i] = COMPL[s[i]] || 'N';
+    return out.join('');
+}
+
+// ── Karlin-Altschul statistics (for E-values) ─────────────────
+// Solve sum_i sum_j bg_i*bg_j*exp(lambda*s(i,j)) = 1 for lambda > 0, using this
+// tool's OWN match/mismatch scores (not borrowed blastn defaults for a different
+// scoring scheme, as the previous hardcoded bit-score formula did). Uniform
+// 0.25/base background is a standard, reasonable approximation.
+// K (below) is NOT solved from first principles — a rigorous gapped K needs
+// numerical simulation beyond what's practical in a browser worker — it uses
+// the commonly-cited empirical approximation for gapped nucleotide alignments
+// (~0.1-0.14). This means E-values here are a real, size-aware, monotonically
+// meaningful statistic — a large improvement on a hardcoded 0 — but should
+// still be read as "approximately BLAST-like," not identical to real blastn's.
+function computeLambda(matchScore, mismatchScore) {
+    const bg = 0.25;
+    const f = (lambda) => 4 * bg * bg * Math.exp(lambda * matchScore) +
+                          12 * bg * bg * Math.exp(lambda * mismatchScore) - 1;
+    let lo = 1e-6, hi = 5;
+    for (let iter = 0; iter < 60; iter++) {
+        const mid = (lo + hi) / 2;
+        if (f(mid) > 0) hi = mid; else lo = mid;
+    }
+    return (lo + hi) / 2;
+}
+
+// ── Selectable scoring presets ─────────────────────────────────
+// Same Gotoh DP recurrence for all presets — only the constants (and the
+// re-solved lambda) change. EMBOSS defines "gapopen" as the cost of
+// CREATING a gap and "gapextend" as the per-residue cost, so a gap of
+// length L costs gapopen + L*gapextend (first residue = gapopen+gapextend);
+// ssearch36/FASTA36 and blastn use the same convention.
+//
+// - "water": EMBOSS `water`'s real EDNAFULL defaults (match+5/mismatch-4/
+//   gapopen10.0/gapextend0.5) — confirmed against EMBOSS documentation.
+// - "ssearch36": FASTA36 suite's `ssearch36`. Match/mismatch (+5/-4) and gap
+//   penalties (open=12, extend=4 per residue) confirmed 2026-08-23 against
+//   the real FASTA36 source repo's own documentation
+//   (github.com/wrpearson/fasta36 doc/fasta_guide.tex, describing the -f/-g
+//   options: "Gap open penalty (-10 by default for proteins, -12 for DNA)"
+//   / "Penalty per residue in a gap (-2 by default for proteins, -4 for
+//   DNA) ... A single residue gap costs f + g" — that "f + g for the first
+//   residue" convention is exactly this file's existing GAP_FIRST/GAP_EXT
+//   split). Not from running the actual binary — from reading its own
+//   documented defaults directly, which is stronger than a recalled guess
+//   but still short of confirming ssearch36's output bit-for-bit (that
+//   would also require its shuffled-sequence significance method, not
+//   replicated here — see below). Additionally, ssearch36's real
+//   significance method is shuffled-sequence Monte Carlo + extreme-value
+//   fitting, NOT a closed-form Karlin-Altschul lambda/K — impossible to
+//   replicate exactly in a stateless function without running many repeat
+//   shuffled alignments per query. This preset reuses the same
+//   recompute-lambda-plus-fixed-K approach as "water", which is an honest
+//   approximation, not real ssearch36 statistics.
+// NOTE: ssearch36's gapextend=4 (not fractional) — GAP_EXTEND_COST can be
+// either an integer or fractional depending on preset, which is exactly why
+// the DP matrices below are Float64Array, not Int32Array, regardless of
+// which preset is active (water's gapextend=0.5 needs it; keeping one
+// numeric type for all presets avoids a whole second code path).
+// "blastn" here means NCBI blastn's SCORING numbers only (reward+2/penalty-3/
+// gapopen5/gapextend2 — these are blastn's actual, well-established published
+// defaults, high confidence, unlike ssearch36's gap numbers above). It does
+// NOT mean blastn's actual seed-and-extend algorithm: real blastn requires
+// TWO word hits on the same diagonal within a window before even attempting
+// extension, then an ungapped X-drop walk, then only a BOUNDED gapped X-drop
+// DP around what survives — never an unbounded full local Smith-Waterman.
+// Researched 2026-08-23 (see glm-harness task viewalign-blastn-preset):
+// building that literal two-hit/X-drop pipeline was deliberately NOT done —
+// the seeding step here (any single shared k-mer, no two-hit requirement)
+// and the extension step (full affine-gap DP over a window, not a greedy
+// X-drop walk) both diverge from real blastn regardless of which scoring
+// preset is active. If real BLASTN-mechanics fidelity is ever needed (not
+// just "useful search with blastn-familiar score numbers"), that's a
+// separate, larger build — don't let this preset's name imply it's done.
+const SCORING_PRESETS = {
+    water:     { match: 5, mismatch: -4, gapOpenCost: 10, gapExtendCost: 0.5 },
+    ssearch36: { match: 5, mismatch: -4, gapOpenCost: 12, gapExtendCost: 4 },
+    blastn:    { match: 2, mismatch: -3, gapOpenCost: 5,  gapExtendCost: 2 },
+};
+
+let MATCH, MISMATCH, GAP_OPEN_COST, GAP_EXTEND_COST, GAP_FIRST, GAP_EXT, LAMBDA;
+// K is NOT solved from first principles for either preset — a rigorous
+// gapped K needs numerical simulation beyond what's practical in a browser
+// worker — it uses the commonly-cited empirical approximation for gapped
+// nucleotide alignments (~0.1-0.14). E-values here are a real, size-aware,
+// monotonically meaningful statistic, but should be read as
+// "approximately BLAST/water-like," not identical to any specific real
+// tool's own output.
+const K_APPROX = 0.11;
+let ACTIVE_PRESET = 'water';
+
+function applyScoringPreset(name) {
+    const p = SCORING_PRESETS[name] || SCORING_PRESETS.water;
+    ACTIVE_PRESET = SCORING_PRESETS[name] ? name : 'water';
+    MATCH = p.match; MISMATCH = p.mismatch;
+    GAP_OPEN_COST = p.gapOpenCost; GAP_EXTEND_COST = p.gapExtendCost;
+    GAP_FIRST = -(GAP_OPEN_COST + GAP_EXTEND_COST);
+    GAP_EXT   = -GAP_EXTEND_COST;
+    LAMBDA = computeLambda(MATCH, MISMATCH);
+}
+applyScoringPreset('water'); // default, matches prior behavior exactly
+
+function scoreOf(a, b) { return a === b ? MATCH : MISMATCH; }
+
+// ── Affine-gap Smith-Waterman (Gotoh) with traceback ──────────
+// Three score matrices: M (ends in match/mismatch), X (ends in a gap that
+// consumes a query residue — "up"), Y (ends in a gap that consumes a subject
+// residue — "left"). This is the standard fix for linear-gap SW's main flaw:
+// without it, an alignment with several small separate indels scores identically
+// to one with a single indel of the same total length, which misrepresents real
+// indel-bearing SINE copies.
+const DIR_NONE = 0, DIR_DIAG = 1, DIR_UP = 2, DIAG_FROM_X = 1, DIAG_FROM_Y = 2; // reused below with clearer names
+function smithWatermanAffine(query, subject) {
+    const m = query.length, n = subject.length;
+    if (m === 0 || n === 0) return null;
+    const W = n + 1;
+    // Float64Array, not Int32Array: GAP_EXTEND_COST is fractional (0.5) under
+    // EMBOSS water's default scoring, and an integer-typed matrix would
+    // silently truncate every gap-extension penalty to 0.
+    const M  = new Float64Array((m + 1) * W);
+    const X  = new Float64Array((m + 1) * W);
+    const Y  = new Float64Array((m + 1) * W);
+    // Traceback: for each matrix, which state the optimal predecessor was in.
+    // 0 = none/reset (local alignment restart), 1 = came from M, 2 = came from X, 3 = came from Y
+    const TM = new Uint8Array((m + 1) * W);
+    const TX = new Uint8Array((m + 1) * W);
+    const TY = new Uint8Array((m + 1) * W);
+    const NEG = -1e9;
+    for (let j = 0; j <= n; j++) { X[j] = NEG; Y[j] = NEG; }
+
+    let maxScore = 0, maxI = 0, maxJ = 0, maxState = 1;
+
+    // Pre-encode both strings to numeric codes ONCE (m+n charCodeAt calls total)
+    // instead of calling charCodeAt m*n times inside the hot loop below, and
+    // inline the match/mismatch comparison instead of a per-cell function call —
+    // together these were the actual bottleneck (measured ~30ms for a 200x320
+    // window before this change; the earlier per-cell overhead, not the DP
+    // itself, dominated).
+    // Uppercase for the CODE ARRAYS ONLY -- comparison must be case-insensitive
+    // (real sequence data mixes upper/lowercase: soft-masked bases, and this
+    // toolchain's own convention of lowercase flanking bases around an
+    // uppercase element body). `query`/`subject` themselves stay original-case
+    // below, since the traceback reads characters from THEM for display.
+    // Bug found 2026-09-19: a lowercase query against this worker's own
+    // (uppercase) bundled databases scored every position as a mismatch and
+    // silently returned 0 hits with no error -- confirmed by identical scores
+    // for uppercase-vs-uppercase and lowercase-vs-lowercase, null only for
+    // the mixed-case combination.
+    const queryUC = query.toUpperCase(), subjectUC = subject.toUpperCase();
+    const qCodes = new Uint16Array(m);
+    for (let k = 0; k < m; k++) qCodes[k] = queryUC.charCodeAt(k);
+    const sCodes = new Uint16Array(n);
+    for (let k = 0; k < n; k++) sCodes[k] = subjectUC.charCodeAt(k);
+
+    for (let i = 1; i <= m; i++) {
+        const rowBase = i * W, prevRowBase = (i - 1) * W;
+        X[rowBase] = NEG; Y[rowBase] = NEG; M[rowBase] = 0;
+        const qc = qCodes[i - 1];
+        for (let j = 1; j <= n; j++) {
+            const base = rowBase + j, diagBase = prevRowBase + (j - 1), upBase = prevRowBase + j, leftBase = rowBase + (j - 1);
+
+            // X: gap in subject (consume query residue, move down)
+            const xOpen = M[upBase] + GAP_FIRST, xExt = X[upBase] + GAP_EXT;
+            if (xOpen >= xExt) { X[base] = xOpen; TX[base] = 1; } else { X[base] = xExt; TX[base] = 2; }
+
+            // Y: gap in query (consume subject residue, move right)
+            const yOpen = M[leftBase] + GAP_FIRST, yExt = Y[leftBase] + GAP_EXT;
+            if (yOpen >= yExt) { Y[base] = yOpen; TY[base] = 1; } else { Y[base] = yExt; TY[base] = 3; }
+
+            // M: match/mismatch, or restart (local alignment) — inlined, not scoreOf(), for speed
+            const s = (qc === sCodes[j - 1]) ? MATCH : MISMATCH;
+            const diagM = M[diagBase] + s, diagX = X[diagBase] + s, diagY = Y[diagBase] + s;
+            let best = 0, dir = 0;
+            if (diagM > best) { best = diagM; dir = 1; }
+            if (diagX > best) { best = diagX; dir = 2; }
+            if (diagY > best) { best = diagY; dir = 3; }
+            M[base] = best; TM[base] = dir;
+
+            const cellBest = Math.max(M[base], X[base], Y[base]);
+            if (cellBest > maxScore) {
+                maxScore = cellBest; maxI = i; maxJ = j;
+                maxState = M[base] === cellBest ? 1 : (X[base] === cellBest ? 2 : 3);
+            }
+        }
+    }
+    if (maxScore <= 0) return null;
+
+    // Traceback across the 3-matrix state machine
+    let alignQ = '', alignS = '';
+    let i = maxI, j = maxJ, state = maxState;
+    while (i > 0 && j > 0) {
+        const base = i * W + j;
+        if (state === 1) { // M: came via match/mismatch
+            const dir = TM[base];
+            if (dir === 0) break; // local restart point
+            alignQ = query[i - 1] + alignQ; alignS = subject[j - 1] + alignS;
+            i--; j--; state = dir;
+        } else if (state === 2) { // X: gap in subject, consumed a query residue
+            alignQ = query[i - 1] + alignQ; alignS = '-' + alignS;
+            const dir = TX[base]; i--; state = dir === 1 ? 1 : 2;
+        } else { // Y: gap in query, consumed a subject residue
+            alignQ = '-' + alignQ; alignS = subject[j - 1] + alignS;
+            const dir = TY[base]; j--; state = dir === 1 ? 1 : 3;
+        }
+    }
+    const qStart = i + 1, sStart = j + 1;
+
+    let identity = 0, gaps = 0, midline = '';
+    for (let k = 0; k < alignQ.length; k++) {
+        if (alignQ[k] !== '-' && alignQ[k].toUpperCase() === alignS[k].toUpperCase()) { identity++; midline += '|'; }
+        else if (alignQ[k] === '-' || alignS[k] === '-')  { gaps++;     midline += ' '; }
+        else                                               {             midline += '.'; }
+    }
+
+    const alignLen = alignQ.length;
+    const percent  = alignLen > 0 ? ((identity / alignLen) * 100).toFixed(1) : '0.0';
+    const bitScore = parseFloat(Math.max(0, (LAMBDA * maxScore - Math.log(K_APPROX)) / Math.log(2)).toFixed(1));
+
+    return { score: maxScore, bitScore, identity, gaps, alignLen, percent,
+             queryStart: qStart, queryEnd: maxI,
+             hitStart: sStart,   hitEnd: maxJ,
+             querySeq: alignQ, hitSeq: alignS, midline, strand: '+' };
+}
+
+// ── Banded affine-gap Smith-Waterman (Gotoh) with traceback ────
+// Same recurrence as smithWatermanAffine, but restricts the DP to a band of
+// half-width BAND_HALF_WIDTH around the expected alignment diagonal `bandDiag`
+// (cell coordinate j - i = subjectPos - queryPos WITHIN the windowed subject
+// substring). Out-of-band cells are -infinity, forcing the optimal path to
+// stay near the seed-implied diagonal — the BWA-MEM/minimap2 "banded
+// extension". Complexity O(m*n) -> O(m*(2*BAND+1)); ~420bp window, band 32 =
+// ~6-7x fewer cells. ORTHOGONAL to windowing (window picks the subject slice,
+// band picks which cells inside it are computed).
+//
+// RISK (re-check recall via bench/benchmark.js, do NOT assume): if the true
+// alignment drifts off `bandDiag` by more than BAND_HALF_WIDTH (cumulative
+// indel imbalance beyond the band) the optimal path is clipped and the hit can
+// be missed/under-scored — the SAME failure mode as the discarded single-
+// diagonal ungapped pre-filter. Tuned empirically (see Test D); widening
+// restores exactness. Full un-banded DP stays available via USE_BANDED_DP.
+let USE_BANDED_DP = true;
+let BAND_HALF_WIDTH = 32; // half-width bp; full band = 2*BAND_HALF_WIDTH+1 cells/row
+
+// Runtime toggle so bench/benchmark.js can A/B banded vs full DP on identical
+// data in one process. searchDatabase reads these bindings at call time.
+function setBandedDP(enabled, halfWidth) {
+    if (enabled !== undefined) USE_BANDED_DP = !!enabled;
+    if (halfWidth !== undefined && halfWidth > 0) BAND_HALF_WIDTH = halfWidth | 0;
+}
+function getDPMode() { return { banded: USE_BANDED_DP, halfWidth: BAND_HALF_WIDTH }; }
+
+function smithWatermanAffineBanded(query, subject, bandDiag, bandHalf) {
+    const m = query.length, n = subject.length;
+    if (m === 0 || n === 0) return null;
+    // Band at least as wide as the subject window => banded == full DP but with
+    // extra bounds-check overhead; fall back to the plain full DP (same result).
+    if (2 * bandHalf + 1 >= n) return smithWatermanAffine(query, subject);
+
+    const W = n + 1;
+    const M  = new Float64Array((m + 1) * W);
+    const X  = new Float64Array((m + 1) * W);
+    const Y  = new Float64Array((m + 1) * W);
+    const TM = new Uint8Array((m + 1) * W);
+    const TX = new Uint8Array((m + 1) * W);
+    const TY = new Uint8Array((m + 1) * W);
+    const NEG = -1e9;
+    for (let j = 0; j <= n; j++) { X[j] = NEG; Y[j] = NEG; }
+
+    let maxScore = 0, maxI = 0, maxJ = 0, maxState = 1;
+
+    // Case-insensitive comparison, original-case strings preserved for
+    // traceback -- see the matching comment/fix in smithWatermanAffine above.
+    const queryUC = query.toUpperCase(), subjectUC = subject.toUpperCase();
+    const qCodes = new Uint16Array(m);
+    for (let k = 0; k < m; k++) qCodes[k] = queryUC.charCodeAt(k);
+    const sCodes = new Uint16Array(n);
+    for (let k = 0; k < n; k++) sCodes[k] = subjectUC.charCodeAt(k);
+
+    // Per-row in-band column range; band centred on j - i = bandDiag. Row 0 is
+    // the local-alignment boundary (M=0) and is NOT iterated, but the diagonal
+    // predecessor from row 0 / column 0 (M=0) must stay reachable so a match at
+    // the very first query/subject position can still START an alignment —
+    // otherwise banded silently shifts every alignment and drops the first
+    // residue. Handled by the i==1 / j==1 restart cases in the M recurrence.
+    let prevLo = 1, prevHi = 0; // row 0 has no in-band interior cells
+    for (let i = 1; i <= m; i++) {
+        const rowBase = i * W, prevRowBase = (i - 1) * W;
+        X[rowBase] = NEG; Y[rowBase] = NEG; M[rowBase] = 0;
+        const qc = qCodes[i - 1];
+        let lo = i + bandDiag - bandHalf;
+        let hi = i + bandDiag + bandHalf;
+        if (lo < 1) lo = 1;
+        if (hi > n) hi = n;
+        for (let j = lo; j <= hi; j++) {
+            const base = rowBase + j;
+
+            // X: gap in subject (consume query, move down). Predecessor (i-1, j)
+            // is in-band iff it lay in the PREVIOUS row's column range.
+            const upIn = (j >= prevLo && j <= prevHi);
+            const upBase = prevRowBase + j;
+            const xOpen = upIn ? M[upBase] + GAP_FIRST : NEG;
+            const xExt  = upIn ? X[upBase] + GAP_EXT   : NEG;
+            if (xOpen >= xExt) { X[base] = xOpen; TX[base] = 1; } else { X[base] = xExt; TX[base] = 2; }
+
+            // Y: gap in query (consume subject, move right). Predecessor (i, j-1)
+            // is in-band iff it lay in THIS row's range (already computed
+            // left-to-right), i.e. j-1 >= lo.
+            const leftIn = (j - 1 >= lo);
+            const leftBase = rowBase + (j - 1);
+            const yOpen = leftIn ? M[leftBase] + GAP_FIRST : NEG;
+            const yExt  = leftIn ? Y[leftBase] + GAP_EXT   : NEG;
+            if (yOpen >= yExt) { Y[base] = yOpen; TY[base] = 1; } else { Y[base] = yExt; TY[base] = 3; }
+
+            // M: match/mismatch from (i-1, j-1), or local restart (best=0). The
+            // diagonal predecessor is reachable from the row-0 / col-0 boundary
+            // (M=0) even though those aren't in band, so a first-position match
+            // can still seed an alignment.
+            const diagIn = (i === 1) || (j === 1) || (j - 1 >= prevLo && j - 1 <= prevHi);
+            const diagBase = prevRowBase + (j - 1);
+            const s = (qc === sCodes[j - 1]) ? MATCH : MISMATCH;
+            const diagM = diagIn ? M[diagBase] + s : NEG;
+            const diagX = diagIn ? X[diagBase] + s : NEG;
+            const diagY = diagIn ? Y[diagBase] + s : NEG;
+            let best = 0, dir = 0;
+            if (diagM > best) { best = diagM; dir = 1; }
+            if (diagX > best) { best = diagX; dir = 2; }
+            if (diagY > best) { best = diagY; dir = 3; }
+            M[base] = best; TM[base] = dir;
+
+            const cellBest = Math.max(M[base], X[base], Y[base]);
+            if (cellBest > maxScore) {
+                maxScore = cellBest; maxI = i; maxJ = j;
+                maxState = M[base] === cellBest ? 1 : (X[base] === cellBest ? 2 : 3);
+            }
+        }
+        prevLo = lo; prevHi = hi;
+    }
+    if (maxScore <= 0) return null;
+
+    // Traceback across the 3-matrix state machine — identical to the full DP:
+    // every pointer set above leads only between in-band cells, so the walk
+    // cannot leave the band.
+    let alignQ = '', alignS = '';
+    let i = maxI, j = maxJ, state = maxState;
+    while (i > 0 && j > 0) {
+        const base = i * W + j;
+        if (state === 1) {
+            const dir = TM[base];
+            if (dir === 0) break;
+            alignQ = query[i - 1] + alignQ; alignS = subject[j - 1] + alignS;
+            i--; j--; state = dir;
+        } else if (state === 2) {
+            alignQ = query[i - 1] + alignQ; alignS = '-' + alignS;
+            const dir = TX[base]; i--; state = dir === 1 ? 1 : 2;
+        } else {
+            alignQ = '-' + alignQ; alignS = subject[j - 1] + alignS;
+            const dir = TY[base]; j--; state = dir === 1 ? 1 : 3;
+        }
+    }
+    const qStart = i + 1, sStart = j + 1;
+
+    let identity = 0, gaps = 0, midline = '';
+    for (let k = 0; k < alignQ.length; k++) {
+        if (alignQ[k] !== '-' && alignQ[k].toUpperCase() === alignS[k].toUpperCase()) { identity++; midline += '|'; }
+        else if (alignQ[k] === '-' || alignS[k] === '-')  { gaps++;     midline += ' '; }
+        else                                               {             midline += '.'; }
+    }
+
+    const alignLen = alignQ.length;
+    const percent  = alignLen > 0 ? ((identity / alignLen) * 100).toFixed(1) : '0.0';
+    const bitScore = parseFloat(Math.max(0, (LAMBDA * maxScore - Math.log(K_APPROX)) / Math.log(2)).toFixed(1));
+
+    return { score: maxScore, bitScore, identity, gaps, alignLen, percent,
+             queryStart: qStart, queryEnd: maxI,
+             hitStart: sStart,   hitEnd: maxJ,
+             querySeq: alignQ, hitSeq: alignS, midline, strand: '+' };
+}
+

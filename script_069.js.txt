@@ -1,0 +1,437 @@
+[script.js lines 30321-30756 of ViewAlign fd8b8e4]
+            if (state.editModeActive && GENEDOC_GAP_TOOLS.has(state.editTool)) { e.preventDefault(); return; }
+            e.preventDefault();
+            state.selectedNucs.clear();
+            state.pendingNucStart = null;
+            scheduleNucSelectionRefresh();
+            setGeneDocEditTool('residue');
+            if (!state.editModeActive) return; // refused (e.g. unsupported view) - message already shown
+            state.editCell = { row: rowIndex, pos };
+            updateEditActiveCell();
+        }, true);
+    }
+    if (alignmentContainer) {
+        // *** PERFORMANCE: Event delegation for nucleotide tooltips ***
+        alignmentContainer.addEventListener('mouseover', (e) => {
+            const span = e.target.closest('.seq-data > span[data-pos]');
+            if (span) {
+                if (_pointerDragInProgress()) return;
+                if (isCtrlModifier(e) && isAltModifier(e)) return;
+                const pos = parseInt(span.dataset.pos);
+                const seqLine = span.closest('.seq-line');
+                if (seqLine && !seqLine.classList.contains('consensus-line')) {
+                    const seqIdx = parseInt(seqLine.dataset.seqIndex);
+                    if (seqIdx !== undefined && state.seqs[seqIdx]) {
+                        const base = span.textContent;
+                        if (base !== '-' && base !== '.') {
+                            const gaplessPos = _linkGapless(state.seqs[seqIdx])[pos];
+                            showTooltipAt(`${state.seqs[seqIdx].header}: ${gaplessPos}`, span);
+                        }
+                    }
+                }
+            }
+        });
+        alignmentContainer.addEventListener('mouseout', (e) => {
+            if (e.target.matches('.seq-data > span[data-pos]')) {
+                hideTooltip();
+            }
+        });
+
+        alignmentContainer.addEventListener('click', () => {
+            // If menu is shown as overlay, hide it when clicking on alignment
+            if (controls && controls.style.position === 'fixed' && controls.style.transform !== 'translateY(-100%)') {
+                controls.style.transform = 'translateY(-100%)';
+                controls.style.position = '';
+                controls.style.top = '';
+                controls.style.left = '';
+                controls.style.right = '';
+                controls.style.zIndex = '';
+                controls.style.boxShadow = '';
+            }
+        });
+    }
+
+    document.addEventListener('mouseup', handleMouseUp);
+    document.addEventListener('mouseup', handleAlignmentPanEnd);
+    document.addEventListener('mouseup', _finishRowReorderDrag);
+    document.addEventListener('mousemove', handleAlignmentPanMove);
+    document.addEventListener('mousemove', _handleRowReorderMove);
+    document.addEventListener('contextmenu', handleAlignmentPanContextMenu, true);
+    // Use capture phase so shortcuts like Ctrl+H override browser built-ins
+    document.addEventListener('keydown', handleKeyDown, true);
+    document.addEventListener('keyup', handleKeyUp, true);
+    // Reset stuck modifier keys and drag state when window loses focus
+    window.addEventListener('blur', () => {
+        state.ctrlPressed = false;
+        state.altPressed = false;
+        state.shiftPressed = false;
+        state.isDragging = false;
+        state.dragMode = null;
+        state.dragStartCol = null;
+        state.dragStartRow = null;
+    });
+    document.addEventListener('copy', (e) => {
+        if (!state.selectedNucs.size) return;
+        // Text copied from a text field or any other selected text is the user's: this used
+        // to replace it with the residue selection (Ctrl+C in the search box gave "CGTA")
+        if (_isTextEntry(document.activeElement)) return;
+        const nativeSel = window.getSelection();
+        if (nativeSel && !nativeSel.isCollapsed && String(nativeSel).length > 0) return;
+        const text = buildNucCopyText();
+        e.preventDefault();
+        e.clipboardData.setData('text/plain', text);
+    }, true);
+
+    // Use existing global infoModal reference
+    document.addEventListener('click', (event) => {
+        if (event.target === infoModal) {
+            closeInfoModal();
+        }
+    });
+
+    if (alignmentContainer) {
+        alignmentContainer.addEventListener('contextmenu', (e) => {
+            const name = e.target.closest('.seq-name');
+            if (name) {
+                e.preventDefault();
+                const row = e.target.closest('.seq-line');
+                const index = parseInt(row?.dataset?.seqIndex, 10);
+                // the consensus name (index -1) has no sequence menu: it threw reading 'header'
+                if (!Number.isInteger(index) || index < 0) return;
+                showContextMenu(e, index);
+                return;
+            }
+            const span = e.target.closest('.seq-data > span[data-pos]');
+            if (span && !span.classList.contains('seq-length')) {
+                e.preventDefault();
+                const row = e.target.closest('.seq-line');
+                if (!row || row.classList.contains('consensus-line') || row.classList.contains('scale-ruler-line')) return;
+                const index = parseInt(row.dataset.seqIndex, 10);
+                if (!Number.isInteger(index)) return;
+                showContextMenu(e, index);
+            }
+        });
+        document.addEventListener('click', () => {
+            closeContextMenu();
+        });
+    }
+}
+
+// Auto-hide menu on scroll
+let lastScrollTop = 0;
+
+function setupMenuScrollBehavior() {
+    const controls = el('controls');
+    if (!controls || !alignmentContainer) return;
+
+    let menuHeight = controls.offsetHeight;
+
+    function updateMenuVisibility() {
+        const isHidden = controls.style.transform === 'translateY(-100%)';
+        alignmentContainer.style.top = isHidden ? '0' : (menuHeight + 'px');
+    }
+
+    alignmentContainer.addEventListener('scroll', () => {
+        document.querySelectorAll('.seq-name').forEach(name => {
+            name.style.display = 'none';
+            name.offsetHeight;
+            name.style.display = '';
+        });
+
+        if (menuHeight === 0) menuHeight = controls.offsetHeight;
+
+        const scrollTop = alignmentContainer.scrollTop;
+        const wasHidden = controls.style.transform === 'translateY(-100%)';
+
+        if (scrollTop > lastScrollTop && scrollTop > 100) {
+            controls.style.transform = 'translateY(-100%)';
+            Object.assign(controls.style, { position: '', top: '', left: '', right: '', zIndex: '', boxShadow: '' });
+        } else if (scrollTop === 0) {
+            controls.style.transform = 'translateY(0)';
+            Object.assign(controls.style, { position: '', top: '', left: '', right: '', zIndex: '', boxShadow: '' });
+        }
+
+        const isHidden = controls.style.transform === 'translateY(-100%)';
+        if (wasHidden !== isHidden) {
+            updateMenuVisibility();
+        }
+
+        lastScrollTop = scrollTop;
+    });
+
+    document.addEventListener('mousemove', (e) => {
+        if (e.clientY <= 50 && controls.style.transform === 'translateY(-100%)') {
+            controls.style.transform = 'translateY(0)';
+            Object.assign(controls.style, { position: 'fixed', top: '0', left: '0', right: '0', zIndex: '1000', boxShadow: '0 2px 8px rgba(0,0,0,0.3)' });
+        }
+    });
+}
+//setupMenuScrollBehavior();  // Disabled - using setupHoverMenuReveal() instead
+setupHoverMenuReveal();
+// NEW EDITING FUNCTIONS
+const GENEDOC_FILLER = '-';
+const GENEDOC_MOVE_TOOLS = new Set(['moveNoGaps', 'slideKeepGaps']);
+const GENEDOC_GAP_TOOLS = new Set([
+    'insertGapSeq', 'deleteGapSeq',
+    'insertGapOther', 'deleteGapOther',
+    'insertGapAll', 'deleteGapAll'
+]);
+// The gap tools' pointer in Canvas: a crosshair with a white halo, as styles.css gives the DOM views
+const GAP_TOOL_CURSOR = 'url("data:image/svg+xml;utf8,<svg xmlns=\'http://www.w3.org/2000/svg\' width=\'25\' height=\'25\' viewBox=\'0 0 25 25\'><g stroke=\'%23fff\' stroke-width=\'4.5\' stroke-linecap=\'round\'><path d=\'M12.5 2v21M2 12.5h21\'/></g><g stroke=\'%23000\' stroke-width=\'1.5\' stroke-linecap=\'round\'><path d=\'M12.5 2v21M2 12.5h21\'/></g></svg>") 12 12, crosshair';
+
+function initializeGeneDocEditToolbar() {
+    const panel = el('editToolPanel');
+    if (panel?.dataset.bound === '1') {
+        updateGeneDocEditUI();
+        return;
+    }
+    if (panel) panel.dataset.bound = '1';
+
+    el('editToggleButton')?.addEventListener('click', () => {
+        setGeneDocEditMode(!state.editModeActive);
+    });
+
+    document.querySelectorAll('#editToolPanel [data-edit-tool]').forEach(button => {
+        button.addEventListener('click', () => setGeneDocEditTool(button.dataset.editTool));
+    });
+
+    el('editLiveConservationToggle')?.addEventListener('change', (event) => {
+        state.editLiveConservation = !!event.target.checked;
+    });
+
+    el('editDeleteColumnsButton')?.addEventListener('click', () => deleteSelectedColumns(true));
+    el('editClearGapColumnsButton')?.addEventListener('click', removeGapColumns);
+    el('editSeqEditorButton')?.addEventListener('click', () => openSeqEditor());
+
+    // Cons button uses onclick=_recalcConservation in HTML
+
+    updateGeneDocEditUI();
+}
+
+// Global wrapper for inline onclick handler
+function _recalcConservation() {
+    state.conservationDataCache = null;
+    renderAlignment();
+    showMessage('Conservation recalculated.', 1500);
+}
+
+// Block/Full are the only modes that build per-residue spans, so they are the only
+// ones with a span cache to keep warm.
+function isSpanRenderMode() {
+    return !isCanvasMode() && !el('modeReads')?.checked;
+}
+
+// The Block view is the Canvas renderer drawing the wrapped Block layout (bands). The old DOM
+// Block renderer stays reachable for the existing DOM checks only: ?view=domblock (or
+// window.__vaDomBlockForTests set before the page loads, which tests/lib/browser.js does) makes
+// the Block radio show it exactly as before, windowing included. No UI selects it.
+// (_domBlockForTests is declared at the top of the file.)
+// Block radio on and drawn by the Canvas renderer (Canvas Block)
+function isBlockLayout() {
+    return !!el('modeBlocks')?.checked && !_domBlockForTests;
+}
+// Block radio on and drawn by the old DOM renderer (test-only, see _domBlockForTests)
+function isDomBlock() {
+    return !!el('modeBlocks')?.checked && !!_domBlockForTests;
+}
+// The Canvas renderer draws the alignment: the Canvas view, or the Block view (Canvas Block)
+function isCanvasMode() {
+    return !!el('modeCanvas')?.checked || isBlockLayout();
+}
+
+function isEditModeSupported() {
+    return isSpanRenderMode() || isCanvasMode();
+}
+
+// Canvas and Reads draw no per-residue spans, so the edit tools have nothing to act on:
+// the mouse handler never matches a residue and every tool silently does nothing. Say so
+// instead of opening a tool panel that appears to work.
+function editModeUnavailableMessage() {
+    const mode = el('modeReads')?.checked ? 'Reads' : 'this';
+    return `Editing is not available in ${mode} mode. Switch to Canvas or Block for editing.`;
+}
+
+// Leaving edit mode on in a view that cannot service it is the same trap, so drop out of
+// it when the view changes. rerender:false is for callers already inside a render pass.
+function exitEditModeForUnsupportedView({ rerender = true, silent = false } = {}) {
+    if (!state.editModeActive || isEditModeSupported()) return false;
+    if (rerender) {
+        setGeneDocEditMode(false);
+    } else {
+        state.editModeActive = false;
+        clearGeneDocEditDrag();
+        state.editCell = null;
+        updateGeneDocEditUI();
+        updateEditActiveCell();
+    }
+    if (!silent) showMessage(editModeUnavailableMessage(), 3500);
+    return true;
+}
+
+// The last render may have skipped the span cache (size guard). Rebuild it once on
+// entering edit mode, so the first drag doesn't fall back to a full re-render per
+// column step.
+// Sequence strings are immutable, so holding a reference per row is free and any edit —
+// by any tool — replaces the string. That makes "did this edit session change anything?"
+// an O(rows) reference comparison rather than a flag every edit path must remember to set.
+function markEditSessionStart() {
+    state.editEntrySeqs = state.seqs.map(s => s.seq);
+}
+
+// Columns that differ from the session snapshot. null means the alignment's geometry
+// changed (row count or length), so nothing can be matched up column-wise.
+function columnsChangedSinceEditStart(snapshot) {
+    if (!snapshot || snapshot.length !== state.seqs.length) return null;
+    const lenBefore = snapshot.reduce((m, s) => Math.max(m, s.length), 0);
+    const lenAfter = state.seqs.reduce((m, s) => Math.max(m, s.seq.length), 0);
+    if (lenBefore !== lenAfter) return null;
+    const cols = new Set();
+    for (let i = 0; i < state.seqs.length; i++) {
+        const before = snapshot[i];
+        const after = state.seqs[i].seq;
+        if (before === after) continue;          // identical string reference: untouched row
+        for (let p = 0; p < lenAfter; p++) {
+            if (before[p] !== after[p]) cols.add(p);
+        }
+    }
+    return cols;
+}
+
+// A full render recomputes several things it then paints into spans — variable-site
+// columns, breakpoint markers, trim overlays. Reshading in place does not, so if any of
+// those are active, rebuild rather than risk a stale display.
+function canReshadeInPlace() {
+    return isSpanRenderMode()
+        && !!state.spanCache && state.spanCache.size > 0
+        && !(state._diffColumns && state._diffColumns.size)
+        && !(state._brkBeforePos && state._brkBeforePos.size)
+        && !_foldDomInfo()
+        && !state.trimBoundaries
+        && !state.softTrimBoundaries;
+}
+
+// Restore true shading in the columns the session actually changed, reusing the spans
+// already in the DOM. Rebuilding them instead costs ~1.4 s at 97k residues, almost all
+// of it style recalc and layout over elements whose geometry did not change.
+function reshadeChangedColumnsInPlace(cols) {
+    const len = state.seqs.reduce((m, s) => Math.max(m, s.seq.length), 0);
+    const shadeMode = _checkedRadioValue('shadeMode', 'all');
+    const seqCount = state.seqs.length;
+    // Recompute conservation only for the columns that actually changed,
+    // reusing the existing cache for everything else - recomputing the
+    // WHOLE alignment here (as this used to do, despite the function's own
+    // name promising to reshade only the changed columns) meant a single-
+    // residue edit paid the full alignment's conservation cost every time
+    // edit mode was exited. Measured: ~1s on a 5.97M-residue alignment for
+    // one changed column. Falls back to a full recompute if the cache is
+    // missing or stale (different length/shadeMode) - same result either
+    // way, just fast in the common case.
+    let conservationData = (state.conservationDataCache?.len === len && state.conservationDataCache?.shadeMode === shadeMode)
+        ? state.conservationDataCache.data.slice() // don't mutate a cache array another reader might still hold
+        : null;
+    if (conservationData) {
+        const unknownN = !isProteinAlignment();
+        cols.forEach(pos => { conservationData[pos] = _computeConservationForColumn(state.seqs, seqCount, pos, shadeMode, unknownN); });
+    } else {
+        conservationData = preCalculateConservation(state.seqs, len, shadeMode);
+    }
+    state.conservationDataCache = { len, shadeMode, data: conservationData, fp: _seqsFingerprint() };
+
+    // Passing each row its own current sequence as the reference means no column counts
+    // as in-flux, so every repainted column takes the freshly computed shading.
+    state.spanCache.forEach((_rowCache, row) => {
+        if (row === CONSENSUS_ROW_INDEX) return;
+        const seqObj = state.seqs[row];
+        if (seqObj) refreshSequenceRowDom(row, cols, seqObj.seq);
+    });
+
+    const consRow = state.spanCache.get(CONSENSUS_ROW_INDEX);
+    if (consRow && consRow.size && el('showConsensus')?.checked) {
+        // Same incremental idea for consensus: only the changed columns can
+        // possibly have a different consensus character.
+        const opts = _getConsensusOptions();
+        const seqArray = state.seqs.map(s => s.seq);
+        let consensus = (state.consensusCache?.len === len) ? state.consensusCache.values.slice() : null;
+        const consOpts = consensus ? state.consensusCache.opts : _consensusOptsKey();   // patched from the old cache: it keeps that cache's settings
+        if (consensus) {
+            cols.forEach(pos => { consensus[pos] = _computeConsensusCharForColumn(seqArray, pos, opts); });
+        } else {
+            consensus = computeConsensusForSequences(seqArray).split('');
+        }
+        state.consensusCache = { len, values: consensus.slice(), fp: _seqsFingerprint(), opts: consOpts };
+        state.consensusSeq = consensus.join('').replace(/-/g, '');
+        const threshold = clampConsensusPercent(el('consensusThreshold').value) / 100;
+        consRow.forEach((span, pos) => {
+            if (!cols.has(pos)) return;
+            const base = pos < consensus.length ? consensus[pos] : '-';
+            span.className = getResidueAnnotationClasses(base);
+            span.textContent = consensusDisplayBase(base, pos, threshold);
+        });
+    }
+}
+
+// ---- In-place repaint after a column-shifting edit (GeneDoc gap tools) ----
+// A gap inserted or deleted at column P changes rows only from P rightwards, and the
+// alignment grows by at most one column. Rebuilding every span for that cost ~1.3 s on
+// 200 x 1000; patching the existing spans costs a third of it, and doing the on-screen
+// part first and the rest in idle time makes the edit feel instant.
+
+// Rows whose spans still show the alignment as it was before an in-place edit: row ->
+// first stale column. Repainting reads everything from state, so it is idempotent, and
+// a second edit before the first has finished simply merges into this map.
+let _staleRows = new Map();
+let _staleHandle = null;
+let _staleOrder = [];        // rows in the order they should be done (on-screen first)
+
+function _cancelPendingSpanRepaint() {
+    _staleRows = new Map();
+    _staleOrder = [];
+    if (_staleHandle != null) (window.cancelIdleCallback || clearTimeout)(_staleHandle);
+    _staleHandle = null;
+}
+
+function _staleRepaintContext() {
+    return {
+        config: getSequenceRenderConfig(),
+        cons: state.conservationDataCache?.data || NO_CONSERVATION_DATA
+    };
+}
+
+// Finish every stale row now (tests, and anything that needs the whole DOM current).
+function flushPendingSpanRepaint() {
+    if (!_staleRows.size) return;
+    const ctx = _staleRepaintContext();
+    _staleRows.forEach((from, row) => _repaintRowCols(row, from, Infinity, ctx));
+    _cancelPendingSpanRepaint();
+    if (state.selectedNucs.size) scheduleNucSelectionRefresh();
+}
+
+function _repaintRowCols(row, from, to, ctx) {
+    const rowCache = state.spanCache?.get(row);
+    const seq = state.seqs[row]?.seq;
+    if (!rowCache || seq === undefined) return;
+    if (to === Infinity && from === 0) {
+        rowCache.forEach((span, pos) => repaintResidueSpan(span, row, pos, seq[pos] || GENEDOC_FILLER, ctx.config, ctx.cons));
+        return;
+    }
+    // Spans are looked up by column, so a narrow window costs only its own width
+    const last = Math.min(to, seq.length - 1);
+    for (let pos = from; pos <= last; pos++) {
+        const span = rowCache.get(pos);
+        if (span) repaintResidueSpan(span, row, pos, seq[pos] || GENEDOC_FILLER, ctx.config, ctx.cons);
+    }
+}
+
+function _markRowsStale(rows, from, firstRows) {
+    rows.forEach(row => {
+        const prev = _staleRows.get(row);
+        _staleRows.set(row, prev === undefined ? from : Math.min(prev, from));
+    });
+    // Rows on screen go first; the order is rebuilt from the map, so merged edits keep
+    // each row once.
+    const first = [...firstRows].filter(r => _staleRows.has(r));
+    const firstSet = new Set(first);
+    _staleOrder = first.concat([..._staleRows.keys()].filter(r => !firstSet.has(r)));
+    _scheduleStaleRepaint();
+}
+

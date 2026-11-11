@@ -1,0 +1,391 @@
+[manual.html lines 1151-1540 of ViewAlign fd8b8e4]
+    under a name, <strong>Load</strong> restores them,
+    <strong>Defaults</strong> restores the factory starting values (Min Size 3,
+    Min Features 5, quality 80/70/60, Min Occur 3). Presets live in
+    <code>localStorage</code> and persist across sessions.
+  </p>
+  <h4>Clusterability</h4>
+  <p>
+    A single SNP run cannot tell you whether the thresholds were too strict or
+    whether the data simply has no structure this method can find — both come
+    back as zero groups. <strong>Clusterability</strong> answers that by running
+    the SNP grouper across a spread of settings: each parameter varied on its
+    own from your current values, plus the loosest combination the panel allows.
+    It reports, for every run, how many groups formed, how many sequences were
+    assigned, and the largest group.
+  </p>
+  <p>The summary above the table names three things:</p>
+  <ul>
+    <li>whether the alignment groups <em>at all</em>, and under which settings it did best</li>
+    <li>which parameters <strong>changed</strong> the outcome</li>
+    <li>which parameters had <strong>no effect anywhere in their range</strong> — where further tuning is wasted effort</li>
+  </ul>
+  <div class="note">
+    <strong>Note:</strong> Clusterability only surveys — it reads your parameters
+    and leaves them exactly as they were. Nothing is applied. Choose the settings
+    you want and press <strong>Find SNP groups</strong>. A full survey takes tens
+    of seconds on a large alignment, and the table fills in row by row as each
+    run finishes.
+  </div>
+  <p>Typical workflow:</p>
+  <ol>
+    <li>Trim ends with Preview → Trim</li>
+    <li>Optional: <strong>Group by k-mer</strong> for an overall split</li>
+    <li>If unsure whether exclusive SNPs exist, press <strong>Clusterability</strong></li>
+    <li>Click <strong>Find SNP groups</strong> (optionally with Split existing groups)</li>
+    <li>Review the Group explorer; copy FASTA or insert a consensus below selected rows</li>
+    <li>Optional: <strong>Show 2D</strong> to see where those patterns sit as rectangles</li>
+  </ol>
+  <div class="note">
+    <strong>A zero result is a threshold result.</strong> When no SNP group forms,
+    the results panel names the settings that discarded everything and quotes
+    their current values. Lowering <strong>Min Size</strong> is usually what
+    admits small groups: at Min Size 3, sequences that pair up two at a time
+    are all rejected, so an alignment whose structure is pairwise reports zero
+    groups until Min Size is 2.
+  </div>
+  <p>How Find SNP groups works:</p>
+  <ul>
+    <li>At each alignment column, sequences are grouped by shared nucleotide</li>
+    <li>Groups meeting the size and quality thresholds are collected as candidates</li>
+    <li>Near-identical groups are fuzzy-merged (Jaccard similarity &gt;= 90%, and the two groups differ in size by at most 5 sequences)</li>
+    <li>Perfect-unique positions (all members share a base unique to that group) get highest weight</li>
+    <li>Outliers are pruned: in a group with more than 2 diagnostic features, a member must match at
+    least 2 of them (groups with up to 5 features) or at least 30% of them, rounded up (larger groups)</li>
+    <li>The algorithm iterates with progressively relaxed thresholds to recover smaller families</li>
+  </ul>
+
+  <h3 id="cl-2d">4.4 2D analysis</h3>
+  <p>
+    <strong>Show 2D</strong> draws translucent rectangles over stretches where a
+    subset of rows share a local pattern. This is a separate overlay from name
+    and letter colours. It does not change row order. It works in Full, Block and Canvas
+    views, including the windowed Full display used above about 100,000 residues.
+  </p>
+  <p>
+    If SNP or k-mer groups already exist, each rectangle is tagged against them:
+  </p>
+  <ul>
+    <li><strong>supporting</strong> — the boxed rows match a current group</li>
+    <li><strong>inside</strong> — the boxed rows sit inside a larger group</li>
+    <li><strong>discordant</strong> — the boxed rows cut across current groups</li>
+  </ul>
+  <p>
+    A status line reports rectangle count and, when groups exist, those three
+    tallies. Running a new grouping retags a live overlay. A count of
+    “0 support, 0 inside, 0 discordant” with “no groups to compare” means no
+    grouping has been run yet, not that the rectangles failed.
+  </p>
+  <table>
+    <tr><th>Control</th><th>Meaning</th></tr>
+    <tr><td>Show 2D</td><td>Compute and draw rectangles</td></tr>
+    <tr><td>Clear</td><td>Remove only the rectangle overlay. Name and letter colours stay until you Clear them in k-mer groups or Diagnostic SNPs</td></tr>
+    <tr><td>Group rows</td><td>Does not stack by itself. Prompt: Alt+click a coloured rectangle to stack that type, including scattered copies. Undoable</td></tr>
+    <tr><td>All copies, one box</td><td>One rectangle covers every sequence with that pattern, even if those rows are not next to each other</td></tr>
+    <tr><td>Stack + copies</td><td>The contiguous stack is one rectangle; scattered copies get a second, paler layer</td></tr>
+    <tr><td>Stack only</td><td>Paint only the contiguous stack. Scattered copies of the same pattern are left unpainted</td></tr>
+    <tr><td>Opacity</td><td>How solid the rectangles are drawn</td></tr>
+  </table>
+  <p>
+    Paint modes never change alignment order. Plain click on the alignment still
+    selects nucleotides (two clicks extend the range). <strong>Alt+click</strong>
+    a rectangle to stack that type. Terms used in tooltips:
+  </p>
+  <ul>
+    <li><strong>Type</strong> — sequences that share the same pattern in the same column range</li>
+    <li><strong>Rectangle</strong> — that type drawn on the alignment. One type may paint as several boxes if members are not sitting together</li>
+    <li><strong>Stack</strong> — members of a type that currently sit next to each other</li>
+    <li><strong>Orphan</strong> — a member of a type that is not in the stack (same type, wrong place in the list)</li>
+  </ul>
+  <div class="note">
+    2D analysis is newer than SNP grouping and still being refined. Treat the
+    boxes as a map of local similarity, not as a finished classification.
+  </div>
+
+  <h3 id="cl-understanding">4.5 Group explorer</h3>
+  <p>
+    After k-mer or SNP grouping, the <strong>Group explorer</strong> lists every
+    group in the same top-to-bottom order as the alignment. A <strong>Groups</strong>
+    menu appears in the menu bar; the dock button parks the explorer there
+    (the other menus, except Input, Actions and Groups, have the same detach/dock handle).
+  </p>
+  <ul>
+    <li>Expand a group for copy buttons: names, FASTA, ungapped FASTA, ungapped consensus</li>
+    <li>Click a sequence name to select it in the alignment; click again to unselect. <em>Select</em> toggles the whole group</li>
+    <li>Find supports substring or <em>.*</em> regex, shows all hits, and offers nearest-name suggestions as you type</li>
+    <li><em>On/Off</em> uncolours that group only. The colour picker changes the group colour. <strong>Hide colours</strong> (toolbar) switches every group colour off for now and <strong>Show colours</strong> brings them back; the groups are kept</li>
+    <li><strong>&#8645;</strong> on a group, or <strong>Gather all</strong> in the toolbar, moves the members next to each other in the alignment (one group, at the place of its first member; all groups in list order with unassigned last). Undo restores the order</li>
+    <li>Arrows or drag reorder groups in the list and move their sequences together in the alignment</li>
+    <li>Characters lists exclusive bases (only this group) and shared bases (common here, also found elsewhere); click a position to jump there</li>
+    <li>Hovering a group highlights member sequences in the alignment</li>
+    <li>Close hides the explorer; <strong>Clear all</strong> removes group data and the Groups menu</li>
+  </ul>
+  <p>
+    To insert a consensus <em>row</em> into the alignment, select the members
+    and use Consensus → <strong>+ Consensus Below</strong> (<kbd>Ctrl+B</kbd>).
+  </p>
+
+  <h3 id="cl-layers">4.6 Colour layers</h3>
+  <p>
+    k-mer groups and diagnostic SNPs share one colour layer: sequence-name
+    colours plus exclusive/shared letters. The later run replaces the earlier
+    one, unless <em>Split existing groups</em> is checked (see §4.3). Each of
+    <strong>k-mer groups</strong>, <strong>Diagnostic SNPs</strong>, and
+    <strong>2D analysis</strong> has its own <strong>Clear</strong> beside the
+    main action: the first two clear the shared name/letter layer; 2D Clear
+    removes only the rectangle overlay.
+  </p>
+  <p>
+    Colour Names (§9.11) is a separate label-colouring tool (name patterns and
+    name similarity). It does not create clustering groups.
+  </p>
+
+  <h3 id="cl-blockmask">4.7 Legacy squint mask</h3>
+  <p>
+    Folded under 2D analysis as <strong>Legacy squint mask</strong>. It is the
+    older overlay that answers “what is the coarse shape here?” by blurring
+    per-column noise into a few labelled rectangles. Showing it
+    <em>replaces</em> the current 2D rectangles.
+  </p>
+  <p>
+    Click <em>Show mask</em>. Rectangles are coloured
+    <span style="color:#15803d;font-weight:bold;">green</span> conservative
+    (high identity, all rows agree),
+    <span style="color:#b45309;font-weight:bold;">amber</span> mosaic (elevated
+    identity but only a subset of rows share it),
+    <span style="color:#6d28d9;font-weight:bold;">purple</span> decay slope
+    (identity trending down over a stretch), and grey divergent flank.
+    <strong>V1–V5</strong> sets squint coarseness — V1 a few big blocks, V5 many
+    fine ones. Squint knobs expose the eight parameters behind the presets;
+    releasing any slider recomputes the mask. A row-split rectangle with a
+    <strong>dashed red outline</strong> means that group’s members are scattered
+    in the current order rather than sitting together. Full, Block and Canvas
+    views. The same overlay still loads from
+    <code>?mask=&lt;url&gt;</code> alongside <code>?url=</code>.
+  </p>
+</section>
+
+<!-- ════════════════════════════════════════ -->
+<section id="display-menu">
+  <h2>5. Display Menu</h2>
+  <p>
+    The Display menu controls how the alignment is rendered: view mode, visual overlays,
+    zoom level, and name display options.
+  </p>
+
+  <h3 id="di-modes">5.1 View Modes</h3>
+  <table>
+    <tr><th>Mode</th><th>Best For</th><th>Description</th></tr>
+    <tr><td><strong>Full</strong></td><td>General browsing, small alignments</td><td>Continuous single-pane view. All sequences in one scrolling block. Hidden from the view switch; open it with <code>?view=full</code> (Clone Tab can still open it). The letters are page text, so the browser's find bar sees them (from about 100,000 residues only the window drawn). Residues cannot be selected as text with the mouse.</td></tr>
+    <tr><td><strong>Block</strong></td><td>Publication viewing, wide alignments</td><td>The alignment wrapped in blocks (bands), drawn on a canvas like Canvas (any size, no wait on large alignments). The Block Size slider (or the number box) sets the width, 40–300 chars. A block is never wider than the window holds (but at least 10 columns): on a narrow window it wraps at what fits, the slider and the box show that width, and a note beside them says e.g. <em>fits (150 set)</em>; when the window is wide enough again the blocks grow back to the width set. <strong>Screen</strong> sets the width to what fits the window. Presets and snapshots keep the width set, not the narrower one shown. Sequence names repeat per block; the view scrolls only up and down. Because the letters are drawn as pixels, the browser's find bar does not see them: <kbd>Ctrl+F</kbd> opens the motif search (§7.1). Printing (<kbd>Ctrl+P</kbd>) prints the whole alignment in blocks, scaled to the paper's width; above 400,000 residues, the blocks from the one in view up to that size (§9.10).</td></tr>
+    <tr><td><strong>Canvas</strong></td><td>Any alignment; the default view</td><td>The default view at every size (a note on the first load says so). Choosing Block keeps that view for smaller files for the rest of the session; alignments from 40,000 residues still open in Canvas. A link can choose the view with <code>&amp;view=canvas</code>, <code>block</code> or <code>full</code> (the hidden Full view). Scrolls by moving the drawn pixels, so wheel and scrollbar steps cost a few milliseconds whatever the size. Shows the consensus row (top or bottom) and the conservation shading. Editing works as in Full view (edit tools, typing, undo, selections, rename by double-click, row drag by the name), and so do motif search, Highlight diffs, Variable sites only, codon analysis, Show 2D and snapshots. From about 100,000 residues, Full draws a window rather than every cell.</td></tr>
+    <tr><td><strong>Reads</strong></td><td>SAM/BAM read data</td><td>IGV-style read packing view. Displays reads as horizontal bars with CIGAR-expanded match/mismatch/indel colouring. Activated automatically when SAM or BAM reads are opened onto a loaded reference (2.5). A <strong>Show bases</strong> checkbox next to the mode switch draws every base of each read instead of mismatches only. A coverage row (counts per base and strand on hover; click to sort the reads there), read strands in colour, and <strong>Variants</strong> / <strong>Sample &rarr; row</strong> buttons (2.5).</td></tr>
+  </table>
+  <p>
+    Mode switching is instant - no re-render delay. The Block Size slider adjusts
+    characters per block in Block mode (up to what fits the window) and is greyed out in other modes.
+  </p>
+
+  <h3 id="di-checks">5.2 Highlight Diffs &amp; Variable Sites</h3>
+  <p>
+    <strong>Use case:</strong> exploring a long alignment that has several diagnostic
+    polymorphic columns scattered far apart, pigeonholed among long runs of similarity.
+    The goal is to see all the significant columns together, in close visual proximity,
+    in a single view - for this kind of inspection, highly-similar columns carry no
+    diagnostic information and actively get in the way of comparing the columns that
+    matter. <strong>Variable sites only</strong> removes every similarity column from
+    view entirely, so the differences that were previously separated by long distances
+    become directly observable next to each other.
+  </p>
+  <p>Two checkboxes control visual filtering of conserved positions. They cannot be combined:
+  turning on <strong>Variable sites only</strong> pauses <strong>Highlight diffs</strong> (with a
+  message) and turning it off brings Highlight diffs back; ticking Highlight diffs while Variable
+  sites only is on switches that one off.</p>
+  <ul>
+    <li>
+      <strong>Highlight diffs</strong> - dims fully-conserved columns to 40% opacity and sets
+      the variable ones in bold. Works in Full, Block and Canvas (the Reads view has its own
+      renderer and does not apply it).
+      Rapidly reveals where variation occurs.
+    </li>
+    <li>
+      <strong>Variable sites only</strong> - hides conserved columns entirely,
+      showing only positions with variation. Useful for scanning SNP-dense regions.
+      Works in Full, Block and Canvas (in Canvas and Block the hidden runs collapse to the same
+      marker cells, and the ruler, consensus row, selections and editing follow the shown columns).
+    </li>
+  </ul>
+  <p>
+    A column's "dominant pattern" is whichever state the largest group of sequences
+    shares at that position - a specific base, or a gap. Gaps are not all treated
+    alike: a gap that falls outside a sequence's own first-to-last real-base span
+    (a leading or trailing gap, because that sequence simply doesn't reach this
+    column) is missing data and is excluded entirely from the count. A gap that
+    falls inside that span is a real deletion and is counted on equal footing with
+    A/C/G/T, as a legitimate state in its own right - not specially exempted the
+    way a substitution would be. A sequence counts as "differing" from a column if
+    its own state (base or internal gap) isn't the dominant one. This matters most
+    on alignments with substantial insertion/deletion variation - repeat or
+    transposable-element families in particular - where indel polymorphism is often
+    the majority of the real variation, not base substitution.
+  </p>
+
+  <h4 id="di-var-threshold">5.2.1 Variable-Sites Threshold</h4>
+  <p>
+    Next to the <strong>Variable sites only</strong> checkbox, a <strong>threshold
+    slider</strong> (with a paired number box for typing an exact value) controls the
+    minimum amount of sequences that must differ from the column's dominant pattern for
+    it to be considered "variable". A small dropdown to its left switches what that
+    number means:
+  </p>
+  <ul>
+    <li>
+      <strong>%</strong> — a percentage of all sequences, 0-100 in 1% steps.
+      <strong>0%</strong> shows every column unfiltered; <strong>≥20%</strong> requires
+      at least a fifth of sequences to differ; <strong>≥100%</strong> requires all but
+      one sequence to differ (the most that can: one of them is the consensus); every
+      percentage is capped there. Percentages work consistently across alignments of any size:
+      for a 5-sequence alignment ≥20% means at least 1 sequence, for a 200-sequence
+      alignment it means at least 40.
+    </li>
+    <li>
+      <strong>count</strong> (default, at 1) — an exact absolute number of sequences, 0 up to
+      one less than the total loaded, since at most that many can differ from a column's consensus
+      (the slider's range updates automatically). <strong>≥1</strong>, the
+      default, shows a column the instant even a single sequence differs, with no rounding at
+      all: fully identical columns are dimmed or hidden, as the two checkboxes promise.
+      <strong>0</strong> turns the filter off (every column counts as variable).
+    </li>
+  </ul>
+  <p>
+    Percentage mode rounds up to a whole sequence count (<code>Math.ceil</code>), which
+    on small alignments can jump by more than one sequence between adjacent percentages
+    - e.g. at 10 sequences, both 10% and 11% look like reasonable neighbouring settings,
+    but they require 1 and 2 sequences respectively, so a column with exactly one
+    differing sequence can flip from shown to hidden across that single percentage
+    point. Percentage mode also has a related blind spot on real alignments: a region
+    can be biologically highly variable while spreading that variation across many
+    neighbouring columns, each affecting only a handful of sequences - staggered,
+    independent insertions in a repeat family are a common example - so no single
+    column ever reaches even a modest percentage threshold, and the whole region gets
+    hidden as if it were conserved. Switch to <strong>count</strong> mode and set it to
+    <strong>1</strong> when a flagged "conserved" region looks suspicious on inspection -
+    it surfaces the individually-rare variants a percentage cutoff was built to filter out.
+  </p>
+  <h4 id="di-var-breakpoints">5.2.2 Breakpoint Markers</h4>
+  <p>
+    When <strong>Variable sites only</strong> is active, a <strong>Breakpoints</strong> checkbox
+    (enabled by default) inserts thin <code>⋮</code> separator columns between visible
+    variable columns where conserved columns were hidden. Each breakpoint shows a tooltip
+    with the count and position range of hidden columns (e.g. <em>"12 columns hidden (positions 45–56)"</em>).
+  </p>
+  <ul>
+    <li>Breakpoints preserve visual context — you can see <em>where</em> conserved regions were removed, not just that they are gone.</li>
+    <li>Breakpoint columns are non-interactive: they cannot be selected, edited, or included in exports.</li>
+    <li>Uncheck <strong>Breakpoints</strong> to glue visible columns together without separators (original behaviour).</li>
+  </ul>
+  <p>
+    <strong>Use case:</strong> the marker's default grey shading and <code>⋮</code> glyph are
+    a sensible default, but not always right for every screen or every printed figure - a
+    grey mark can be hard to spot against a busy background, easy to confuse with actual
+    sequence data at a glance, or simply not the house style for a publication figure. A
+    small <strong>▾</strong> button next to the Breakpoints checkbox opens a tiny popover
+    with two independent controls: a colour swatch for the marker's shading, and a symbol
+    dropdown (<code>⋮</code>, <code>¦</code>, <code>:</code>, <code>•</code>, <code>❘</code>,
+    or <strong>(empty)</strong> for no glyph at all — just a coloured strip marking where
+    columns were hidden). Both choices are saved and restored automatically the next time
+    you open the viewer.
+  </p>
+  <p>Both features can be combined with Codon analysis.</p>
+
+  <h3 id="di-colors">5.3 Alignment Colour Schemes</h3>
+  <p>
+    The <strong>Letters</strong> row of the Display menu sets how residues are drawn.
+    <strong>Colours</strong> controls residue colouring in the Full, Block and Canvas
+    views; the conservation-based black/grey/white display is <strong>Monochrome</strong>,
+    the default. <strong>Case</strong> shows residues <strong>As in file</strong>, in
+    <strong>UPPER</strong> or in <strong>lower</strong> case; it changes only the display,
+    not the sequences. The same choice is the <strong>aa | Aa | AA</strong> switch next to
+    the Block / Canvas (and Reads) buttons, in every view (the consensus row keeps its own case).
+  </p>
+  <table>
+    <tr><th>Scheme</th><th>Use</th></tr>
+    <tr><td>Monochrome</td><td>Conservation shading using Black/Dark/Light thresholds from the Shade menu</td></tr>
+    <tr><td>Nucleotide</td><td>Distinct colours for A, C, G, T/U and N</td></tr>
+    <tr><td>Nucleotide (colour-blind safe)</td><td>A, C, G, T/U in Okabe&ndash;Ito colours (sky blue, orange, yellow, reddish purple), which stay distinct with red-green colour blindness</td></tr>
+    <tr><td>Purine/Pyrimidine</td><td>Groups A/G as purines and C/T/U as pyrimidines; ambiguous bases are neutral</td></tr>
+    <tr><td>Nucleotide Ambiguity</td><td>Highlights IUPAC ambiguity codes such as R, Y, S, W, K, M, B, D, H, V and N</td></tr>
+    <tr><td>Amino Acid: Clustal-like</td><td>Groups amino acids by broad physico-chemical classes in a Clustal-inspired palette</td></tr>
+    <tr><td>Amino Acid: Jalview-like</td><td>Groups amino acids in a Jalview-style property palette</td></tr>
+  </table>
+  <p>In both amino-acid palettes the uncertain codes X, B (D/N), Z (E/Q) and J (I/L) are grey, and
+     <code>*</code> (stop) is white on black. With Monochrome shading, unknown residues (<code>N</code> in
+     nucleotides, <code>X</code> in either) never count as conserved, so masked regions stay unshaded.</p>
+  <p>
+    The selected colour scheme is saved in presets and snapshots.
+  </p>
+  <p><strong>Conservation calculation mode</strong> (the <strong>All</strong>/<strong>Non-Gap</strong>
+    radio buttons next to <strong>Shade By</strong> - in the separate <strong>Shade</strong> menu,
+    not this Display menu, alongside the Black/Dark/Light shading sliders; each tier there has
+    a checkbox to switch it off and a <strong>Reset</strong> for its colour):</p>
+  <table>
+    <tr><th>Mode</th><th>Behaviour</th></tr>
+    <tr><td>All (default)</td><td>Conservation is measured against every sequence in the alignment; a gap counts against conservation, the same way most MSA viewers compute percent identity. A column where most sequences are gapped cannot score highly conserved just because the few sequences that do have a base happen to agree.</td></tr>
+    <tr><td>Non-Gap</td><td>Conservation is measured only among sequences that have a base at the column, ignoring how many are gapped. A column where just 30% of sequences carry a base, all in agreement, scores 100% conserved under this mode even though 70% of the alignment has no data there - use with caution on alignments with a lot of missing data or indel variation (transposable-element/repeat families in particular).</td></tr>
+  </table>
+
+  <h3 id="di-codons">5.4 Codon Analysis</h3>
+  <p>
+    Activates codon-aware viewing for coding sequences (CDS) in any nucleotide alignment
+    (IUPAC ambiguity codes allowed; a codon containing one translates to X). The length need
+    not be a multiple of 3. The reading frame is chosen automatically (most rows starting
+    with ATG, then fewest stops) or set with the <strong>Frame</strong> selector next to the checkbox. Full, Block and Canvas draw the
+    annotations below.
+  </p>
+  <p>
+    <strong>By gene.</strong> With an annotation track that has CDS features (<a href="#an-track">6.4</a>),
+    <strong>Frame: Auto</strong> (or <strong>Genes</strong>) analyses each gene separately: its columns are read in its
+    own frame and strand (a minus-strand gene is translated from its reverse complement, so its codon
+    positions run right to left), and columns outside the genes get no codon marks. That is what a whole
+    mitogenome or a multi-gene region needs; one frame across it would put stops everywhere outside the
+    first gene. Where genes overlap (ATP8/ATP6, ND4L/ND4, ND5/ND6) the later gene's codons on the shared
+    bases go to a second translation row, so its start or stop codon is still shown; the bases keep the
+    first gene's codon positions. In Block mode each block has only the translation rows its genes need:
+    none in a block without CDS, a second one only where genes overlap. A gene whose last codon is cut to <code>T</code> or <code>TA</code> (a
+    stop completed by polyadenylation of the mRNA, as GenBank notes it) shows a stop over those bases, but only when the genetic code in use has TAA as a stop. A BED
+    feature counts as a CDS when its description column starts with <code>CDS</code>, or, without a
+    description, when its name is not a tRNA, rRNA, origin or control-region name. Loading an annotation
+    that looks mitochondrial (tRNAs, rRNAs, ND/COX/ATP/CYTB: at least 10 such features, or every feature,
+    as in a one-gene file) while the code is Standard switches the <strong>Code</strong> to Vert Mito and says so. <strong>Copy AA</strong> and <strong>Save AA</strong>
+    then give one record per sequence and gene, each read in the gene's direction. <strong>AA only</strong> (Codon bar, or
+    the checkbox next to Codon analysis) shows the translation in place of the nucleotides, one amino-acid line per
+    sequence, in Full, Block and Canvas; rows in a block without a CDS keep their nucleotides, and the names work as usual. A codon with IUPAC
+    ambiguity letters translates to the amino acid all its readings share (<code>CCN</code> = P), else X.
+    Checked against GenBank: the 13 CDS of NC_069019.1 translate exactly to the record's own
+    <code>/translation</code> fields (functional test "Codon analysis by gene (oracle)").
+  </p>
+  <p>Select the appropriate genetic code from the <strong>Code</strong> dropdown (15 variants):</p>
+  <table>
+    <tr><th>Code</th><th>NCBI Table</th><th>Key Differences from Standard</th></tr>
+    <tr><td>Standard</td><td>1</td><td>-</td></tr>
+    <tr><td>Vert Mito</td><td>2</td><td>AGA/AGG = Stop, ATA = Met, TGA = Trp</td></tr>
+    <tr><td>Yeast Mito</td><td>3</td><td>ATA = Met, CTN = Thr, TGA = Trp</td></tr>
+    <tr><td>Mold Mito</td><td>4</td><td>TGA = Trp</td></tr>
+    <tr><td>Invert Mito</td><td>5</td><td>AGA/AGG = Ser, ATA = Met, TGA = Trp</td></tr>
+    <tr><td>Ciliate</td><td>6</td><td>TAA/TAG = Gln</td></tr>
+    <tr><td>Echino Mito</td><td>9</td><td>AAA = Asn, AGA/AGG = Ser, TGA = Trp</td></tr>
+    <tr><td>Euplotid</td><td>10</td><td>TGA = Cys</td></tr>
+    <tr><td>Bacteria</td><td>11</td><td>-</td></tr>
+    <tr><td>Alt Yeast</td><td>12</td><td>CTG = Ser</td></tr>
+    <tr><td>Ascidian Mito</td><td>13</td><td>AGA/AGG = Gly, ATA = Met, TGA = Trp</td></tr>
+    <tr><td>Flatworm Mito</td><td>14</td><td>AAA = Asn, AGA/AGG = Ser, TAA = Tyr, TGA = Trp</td></tr>
+    <tr><td>Chlorophyc Mito</td><td>16</td><td>TAG = Leu</td></tr>
+    <tr><td>Trematode Mito</td><td>21</td><td>TGA = Trp, ATA = Met, AGA/AGG = Ser, AAA = Asn</td></tr>
+    <tr><td>Scenedesmus</td><td>22</td><td>TAG = Leu, TCA = Stop</td></tr>
+  </table>
+  <p>When active, the following visual annotations appear:</p>
+  <table>
+    <tr><th>Feature</th><th>Visual</th></tr>
+    <tr><td>Translation track</td><td>A row under each sequence. Each codon is a box over its own three bases, coloured by amino-acid class (hydrophobic blue, aromatic teal, positive red, negative purple, polar green, G orange, P yellow), with the letter over the middle base. Hover a box for the codon and its columns. With <strong>Frame: All 3</strong>, three rows labelled frame 1-3; the best frame's label is bold</td></tr>
+    <tr><td>In-frame stop codons</td><td>Red box with <code>*</code> in the track; the three bases are bold red on pink</td></tr>
+    <tr><td>Frameshifts</td><td>The translation skips gaps, so a gap matters only if it puts a sequence's codons out of step with the other sequences. At each column the reference codon position is the one most sequences have there; where a sequence's position relative to it changes, a red <code>!</code> marks the gap before it (or, for an extra base in that sequence, a red edge on its codon box). Hover it for the columns and the direction. So a base present in one sequence flags that sequence only, not every sequence with a gap opposite it. Gaps before a sequence starts or after it ends never count. <strong>Frameshifts vs: Row 1</strong> (next to Code) uses the first sequence's own codon position instead of the most common one: use it when row 1 is a trusted reference and many rows share an indel it does not have (for example, a family of nuclear pseudogene copies aligned with the real gene), where the majority rule would mark the real genes instead</td></tr>

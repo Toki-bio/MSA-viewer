@@ -1,0 +1,329 @@
+[script.js lines 10952-11279 of ViewAlign fd8b8e4]
+function _readsDrawGenes(v, a, b, X, top) {
+    const { ctx, w } = v, H = v.geneH, sl = _readsLeft(), COL = '#3b6ea5', clampX = x => Math.max(-4, Math.min(w + 4, x));
+    ctx.fillStyle = '#fff'; ctx.fillRect(0, top, w, H);
+    ctx.fillStyle = '#ddd'; ctx.fillRect(0, top + H - 1, w, 1);
+    ctx.fillStyle = '#666'; ctx.font = '10px monospace'; ctx.textAlign = 'right';
+    ctx.fillText('genes', _READS_NAME_W - 4 - sl, top + H / 2);
+    ctx.textAlign = 'left';
+    ctx.font = '9px sans-serif';
+    const nameEnd = [];
+    for (const g of v.genes) {
+        if (g.end <= a || g.start >= b) continue;
+        const y = top + 2 + g.lane * _READS_GENE_LANE, mid = y + 6, x0 = clampX(X(g.start)), x1 = clampX(X(g.end));
+        ctx.fillStyle = COL; ctx.fillRect(x0, mid, Math.max(1, x1 - x0), 1);
+        // strand: a chevron every 40 px along the line
+        ctx.strokeStyle = COL; ctx.lineWidth = 1;
+        const dir = g.strand === '-' ? -1 : 1;
+        for (let x = x0 + 20; x < x1 - 6; x += 40) { ctx.beginPath(); ctx.moveTo(x - 2 * dir, mid - 2.5); ctx.lineTo(x + 2 * dir, mid + 0.5); ctx.lineTo(x - 2 * dir, mid + 3.5); ctx.stroke(); }
+        // exons thin, the coding part tall
+        const box = (blocks, dy, h) => { for (const [s, e] of blocks) { if (e <= a || s >= b) continue; const p = clampX(X(s)); ctx.fillRect(p, y + dy, Math.max(1, clampX(X(e)) - p), h); } };
+        if (g.blocks && g.blocks.length) box(g.blocks, 3, 7);
+        if (g.coding) box(g.cdsBlocks, 1, 11);
+        else if (!g.blocks || !g.blocks.length) box([[g.start, g.end]], 3, 7);
+        // the name, on white, where it does not run into the last one in this lane
+        const name = String(g.name), tw = ctx.measureText(name).width, nx = Math.max(x0, _READS_NAME_W - sl > 0 ? _READS_NAME_W - sl : 0) + 2;
+        if (nx >= (nameEnd[g.lane] || 0) && nx + tw < w) {
+            ctx.fillStyle = '#fff'; ctx.fillRect(nx - 1, y + 1, tw + 2, 11);
+            ctx.fillStyle = '#1f3f63'; ctx.fillText(name, nx, y + 6.5);
+            nameEnd[g.lane] = nx + tw + 6;
+        }
+        ctx.fillStyle = COL;
+    }
+    ctx.textAlign = 'center';
+}
+function _readsSpanText(v) {
+    const n = Math.min(bamState.refEnd - bamState.refStart, Math.round((v.w - _READS_NAME_W) / v.cell));
+    return n >= 1e6 ? (n / 1e6).toFixed(2) + ' Mb' : n >= 1e4 ? Math.round(n / 1e3) + ' kb' : n.toLocaleString() + ' bp';
+}
+let _readsView = null;   // { canvas, ctx, w, h, cell, groups, maxClip, covMax, selected, status, reads, drawn, raf, ro, onScroll }
+
+function _readsDispose() {
+    const v = _readsView;
+    if (!v) return;
+    if (v.raf) cancelAnimationFrame(v.raf);
+    alignmentContainer.removeEventListener('scroll', v.onScroll);
+    if (v.ro) v.ro.disconnect();
+    _readsView = null;
+}
+function _readsSchedule() {
+    const v = _readsView;
+    if (!v) return;
+    if (!v.canvas.isConnected) { _readsDispose(); return; }   // another view took the container
+    if (!v.raf) v.raf = requestAnimationFrame(() => { v.raf = 0; _readsDraw(); });
+}
+function _readsResize() {
+    const v = _readsView;
+    if (!v || !v.canvas.isConnected) return;
+    const cs = getComputedStyle(alignmentContainer), c = alignmentContainer;
+    const w = Math.max(1, c.clientWidth - parseFloat(cs.paddingLeft) - parseFloat(cs.paddingRight));
+    const h = Math.max(1, c.clientHeight - parseFloat(cs.paddingTop) - parseFloat(cs.paddingBottom));
+    const dpr = window.devicePixelRatio || 1;
+    if (w !== v.w || h !== v.h || dpr !== v.dpr) {
+        v.w = w; v.h = h; v.dpr = dpr;
+        v.canvas.width = Math.round(w * dpr); v.canvas.height = Math.round(h * dpr);
+        v.canvas.style.width = w + 'px'; v.canvas.style.height = h + 'px';
+        v.ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+        v.cell = Math.max(v.cell, _readsMinCell(v));
+        _readsSizeSpacer(v);
+    }
+    _readsDraw();
+}
+// A VCF beside the reads: a row of sites, and a thin row per sample with its genotype (at most _READS_VCF_SAMPLES).
+// Positions as on the ruler: a region row's offset comes off, and sites outside the row are counted, not drawn.
+const _READS_VCF_SITE_H = 12, _READS_VCF_GT_H = 6, _READS_VCF_SAMPLES = 8;
+function _readsVcfHeight() {
+    const v = bamState.vcf;
+    return v && v.sites.length ? _READS_VCF_SITE_H + Math.min(v.samples.length, _READS_VCF_SAMPLES) * _READS_VCF_GT_H + 1 : 0;
+}
+function _readsParseVcf(text) {
+    const sites = [];
+    let samples = [], other = 0, outside = 0, seen = new Set();
+    const off = bamState.offset || 0, n = bamState.refSeq.length;
+    // the chromosome as the reads' own matching takes it (BamParser.matchReference): apart from case, a 'chr' prefix,
+    // a '.version' suffix, M/MT. Only the exact name matched: a VCF naming chr5 '5' showed nothing
+    const norm = x => { const t = String(x).toLowerCase().replace(/^chr/, '').replace(/\.\d+$/, ''); return t === 'mt' ? 'm' : t; };
+    const nBam = bamState.bamRefName != null ? norm(bamState.bamRefName) : null, nRef = bamState.refName != null ? norm(bamState.refName) : null;
+    for (const line of text.split(/\r?\n/)) {
+        if (!line) continue;
+        if (line[0] === '#') { if (line.startsWith('#CHROM')) samples = line.split('\t').slice(9); continue; }
+        const f = line.split('\t');
+        if (f.length < 8) continue;
+        seen.add(f[0]);
+        const onBam = f[0] === bamState.bamRefName || (f[0] !== bamState.refName && norm(f[0]) === nBam);
+        if (!onBam && f[0] !== bamState.refName && norm(f[0]) !== nRef) { other++; continue; }
+        const pos = parseInt(f[1], 10) - 1 - (onBam ? off : 0);
+        if (!(pos >= 0 && pos < n)) { outside++; continue; }
+        const keys = (f[8] || '').split(':'), gi = keys.indexOf('GT');
+        const gts = f.slice(9).map(x => (gi >= 0 ? x.split(':')[gi] : ''));
+        sites.push({ pos, id: f[2], ref: f[3], alt: f[4], qual: f[5], filter: f[6], info: f[7], gts });
+    }
+    sites.sort((a, b) => a.pos - b.pos);
+    return { sites, samples, other, outside, seen: [...seen] };
+}
+async function _readsLoadVcf(file) {
+    if (_genome) { showMessage('A VCF cannot be shown in the genome view yet.', 6000); return; }
+    if (!bamState.reads || !bamState.reads.length) { showMessage('Open the reads first: a VCF is shown beside them.', 6000); return; }
+    const bytes = new Uint8Array(await file.arrayBuffer());
+    const text = bytes[0] === 0x1f && bytes[1] === 0x8b ? _decodeTextBytes(await BamParser.decompressBAM(new Blob([bytes]))) : _decodeTextBytes(bytes);
+    const v = _readsParseVcf(text);
+    if (!v.sites.length) {
+        showMessage(`No site of ${file.name} is on ${bamState.bamRefName || bamState.refName}. The file has: ${v.seen.slice(0, 5).join(', ') || 'no sites'}.`, 8000);
+        return;
+    }
+    _readsKeepPlace(() => { bamState.vcf = { ...v, name: file.name }; });
+    const left = v.other + v.outside;
+    showMessage(`${v.sites.length.toLocaleString()} site${v.sites.length === 1 ? '' : 's'} from ${file.name}` + (left ? `; ${left.toLocaleString()} not on this reference or outside it` : ''), 5000);
+}
+const _readsVcfType = s => (s.alt.split(',').every(a => a.length === s.ref.length) ? 'snv' : 'indel');
+function _readsVcfTip(s) {
+    const v = bamState.vcf, gts = v.samples.slice(0, _READS_VCF_SAMPLES).map((n, i) => `${_escapeHtml(n)}: ${_escapeHtml(s.gts[i] || '.')}`).join('<br>');
+    return `<b>${_escapeHtml(s.id === '.' ? 'site' : s.id)}</b> ${(s.pos + 1).toLocaleString()}<br>${_escapeHtml(s.ref)} &gt; ${_escapeHtml(s.alt)}<br>QUAL ${_escapeHtml(s.qual)}, ${_escapeHtml(s.filter)}<br>${_escapeHtml(s.info.slice(0, 80))}${gts ? '<br>' + gts : ''}<br><i>click: open the reads here</i>`;
+}
+function _readsVcfFirst(sites, p) {
+    let lo = 0, hi = sites.length;
+    while (lo < hi) { const m = (lo + hi) >> 1; if (sites[m].pos < p) lo = m + 1; else hi = m; }
+    return lo;
+}
+function _readsDrawVcf(v, a, b, X, top) {
+    const { ctx, w } = v, vcf = bamState.vcf, cell = v.cell, tw = Math.max(2, cell), sl = _readsLeft();
+    const nS = Math.min(vcf.samples.length, _READS_VCF_SAMPLES);
+    ctx.fillStyle = '#fff'; ctx.fillRect(0, top, w, v.vcfH);
+    ctx.fillStyle = '#ddd'; ctx.fillRect(0, top + v.vcfH - 1, w, 1);
+    ctx.fillStyle = '#666'; ctx.font = '9px monospace'; ctx.textAlign = 'right';
+    ctx.fillText('variants', _READS_NAME_W - 4 - sl, top + _READS_VCF_SITE_H / 2);
+    for (let i = 0; i < nS; i++) ctx.fillText(vcf.samples[i].slice(0, 18), _READS_NAME_W - 4 - sl, top + _READS_VCF_SITE_H + i * _READS_VCF_GT_H + 3);
+    ctx.textAlign = 'center';
+    for (let i = _readsVcfFirst(vcf.sites, a); i < vcf.sites.length && vcf.sites[i].pos < b; i++) {
+        const s = vcf.sites[i], x = X(s.pos);
+        ctx.fillStyle = _readsVcfType(s) === 'snv' ? '#2b6cb0' : '#dd6b20';
+        ctx.fillRect(x, top + 1, tw, _READS_VCF_SITE_H - 3);
+        for (let k = 0; k < nS; k++) {
+            // homozygous only when every allele is the same alternative one: 1/2 (two different alternatives) was drawn as homozygous
+            const al = String(s.gts[k] || '.').split(/[/|]/), called = al.every(g => g !== '.' && g !== ''), alt = al.filter(g => g !== '0').length;
+            const hom = alt === al.length && al.every(g => g === al[0]);
+            ctx.fillStyle = !called ? '#e2e2e2' : !alt ? '#c8c8c8' : !hom ? '#3182ce' : '#0ea5e9';
+            ctx.fillRect(x, top + _READS_VCF_SITE_H + k * _READS_VCF_GT_H, tw, _READS_VCF_GT_H - 1);
+        }
+    }
+}
+function _readsDefaultStatus() {
+    const { reads, nTracks = 0 } = bamState;
+    const f = _readsFilter, on = [];
+    if (f.minMapq > 0) on.push(`MAPQ \u2265 ${f.minMapq}`);
+    for (const [key, , label] of _READS_FLAGGED) if (f[key]) on.push('with ' + label);
+    const o = _readsOpts;
+    if (o.sort !== 'start') on.push(`sorted by ${_READS_SORTS[o.sort]} at ${(o.sortPos + 1).toLocaleString()}`);
+    if (o.color !== 'strand') on.push(`colour: ${o.color === 'tag' ? o.tag : _READS_COLORS[o.color]}`);
+    if (o.pairs) on.push('pairs');
+    return `${_genome ? _genomeStatusHead() : `${reads.length} reads in ${nTracks} track${nTracks !== 1 ? 's' : ''}`}${on.length ? '  |  ' + on.join(', ') : ''}`;
+}
+// Which reads are drawn. Flagged reads shown here are still not evidence: SampleCall leaves them out of the coverage
+// and the calls. A MAPQ minimum leaves reads out of those too.
+const _READS_FILTER_DEFAULT = { minMapq: 0, perWindow: _READS_PER_WINDOW, secondary: false, supplementary: false, duplicate: false, qc: false };
+const _READS_FLAGGED = [['secondary', 0x100, 'secondary', 'readsShowSecondary'], ['supplementary', 0x800, 'supplementary', 'readsShowSupplementary'],
+    ['duplicate', 0x400, 'duplicate', 'readsShowDuplicate'], ['qc', 0x200, 'QC-failed', 'readsShowQc']];
+let _readsFilter = { ..._READS_FILTER_DEFAULT };
+function _readsPasses(r, f = _readsFilter) {
+    if ((r.mapq || 0) < f.minMapq) return false;
+    for (const [key, bit] of _READS_FLAGGED) if ((r.flag & bit) && !f[key]) return false;
+    return true;
+}
+function _readsSyncFilterBoxes() {
+    const box = document.getElementById('readsMinMapq');
+    if (!box) return;
+    box.value = String(_readsFilter.minMapq);
+    const pw = document.getElementById('readsPerWindow');
+    if (pw) pw.value = String(_readsFilter.perWindow);
+    const set = (id, val) => { const e = document.getElementById(id); if (e) { if (e.type === 'checkbox') e.checked = val; else e.value = val; } };
+    set('readsSortBy', _readsOpts.sort); set('readsColorBy', _readsOpts.color); set('readsGroupBy', _readsOpts.group); set('readsPairs', _readsOpts.pairs); set('readsTagName', _readsOpts.tag); set('readsSoftClips', _readsOpts.clips);
+    for (const [key, , , id] of _READS_FLAGGED) { const c = document.getElementById(id); if (c) c.checked = !!_readsFilter[key]; }
+    _readsFillFilterCounts();
+}
+function _readsFillFilterCounts() {
+    const count = {};
+    for (const r of bamState.fileReads || []) for (const [key, bit] of _READS_FLAGGED) if (r.flag & bit) count[key] = (count[key] || 0) + 1;
+    for (const [key, , label, id] of _READS_FLAGGED) { const t = document.getElementById(id + 'Text'); if (t) t.textContent = `${label} (${(count[key] || 0).toLocaleString()}${_genome ? ' in window' : ''})`; }
+}
+// The reads drawn again from all that were read; the same place stays in the middle. Nothing passing is said and undone.
+function _readsSetFilter(next) {
+    if (_genome) { _genomeSetFilter(next); return; }
+    const all = bamState.fileReads || [], kept = all.filter(r => _readsPasses(r, next));
+    if (!kept.length) {
+        showMessage(`No read passes that filter (MAPQ \u2265 ${next.minMapq}): it was not applied.`, 5000);
+        _readsSyncFilterBoxes();
+        return;
+    }
+    _readsKeepPlace(() => {
+        _readsFilter = next;
+        const { shown, dropped } = _downsampleReads(kept, next.perWindow);
+        let lo = Infinity, hi = 0;
+        for (const r of kept) { if (r.start < lo) lo = r.start; if (r.end + 1 > hi) hi = r.end + 1; }
+        Object.assign(bamState, { reads: shown, sampled: shown, allReads: kept, downsampled: dropped, calls: null,
+            refStart: Math.max(0, lo - 10), refEnd: Math.min(bamState.refSeq.length, hi + 10) });
+        _readsLayout();
+    });
+}
+// Do something that redraws the reads; the same place stays in the middle, at the same zoom
+function _readsKeepPlace(change) {
+    const v = _readsView, cell = v ? v.cell : _READS_CELL, top = alignmentContainer.scrollTop;
+    const middle = v ? bamState.refStart + (_readsLeft() + (v.w - _READS_NAME_W) / 2) / v.cell : null;
+    change();
+    renderAlignment();
+    if (_readsView && middle != null) {
+        _readsView.cell = Math.max(_readsMinCell(_readsView), cell);
+        _readsSizeSpacer(_readsView);
+        alignmentContainer.scrollTop = top;
+        _readsCentre(middle);
+    }
+}
+
+// How the pile is laid out and coloured. All of it comes through _readsLayout: mates joined, groups split, rows packed,
+// then the sort. groupRanges holds each group's rows, so a sort stays inside its group.
+const _READS_OPTS_DEFAULT = { sort: 'start', sortPos: null, color: 'strand', group: 'none', groupPos: null, tag: '', pairs: false, clips: true };
+let _readsOpts = { ..._READS_OPTS_DEFAULT };
+const _READS_SORTS = { start: 'start', base: 'base', strand: 'strand', mapq: 'MAPQ', name: 'read name', length: 'read length', insert: 'insert size' };
+const _READS_COLORS = { strand: 'read strand', none: 'none', first: 'first-of-pair strand', mapq: 'MAPQ', insert: 'insert size', orientation: 'pair orientation', tag: 'tag' };
+const _READS_GROUPS = { none: 'none', strand: 'read strand', first: 'first-of-pair strand', flag: 'kind of read', base: 'base at a column', tag: 'tag' };
+const _READS_PALETTE = ['#f3d3d6', '#d3dbf3', '#cdebc8', '#f7e3b0', '#e2d0f0', '#c7ebea', '#f5cfe4', '#dedede'];
+const _readsFirstStrandRev = r => (r.flag & 0x80 ? !(r.flag & 0x10) : !!(r.flag & 0x10));
+function _readsGroupKey(r) {
+    const o = _readsOpts;
+    if (o.group === 'strand') return r.flag & 0x10 ? 'reverse strand' : 'forward strand';
+    if (o.group === 'first') return _readsFirstStrandRev(r) ? 'first of pair reverse' : 'first of pair forward';
+    if (o.group === 'flag') return r.flag & 0x100 ? 'secondary' : r.flag & 0x800 ? 'supplementary' : r.flag & 0x400 ? 'duplicate' : r.flag & 0x200 ? 'QC-failed' : 'primary';
+    if (o.group === 'base') { const b = _readBaseAt(r, o.groupPos); return b == null ? 'no base at ' + (o.groupPos + 1).toLocaleString() : (b === '-' ? 'deletion' : b) + ' at ' + (o.groupPos + 1).toLocaleString(); }
+    if (o.group === 'tag') { const v = r.tags && r.tags[o.tag]; return v == null ? 'no ' + o.tag : o.tag + ' ' + v; }
+    return '';
+}
+// The pair's left mate, and whether both are here to be joined
+function _readsJoinMates(reads) {
+    const byName = new Map(), units = [];
+    for (const r of reads) {
+        r._mate = null; r._mateLeft = false;
+        if ((r.flag & 1) && !(r.flag & 0x900) && !(r.flag & 8) && r.next_refID === r.refID) {
+            const m = byName.get(r.name);
+            if (m && !m._mate) {
+                const [l, q] = m.start <= r.start ? [m, r] : [r, m];
+                l._mate = q; q._mate = l; l._mateLeft = true;
+                units[l === m ? m._unit : m._unit] = { start: l.start, end: Math.max(l.end, q.end), reads: [l, q] };
+                continue;
+            }
+            byName.set(r.name, r);
+        }
+        r._unit = units.length;
+        units.push({ start: r.start, end: r.end, reads: [r] });
+    }
+    return units;
+}
+function _readsLayout() {
+    const o = _readsOpts;
+    let reads = bamState.sampled || bamState.reads;
+    if (o.pairs) {
+        // a mate that downsampling left out comes back, so no pair is drawn in half
+        const have = new Set(reads.map(r => r.name)), held = new Set(reads), extra = [];
+        for (const r of bamState.allReads || []) if (have.has(r.name) && !held.has(r) && (r.flag & 1) && !(r.flag & 0x900)) extra.push(r);
+        if (extra.length) reads = reads.concat(extra).sort((a, b) => a.start - b.start);
+    }
+    bamState.reads = reads;
+    let alignedBases = 0;
+    for (const r of reads) alignedBases += r.end - r.start + 1;
+    bamState.alignedBases = alignedBases;
+    const units = o.pairs ? _readsJoinMates(reads) : reads.map(r => { r._mate = null; r._mateLeft = false; return { start: r.start, end: r.end, reads: [r] }; });
+    const parts = new Map();
+    for (const u of units) {
+        const k = _readsGroupKey(u.reads[0]);
+        if (!parts.has(k)) parts.set(k, []);
+        parts.get(k).push(u);
+    }
+    const names = [...parts.keys()].sort((a, b) => (/^no /.test(a) - /^no /.test(b)) || a.localeCompare(b, undefined, { numeric: true }));
+    const grouped = o.group !== 'none';
+    let row = 0;
+    bamState.groupRanges = [];
+    for (const k of names) {
+        const us = parts.get(k).sort((a, b) => a.start - b.start), ends = [];
+        let from = row;
+        if (grouped) from = row + 1;   // the group's label has a row of its own
+        for (const u of us) {
+            let t = 0;
+            while (t < ends.length && u.start < ends[t]) t++;
+            ends[t] = u.end + 1;
+            for (const r of u.reads) r.track = from + t;
+        }
+        if (grouped) bamState.groupRanges.push({ from, to: from + ends.length, label: `${k} (${us.reduce((n, u) => n + u.reads.length, 0).toLocaleString()}${_genome ? ' in window' : ''})`, key: _readsGroupKey });
+        row = from + ends.length;
+    }
+    bamState.nTracks = row;
+    if (o.sort !== 'start') _readsSortRows(o.sort, o.sortPos);
+}
+// Rows in order of the read at position p; rows with none there go last. Within each group.
+function _readsSortRows(kind, p) {
+    const n = bamState.nTracks || 0;
+    if (!n || p == null) return;
+    const refB = (_readsRefChar(p) || 'N').toUpperCase();
+    const calls = kind === 'base' ? _readsCalls() : null, c = calls && SampleCall.countsAt(calls.counts, p);
+    const freq = b => (c && c[b] ? c[b][0] + c[b][1] : 0);
+    const value = r => {
+        if (kind === 'base') { const b = _readBaseAt(r, p); return b == null ? null : b === '-' ? 1e6 : b === refB ? 2e6 : -freq(b); }
+        if (kind === 'strand') return r.flag & 0x10 ? 1 : 0;
+        if (kind === 'mapq') return -(r.mapq || 0);
+        if (kind === 'name') return r.name;
+        if (kind === 'length') return -(r.end - r.start);
+        if (kind === 'insert') return -Math.abs(r.tlen || 0);
+        return r.start;
+    };
+    const key = new Array(n).fill(null);
+    for (const r of bamState.reads) if (r.track >= 0 && r.track < n && r.start <= p && p <= r.end) { const v = value(r); if (v != null) key[r.track] = v; }
+    const newIdx = Array.from({ length: n }, (_, i) => i);
+    const cmp = (a, b) => {
+        const x = key[a], y = key[b];
+        if (x == null || y == null) return (x == null) - (y == null) || a - b;
+        return (x < y ? -1 : x > y ? 1 : 0) || a - b;
+    };
+    const ranges = bamState.groupRanges.length ? bamState.groupRanges : [{ from: 0, to: n }];
+    for (const g of ranges) {
+        const rows = []; for (let t = g.from; t < g.to; t++) rows.push(t);
+        rows.slice().sort(cmp).forEach((t, i) => { newIdx[t] = g.from + i; });
+    }
+    for (const r of bamState.reads) if (r.track != null && r.track >= 0 && r.track < n) r.track = newIdx[r.track];
+}

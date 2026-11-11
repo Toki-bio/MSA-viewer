@@ -1,0 +1,365 @@
+[script.js lines 16293-16656 of ViewAlign fd8b8e4]
+async function onModeChange() {
+    // Full mode (v167-v169) now windows both rows and columns, so it no
+    // longer freezes - only the first paint's one-time conservation
+    // calculation can still take several seconds on a very large alignment
+    // (measured ~9s at 40M residues). Block mode has NO windowing at all:
+    // it renders every row for every column chunk up front, and measured
+    // directly, genuinely hangs past 60s at that same 40M-residue size (the
+    // per-row chunking that makes it noticeably better than old, unwindowed
+    // Full mode at moderate sizes - ~12s at 5.97M residues - doesn't save it
+    // at scale). The existing load-time "Large alignment" dialog already
+    // warns about this class of alignment, but only once, before any mode
+    // is chosen - a user landing in Canvas from that dialog and later
+    // clicking Full or Block manually gets no further warning, which is
+    // exactly what happened for Full mode originally. Gate entry into
+    // both Full and Block specifically, using the same size classification,
+    // regardless of whether the load-time dialog was already dismissed once.
+    // Block is drawn by the Canvas renderer since batch 1 of Canvas Block: no gate for it (the
+    // test-only DOM Block, _domBlockForTests, keeps it).
+    const enteringFull = document.getElementById('modeSingle')?.checked;
+    const enteringBlocks = isDomBlock();
+    if (enteringFull || enteringBlocks) {
+        const idx = state.alignmentIndex;
+        if (idx && (idx.isCrazy || idx.isTall || idx.isLong)) {
+            const choice = await showLargeAlignmentDialog(idx, idx, enteringFull ? 'full-mode-switch' : 'block-mode-switch');
+            if (choice === 'cancel') {
+                const prev = document.getElementById(_lastModeRadioId) || document.getElementById('modeCanvas');
+                if (prev) prev.checked = true;
+                syncQuickModeSwitch();
+                return;
+            }
+        }
+    }
+    // This only fires from a real user click on a mode radio (the auto-switch
+    // heuristic in renderAlignment sets .checked programmatically, which does
+    // not dispatch 'change'), so this is an unambiguous signal to stop
+    // auto-switching back to Canvas for the rest of this file's session.
+    _userDismissedAutoCanvas = true;
+    _userChoseDomView = !!(document.getElementById('modeSingle')?.checked || document.getElementById('modeBlocks')?.checked);
+    // Capture where the view is BEFORE renderAlignment() wipes alignmentContainer's DOM (which
+    // resets native scrollTop to 0) / before anything else touches _canvasState, from the mode
+    // being left (the radio already shows the new one); applied to the new view below.
+    const VIEW_MODES = ['modeSingle', 'modeBlocks', 'modeCanvas'];
+    const enteringView = VIEW_MODES.includes(document.querySelector('input[name="mode"]:checked')?.id);
+    const viewAnchor = enteringView && VIEW_MODES.includes(_lastModeRadioId) && state.seqs?.length
+        ? _captureViewAnchor(_lastModeRadioId === 'modeCanvas' || (_lastModeRadioId === 'modeBlocks' && !_domBlockForTests)) : null;
+    if (isCanvasMode()) {
+        // Entering Canvas mode: these caches are keyed only by length/shadeMode,
+        // so any same-length edit made while away from Canvas (residue edits,
+        // gap ops, sorts, realigns, etc.) would otherwise go undetected and
+        // Canvas would silently keep showing stale shading/consensus.
+        state.conservationDataCache = null;
+        state.consensusCache = null;
+    }
+    syncQuickModeSwitch();   // also greys the Block size row out of Block (_syncBlockSizeControl)
+    syncCodonModePanel();
+    syncSearchControlsAvailability();
+    // Switching to a view without residue spans: drop edit mode rather than leave a tool
+    // panel open over a display its tools cannot touch. Renders below, so no re-render here.
+    exitEditModeForUnsupportedView({ rerender: false });
+    renderAlignment();
+    if (viewAnchor) _applyViewAnchor(viewAnchor);
+    setupHoverMenuReveal();
+    _lastModeRadioId = document.querySelector('input[name="mode"]:checked')?.id || _lastModeRadioId;
+}
+
+const LARGE_ALIGNMENT_RESIDUE_THRESHOLD = 80000;
+
+function _isLargeAlignmentPending() {
+    const _aliLen = state.seqs.length > 0 ? _maxOf(state.seqs, s => s.seq.length) : 0;
+    return (state.seqs.length * _aliLen) > LARGE_ALIGNMENT_RESIDUE_THRESHOLD;
+}
+
+// Zoom-based estimate only — no DOM measurement, so it's safe to call BEFORE
+// the alignment has ever been rendered (see fitBlockSizeBeforeInitialRender).
+// Real name-column width isn't known yet at that point either way; the
+// nameLengthSlider-based estimate is the best available proxy pre-render.
+function _computeLargeAlignmentBlockChars() {
+    const zoom = _sliderToZoom(_readZoomSliderRaw()) / 100;
+    // 7.8px is this app's own real measured monospace character width at
+    // 100% zoom (see _measureUnifiedColumnMetrics's fallback default,
+    // measured from an actual rendered .seq-data span) — NOT 10px, which
+    // was a wrong estimate that happened to be harmless before this
+    // function's result was ever actually used to render (only to update
+    // the slider's displayed number) but became a real under-utilization
+    // bug ("screen fit is too narrow") once fitBlockSizeBeforeInitialRender
+    // started using this estimate for the real initial render.
+    // The residue cell measured for the current font (--res-w, _syncResidueWidthVar), else 7.8px x zoom
+    const resW = parseFloat(alignmentContainer?.style.getPropertyValue('--res-w'));
+    const charPx = resW > 0 ? resW : 7.8 * zoom;
+    const namePx = ((effectiveNameLength() + 1) * charPx) + 16;   // .seq-name: nameLen ch + 1ch gap + 16px
+    // Use window.innerWidth instead of container.clientWidth to avoid forcing
+    // a synchronous reflow over the (potentially already-rendered) DOM —
+    // millions of child spans make clientWidth reads take 30+ seconds. This
+    // means the real container is narrower than window.innerWidth by
+    // whatever page chrome/scrollbar/padding it has (measured ~18px on this
+    // app's own layout) on top of namePx being an estimate (nameLengthSlider
+    // chars, not the real rendered name column) rather than a measurement —
+    // margin of 70 (not 40) covers both gaps with room to spare; verified
+    // via a real 120,000-residue test alignment that 40 still let the real
+    // render overflow by 18px even after fixing the char-width constant
+    // below, while 70 renders with zero overflow.
+    const available = window.innerWidth - namePx - 70;
+    return Math.max(40, Math.min(300, Math.floor(available / charPx)));
+}
+
+// ---- Block size: the width asked for and the width drawn (owner 2026-10-31) ----
+// The Block size slider and box show the band width DRAWN. When the window holds fewer columns than were
+// asked for, the bands wrap at what fits (at least 10 columns), the note beside the box says "fits (150
+// set)", and the bands grow back to the width asked for when the window is wide enough again. The width
+// asked for (_blockReq) is what the slider, the box, Screen, presets and snapshots set, and what presets
+// and snapshots store. Before, the slider kept showing the width asked for (40 at the least) while the
+// bands were narrower.
+let _blockReq = null;
+let _blockShown = null;   // the value _syncBlockSizeDisplay last put on the slider
+// a width asked for is 40-300 (the slider's range); a band drawn can be narrower, down to 10 (relayout)
+const BLOCK_SIZE_MIN = 40, BLOCK_SIZE_MAX = 300;
+function _clampBlockSize(n) { n = Math.round(Number(n)); return Number.isFinite(n) ? Math.max(BLOCK_SIZE_MIN, Math.min(BLOCK_SIZE_MAX, n)) : null; }
+function blockSizeRequested() {
+    const slider = el('blockSizeSlider');
+    const v = parseInt(slider?.value, 10);
+    // the slider set by anything else than the display (an older path writing its value): a new request
+    if (Number.isFinite(v) && v !== _blockShown) { _blockReq = _clampBlockSize(v); _blockShown = v; }
+    return _blockReq ?? (Number.isFinite(v) ? v : 60);
+}
+// A width asked for (the slider, the box, Screen, a preset, a snapshot): shown at once, drawn at the next render
+function setBlockSizeRequested(n) {
+    const v = _clampBlockSize(n);
+    if (v == null) return;
+    _blockReq = v;
+    _syncBlockSizeDisplay();
+}
+// Show the drawn width on the slider and the box, the width asked for in the note (only when they differ).
+// drawn: the band width of the Block on screen; without it, the last layout's (Block) or the width asked for.
+function _syncBlockSizeDisplay(drawn) {
+    const slider = el('blockSizeSlider'), input = el('blockSizeInput'), note = el('blockSizeSetNote');
+    if (!slider) return;
+    const req = _blockReq ?? (parseInt(slider.value, 10) || 60);
+    _blockReq = req;
+    const L = _canvasState.layout;
+    if (drawn == null) drawn = isBlockLayout() && L && L.kind === 'block' ? Math.min(req, _canvasState.blockFitCols || req) : req;
+    const fitting = drawn < req && isBlockLayout();
+    const shown = fitting ? drawn : req;
+    const min = String(Math.min(40, shown));   // the slider's 40 floor: lower while the window holds fewer
+    if (slider.min !== min) slider.min = min;
+    if (input && input.min !== min) input.min = min;
+    if (!slider._dragging) { slider.value = shown; _blockShown = parseInt(slider.value, 10); updateSliderBackground(slider); }
+    if (input && !input._typing) input.value = shown;   // not under the user's typing (until Enter / leaving the box)
+    const tip = fitting
+        ? `Block size ${req} is set; the window holds ${drawn} columns, so the blocks wrap at ${drawn}. They grow back to ${req} when the window is wider.`
+        : 'Block size in Block mode (40-300 characters)';
+    slider.title = tip;
+    if (input) input.title = tip;
+    if (note) {
+        note.textContent = fitting ? `fits (${req} set)` : '';
+        note.title = fitting ? tip : '';
+        note.style.display = fitting ? '' : 'none';
+    }
+}
+
+// Block (Canvas Block): how many columns fit across the canvas, from the Canvas metrics. The last
+// layout's own figure (relayout) when Block is on screen, else from the cell width the Canvas
+// renderer measured for the current font and the canvas' width. 0 when there are no metrics yet.
+function _canvasBlockFitChars() {
+    if (_canvasState.layout && _canvasState.blockFitCols > 0) return _canvasState.blockFitCols;
+    const m = _canvasState.metrics;
+    const fontPx = parseFloat(getComputedStyle(alignmentContainer).fontSize) || 13;
+    if (!m || !m.charW || m.fontSizePx !== fontPx) return 0;
+    const viewW = (_canvasState.canvas && _canvasState.canvas.isConnected && parseFloat(_canvasState.canvas.style.width)) || 0;
+    if (!viewW) return 0;
+    const nameW = effectiveNameLength() * m.charW + 8;
+    const badge = (_canvasState.badgeW || 40) + 4;
+    return Math.max(10, Math.floor((viewW - nameW - badge - 12) / m.charW));
+}
+
+// Called once, before the FIRST renderAlignment() of a newly loaded large
+// alignment, so that render uses a screen-fitted block size from the start.
+//
+// Bug this fixes (found via real overflow, not just review): the initial
+// load previously always rendered once with the block-size slider's stale
+// value (whatever it happened to be — its HTML default, or left over from a
+// previous file), THEN called setBlockSizeToScreen() to correct the slider's
+// displayed number — but for large alignments that function deliberately
+// skips re-rendering (getBoundingClientRect() over millions of spans can
+// hang the page for 30+ seconds). Net effect: the slider showed a "correct"
+// value the actual on-screen content never used, and the real rendered row
+// width (whatever the stale slider value produced) routinely overflowed the
+// visible screen, cutting the name column into the equation nowhere close to
+// how wide it would really end up. Fix: compute the estimate and update the
+// slider BEFORE the first render, so that render already uses the right
+// size — no second render needed, no overflow window.
+function fitBlockSizeBeforeInitialRender() {
+    if (!_isLargeAlignmentPending()) return;
+    // Block (Canvas Block): from the Canvas metrics when there are any (the bands are clamped to
+    // what fits at render anyway, so this only sets the number)
+    const cfit = isBlockLayout() ? _canvasBlockFitChars() : 0;
+    const chars = cfit > 0 ? Math.max(40, Math.min(300, cfit)) : _computeLargeAlignmentBlockChars();
+    setBlockSizeRequested(chars);
+}
+
+function setBlockSizeToScreen() {
+    // Estimate how many chars fit in the visible alignment area.
+    // Measure a single nucleotide span if one exists; otherwise approximate
+    // from the container width minus the name column width.
+    const container = document.getElementById('alignmentContainer');
+    if (!container) return;
+
+    // Block (Canvas Block): from the Canvas metrics, the band width that fits the canvas. The bands
+    // never overflow (bandCols = min(slider, what fits)); redrawn only when the bands change.
+    if (isBlockLayout()) {
+        const fit = _canvasBlockFitChars();
+        if (fit > 0) {
+            // what fits is the width asked for now (40 at the least: below, the bands still wrap at what fits)
+            const chars = Math.max(40, Math.min(300, fit));
+            setBlockSizeRequested(chars);
+            const L = _canvasState.layout;
+            if (!L || Math.max(1, Math.min(chars, L.nSlots, fit)) !== L.bandCols) renderAlignment();
+            return;
+        }
+    }
+
+    // For large alignments, getBoundingClientRect() forces a synchronous reflow
+    // over millions of DOM spans, which can take tens of seconds. Use a
+    // zoom-based estimate instead of measuring. On initial load this is a
+    // harmless no-op re-computation — fitBlockSizeBeforeInitialRender()
+    // already applied the same estimate before the first render happened.
+    // The re-render below runs only when the estimate changed (the Screen
+    // button after a zoom); it is needed, see there.
+    if (_isLargeAlignmentPending()) {
+        const chars = _computeLargeAlignmentBlockChars();
+        const prev = blockSizeRequested();
+        setBlockSizeRequested(chars);
+        // Redraw with it when it changed (no measuring needed: the estimate is from the zoom).
+        // This used to stop at the number for every alignment over 80,000 residues, so after a
+        // zoom the Screen button changed the slider while the blocks kept overflowing.
+        if (el('modeBlocks')?.checked && chars !== prev) renderAlignment();
+        return;
+    }
+
+    // Try to measure an existing nucleotide span
+    let charPx = 0;
+    const sampleSpan = container.querySelector('.seq-data span[data-pos]');
+    if (sampleSpan) {
+        const r = sampleSpan.getBoundingClientRect();
+        charPx = r.width;
+    }
+    if (!charPx) {
+        // Fallback: use zoom-scaled monospace estimate (7.8px @ 100% — this
+        // app's own real measured character width, see
+        // _measureUnifiedColumnMetrics's fallback default; NOT 10px)
+        const zoom = _sliderToZoom(_readZoomSliderRaw()) / 100;
+        charPx = 7.8 * zoom;
+    }
+    // Available width = inner width of the container (excluding names)
+    // Names col is sticky - measure it from the first name span
+    let namePx = 0;
+    const nameSpan = container.querySelector('.seq-name');
+    if (nameSpan) {
+        namePx = nameSpan.getBoundingClientRect().width;
+    }
+    const available = container.clientWidth - namePx - 20; // 20px safety margin
+    const chars = Math.max(40, Math.min(300, Math.floor(available / charPx)));
+    const prev = blockSizeRequested();
+    setBlockSizeRequested(chars);
+    // Block size only affects Block mode. Canvas/Full/Compact don't reflow to it,
+    // so avoid a redundant second full render on load for those modes. In Block
+    // mode, re-render only when the computed size actually changed.
+    const inBlockMode = !!el('modeBlocks')?.checked;
+    if (inBlockMode && chars !== prev) {
+        renderAlignment();
+    }
+}
+function onShadeModeChange() {
+    validateThresholds();
+    debounceRender();
+}
+// Color picker logic for Black, Dark, Light
+['black', 'dark', 'light'].forEach(function(shade) {
+    const label = document.getElementById(shade + 'Label');
+    const picker = document.getElementById(shade + 'ColorPicker');
+    const slider = document.getElementById(shade + 'Slider');
+    if (label && picker) {
+        // The picker is an always-visible swatch next to the label (no hover show/hide):
+        // shown on hover it either pushed the row past the panel edge or covered the label.
+        picker.addEventListener('input', function() {
+            // Update CSS variable for slider fill
+            slider.style.setProperty('--slider-fill', picker.value);
+            // Also update the corresponding CSS variable for alignment shading if needed
+            document.documentElement.style.setProperty('--' + shade + 'Shading', picker.value);
+            // Compute readable text color (black or white) based on chosen color brightness
+            try {
+                const hex = (picker.value || '#000').replace('#', '');
+                const r = parseInt(hex.substring(0,2), 16) || 0;
+                const g = parseInt(hex.substring(2,4), 16) || 0;
+                const b = parseInt(hex.substring(4,6), 16) || 0;
+                const brightness = (r * 299 + g * 587 + b * 114) / 1000;
+                const textColor = brightness > 128 ? '#000' : '#fff';
+                document.documentElement.style.setProperty('--' + shade + 'Text', textColor);
+            } catch (err) {
+                // ignore
+            }
+            // Update slider background
+            updateSliderBackground(slider);
+            // Optionally re-render alignment if color affects display
+            if (typeof renderAlignment === 'function') {
+                renderAlignment();
+            }
+        });
+    }
+});
+
+// Reset button functionality for color pickers
+['black', 'dark', 'light'].forEach(function(shade) {
+    const resetButton = document.getElementById(shade + 'Reset');
+    const picker = document.getElementById(shade + 'ColorPicker');
+    const slider = document.getElementById(shade + 'Slider');
+
+    if (resetButton && picker) {
+        resetButton.addEventListener('click', function() {
+            // Reset to default colors
+            const defaultColors = {
+                'black': '#000000',
+                'dark': '#555555',
+                'light': '#cccccc'
+            };
+
+            const defaultColor = defaultColors[shade];
+            picker.value = defaultColor;
+
+            // Update CSS variable for slider fill
+            slider.style.setProperty('--slider-fill', defaultColor);
+            // Update the corresponding CSS variable for alignment shading
+            document.documentElement.style.setProperty('--' + shade + 'Shading', defaultColor);
+
+            // Compute readable text color
+            try {
+                const hex = (defaultColor || '#000').replace('#', '');
+                const r = parseInt(hex.substring(0,2), 16) || 0;
+                const g = parseInt(hex.substring(2,4), 16) || 0;
+                const b = parseInt(hex.substring(4,6), 16) || 0;
+                const brightness = (r * 299 + g * 587 + b * 114) / 1000;
+                const textColor = brightness > 128 ? '#000' : '#fff';
+                document.documentElement.style.setProperty('--' + shade + 'Text', textColor);
+            } catch (err) {
+                // ignore
+            }
+
+            // Update slider background and re-render
+            updateSliderBackground(slider);
+            if (typeof renderAlignment === 'function') {
+                renderAlignment();
+            }
+        });
+    }
+});
+
+// EVENT HANDLERS
+function isCtrlModifier(e) {
+    if (e.ctrlKey || e.metaKey) return true;
+    if (typeof e.getModifierState === 'function') {
+        return e.getModifierState('Control') || e.getModifierState('Meta');
+    }
+    return false;
+}
+

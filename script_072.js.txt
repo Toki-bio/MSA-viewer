@@ -1,0 +1,499 @@
+[script.js lines 31704-32201 of ViewAlign fd8b8e4]
+function invalidateGeneDocDragVisiblePositions() {
+    if (!state.editDrag) return;
+    state.editDrag.visiblePositions = null;
+    // The overlay is positioned in viewport coordinates, so scrolling leaves it over the
+    // wrong cells. Drop it (syncing the DOM it was covering) and rebuild on the next step.
+    if (state.editDrag.overlay) {
+        destroyGeneDocDragOverlay(state.editDrag, true);
+        state.editDrag.overlay = undefined;
+    }
+}
+
+function handleGeneDocEditDragEnd() {
+    const drag = state.editDrag;
+    const usedOverlay = !!(drag && drag.overlay);
+    clearGeneDocEditDrag();
+    // A net move of zero does not guarantee the row came back to its starting string, and
+    // with the overlay the DOM was never touched, so sync it before returning.
+    if (usedOverlay && drag && drag.moved === 0 && state.seqs[drag.rowIndex]?.seq !== drag.originalSeq) {
+        refreshSequenceRowDom(drag.rowIndex, null, drag.originalSeq);
+    }
+    if (drag?.type === 'move' && drag.moved !== 0) {
+        normalizeAlignmentLengths();
+        refreshAllGaplessPositions();
+        state.editCell = { row: drag.rowIndex, pos: drag.anchorPos };
+        const nextAlignmentLength = _maxOf(state.seqs, seqObj => seqObj.seq.length);
+        const toolLabel = drag.tool === 'slideKeepGaps' ? 'SlideText' : 'MoveText';
+        const columns = Math.abs(drag.moved);
+        const fullName = state.seqs[drag.rowIndex]?.header || `row ${drag.rowIndex + 1}`;
+        const rowName = fullName.length > 22 ? fullName.slice(0, 21) + '…' : fullName;
+        // Recorded after normalising, so both widths describe a settled alignment.
+        pushUndoRowPatch(
+            drag.tool === 'slideKeepGaps' ? 'geneDocSlideText' : 'geneDocMoveText',
+            drag.rowIndex,
+            drag.originalSeq,
+            state.seqs[drag.rowIndex].seq,
+            drag.originalAlignmentLength,
+            nextAlignmentLength,
+            `${toolLabel} ${columns} col ${drag.moved > 0 ? 'right' : 'left'} · ${rowName}`
+        );
+        if (drag.isCanvas) {
+            if (state.editLiveConservation || nextAlignmentLength !== drag.originalAlignmentLength) {
+                renderAlignment({ deferConservation: !state.editLiveConservation });
+            } else {
+                _canvasState.scheduleDraw?.();
+                if (typeof updateSourceInfo === 'function') updateSourceInfo();
+            }
+        } else if (state.editLiveConservation || nextAlignmentLength !== drag.originalAlignmentLength) {
+            renderAlignment({ deferConservation: !state.editLiveConservation });
+        } else {
+            // Reconcile the whole row, keeping shading on every column the drag left alone.
+            refreshSequenceRowDom(drag.rowIndex, null, drag.originalSeq);
+            if (typeof updateSourceInfo === 'function') updateSourceInfo();
+        }
+        showMessage(`${toolLabel} moved ${columns} column(s).`, 1400);
+    }
+}
+
+function clearGeneDocEditDrag() {
+    // Drop the canvas without syncing: every caller either reconciles the row itself
+    // (drag end) or is abandoning the drag entirely.
+    destroyGeneDocDragOverlay(state.editDrag, false);
+    document.removeEventListener('mousemove', handleGeneDocEditDragMove);
+    document.removeEventListener('mouseup', handleGeneDocEditDragEnd);
+    alignmentContainer?.removeEventListener('scroll', invalidateGeneDocDragVisiblePositions);
+    document.body.style.cursor = '';
+    state.editDrag = null;
+}
+
+function getGeneDocGapTargets(rowIndex, tool) {
+    if (tool.endsWith('Seq')) return [rowIndex];
+    if (tool.endsWith('Other')) return state.seqs.map((_, i) => i).filter(i => i !== rowIndex);
+    return state.seqs.map((_, i) => i);
+}
+
+function handleGeneDocGapToolClick(rowIndex, pos, tool) {
+    const targets = getGeneDocGapTargets(rowIndex, tool);
+    if (!targets.length) {
+        showMessage('No target sequences for this GeneDoc edit.', 1800);
+        return;
+    }
+    const deleting = tool.startsWith('delete');
+    if (deleting) {
+        const blocked = targets.find(i => isGeneDocResidueChar(state.seqs[i].seq[pos] || GENEDOC_FILLER));
+        if (blocked !== undefined) {
+            showMessage('Delete Gap targets must be gaps.', 2200);
+            return;
+        }
+    }
+
+    const redoBefore = state.redoHistory;
+    pushUndo(`geneDoc-${tool}`);
+    normalizeAlignmentLengths();
+    const oldWidth = state.seqs.reduce((m, s) => Math.max(m, s.seq.length), 0);
+    let changed = false;
+    targets.forEach(i => {
+        const s = state.seqs[i];
+        const result = deleting
+            ? geneDocDeleteDashString(s.seq, pos)
+            : geneDocInsertDashString(s.seq, pos);
+        if (result.changed) {
+            s.seq = result.seq;
+            changed = true;
+        }
+    });
+    if (!changed) {
+        _dropNoOpUndo(redoBefore);
+        showMessage('No GeneDoc edit was applied.', 1800);
+        return;
+    }
+    const label = deleting ? 'gap deleted' : 'gap inserted';
+    applyColumnEdit({ type: deleting ? 'delete' : 'insert', at: pos, cols: [pos], newWidth: _maxOf(state.seqs, q => q.seq.length) },
+        targets.length === state.seqs.length ? 'all' : targets);
+    finalizeGeneDocEdit(`${targets.length} sequence(s): ${label}.`, 1600, pos, oldWidth);
+}
+
+function handleGeneDocResidueKey(e) {
+    if (!state.editModeActive || state.editTool !== 'residue' || !state.editCell) return false;
+    if (e.ctrlKey || e.metaKey || e.altKey) return false;
+
+    const { row, pos } = state.editCell;
+    if (!state.seqs[row]) return false;
+
+    // Handle Backspace: delete previous character
+    if (e.key === 'Backspace') {
+        e.preventDefault();
+        if (pos > 0) {
+            const beforeSeq = state.seqs[row].seq;
+            const width = beforeSeq.length;
+            const chars = beforeSeq.split('');
+            chars[pos - 1] = GENEDOC_FILLER;
+            state.seqs[row].seq = chars.join('');
+            // Row-scoped patch, not pushUndo()'s full-alignment JSON clone -
+            // typing calls this on every keystroke, and JSON.stringify-ing
+            // the whole alignment per character is exactly the kind of
+            // live-recalculation-while-typing cost that made large-file
+            // editing feel laggy. Same pattern already used by the GeneDoc
+            // Move/Slide drag tools (see handleGeneDocEditDragEnd).
+            pushUndoRowPatch('geneDocResidueEdit', row, beforeSeq, state.seqs[row].seq, width, width, 'TypeResidue');
+            state.editCell = { row, pos: pos - 1 };
+            fastUpdateEditCell();
+        }
+        return true;
+    }
+
+    // Handle Delete: delete current character
+    if (e.key === 'Delete') {
+        e.preventDefault();
+        const beforeSeq = state.seqs[row].seq;
+        const width = beforeSeq.length;
+        const chars = beforeSeq.split('');
+        if (pos < chars.length) {
+            chars[pos] = GENEDOC_FILLER;
+            state.seqs[row].seq = chars.join('');
+            pushUndoRowPatch('geneDocResidueEdit', row, beforeSeq, state.seqs[row].seq, width, width, 'TypeResidue');
+            fastUpdateEditCell();
+        }
+        return true;
+    }
+
+    // Handle Arrow Left/Right: move cursor along the sequence
+    if (e.key === 'ArrowLeft') {
+        e.preventDefault();
+        if (pos > 0) {
+            state.editCell = { row, pos: pos - 1 };
+            updateEditActiveCell();
+        }
+        return true;
+    }
+    if (e.key === 'ArrowRight') {
+        e.preventDefault();
+        const maxPos = state.seqs[row].seq.length - 1;
+        if (pos < maxPos) {
+            state.editCell = { row, pos: pos + 1 };
+            updateEditActiveCell();
+        }
+        return true;
+    }
+
+    // Only single printable characters
+    if (e.key.length !== 1 || !/^[A-Za-z.-]$/.test(e.key)) return false;
+
+    // Normalize first (matches the GeneDoc Move/Slide convention: "recorded
+    // after normalising, so both widths describe a settled alignment") -
+    // then capture beforeSeq from that settled state, not before it, so the
+    // row-scoped patch below stays correct even in the rare case where
+    // normalizeAlignmentLengths actually padded something.
+    normalizeAlignmentLengths();
+    const beforeSeq = state.seqs[row].seq;
+    const width = beforeSeq.length;
+    const chars = beforeSeq.split('');
+    if (pos < 0 || pos >= chars.length) return false;
+    // The letter keeps the case it was typed in (owner 2026-10-31: lower case typed showed as a capital in the
+    // Aa view, which shows the sequence as stored); the aa | Aa | AA switch only changes the display
+    chars[pos] = (e.key === '.' || e.key === '-') ? GENEDOC_FILLER : e.key;
+    state.seqs[row].seq = chars.join('');
+    // Row-scoped patch, not pushUndo()'s full-alignment JSON clone - see the
+    // Backspace/Delete handlers above for why this matters while typing.
+    pushUndoRowPatch('geneDocResidueEdit', row, beforeSeq, state.seqs[row].seq, width, width, 'TypeResidue');
+
+    // Update the span at the OLD position (where we just typed)
+    fastUpdateEditCellAt(row, pos);
+
+    // Advance cursor
+    const nextPos = Math.min(pos + 1, chars.length - 1);
+    state.editCell = { row, pos: nextPos };
+    updateEditActiveCell();
+
+    e.preventDefault();
+    return true;
+}
+
+/**
+ * Fast in-place update for Type mode: updates a single span at (row,pos)
+ * using cached DOM references. No full re-render. Like GeneDoc.
+ */
+function fastUpdateEditCellAt(row, pos) {
+    if (isCanvasMode()) {
+        if (_canvasState.redrawCells) _canvasState.redrawCells(row, row, pos, pos);
+        else _canvasState.scheduleDraw?.();
+        return;
+    }
+    const span = getSpanElement(row, pos);
+    if (!span) {
+        renderAlignment(); return;
+    }
+
+    const base = state.seqs[row].seq[pos] || GENEDOC_FILLER;
+    const consData = (state.conservationDataCache && state.conservationDataCache.data) || {};
+    // Typing can create or break a motif match anywhere along the row
+    if (state.searchHistory?.length) refreshSequenceRowSearch(row);
+    repaintResidueSpan(span, row, pos, base, getSequenceRenderConfig(), consData);
+}
+
+// Re-evaluate just the search highlights of one rendered row (its letters are current).
+function refreshSequenceRowSearch(rowIndex) {
+    const rowCache = state.spanCache?.get(rowIndex);
+    const seq = state.seqs[rowIndex]?.seq;
+    if (!rowCache || seq === undefined) return;
+    const ctx = _overlayRowCtx(rowIndex);
+    rowCache.forEach((span, pos) => {
+        const o = ctx.any ? residueOverlay(ctx, pos, seq[pos] || '-') : null;
+        if (!o && !span.className.includes(' ov-')) return;
+        _syncOverlayClasses(span, o);
+        _applyOverlayAttrs(span, o);
+    });
+}
+
+/**
+ * Fast in-place update using current state.editCell position.
+ * Used by Backspace/Delete where editCell already points to the right position.
+ */
+function fastUpdateEditCell() {
+    if (!state.editCell) return;
+    const { row, pos } = state.editCell;
+    fastUpdateEditCellAt(row, pos);
+    updateEditActiveCell();
+}
+
+function removeGapColumns() {
+    if (state.seqs.length === 0) return;
+    const len = _maxOf(state.seqs, s => s.seq.length);
+    const colsToRemove = [];
+    for (let pos = 0; pos < len; pos++) {
+        if (state.seqs.every(s => isGeneDocGapChar(s.seq[pos] || GENEDOC_FILLER))) {
+            colsToRemove.push(pos);
+        }
+    }
+    if (colsToRemove.length === 0) {
+        showMessage("No gap-only columns to remove.", 2000);
+        return;
+    }
+    pushUndo('removeGaps');
+    normalizeAlignmentLengths();
+    applyColumnEdit({ type: 'delete', cols: colsToRemove });
+    state.seqs.forEach(s => {
+        let seqArr = s.seq.split('');
+        colsToRemove.sort((a, b) => b - a).forEach(pos => seqArr.splice(pos, 1));
+        s.seq = seqArr.join('');
+    });
+    state.selectedColumns.clear();
+    refreshAllGaplessPositions();
+    if (state.trimBoundaries) _clearTrimPreview();
+    renderAlignment();
+    showMessage(`${colsToRemove.length} gap columns removed!`, 2000);
+}
+
+function insertGapColumn(skipSelected = false) {
+    if (state.selectedColumns.size === 0) {
+        showMessage("Select a column position by Ctrl+Alt+click on a nucleotide to insert gap there.", 5000);
+        return;
+    }
+    const pos = _minOf(state.selectedColumns);
+    pushUndo('insertGap');
+    normalizeAlignmentLengths();
+    const edited = [];
+    state.seqs.forEach((s, i) => {
+        if (skipSelected && state.selectedRows.has(i)) return; // Skip selected rows when requested
+        s.seq = s.seq.slice(0, pos) + '-' + s.seq.slice(pos);
+        edited.push(i);
+    });
+    applyColumnEdit({ type: 'insert', at: pos }, edited.length === state.seqs.length ? 'all' : edited);
+    normalizeAlignmentLengths();
+    refreshAllGaplessPositions();
+    state.selectedColumns.clear();
+    renderAlignment();
+    showMessage("Gap column inserted!", 2000);
+}
+
+function insertSingleGap(rowIndex, pos) {
+    const s = state.seqs[rowIndex];
+    if (!s) return;
+    const redoBefore = state.redoHistory;
+    pushUndo('insertSingleGap');
+    normalizeAlignmentLengths();
+    const oldWidth = state.seqs.reduce((m, q) => Math.max(m, q.seq.length), 0);
+    const result = geneDocInsertDashString(s.seq, pos);
+    if (!result.changed) {
+        _dropNoOpUndo(redoBefore);
+        showMessage('No gap inserted.', 1800);
+        return;
+    }
+    s.seq = result.seq;
+    applyColumnEdit({ type: 'insert', at: pos, newWidth: _maxOf(state.seqs, q => q.seq.length) }, [rowIndex]);
+    finalizeGeneDocEdit('Single GeneDoc gap inserted.', 1800, pos, oldWidth);
+}
+
+function removeSingleGap(rowIndex, pos) {
+    const s = state.seqs[rowIndex];
+    if (!s) return;
+    if (!isGeneDocGapChar(s.seq[pos] || GENEDOC_FILLER)) {
+        showMessage("Not a gap.", 2000);
+        return;
+    }
+    const redoBefore = state.redoHistory;
+    pushUndo('removeSingleGap');
+    normalizeAlignmentLengths();
+    const oldWidth = state.seqs.reduce((m, q) => Math.max(m, q.seq.length), 0);
+    const result = geneDocDeleteDashString(s.seq, pos);
+    if (!result.changed) {
+        _dropNoOpUndo(redoBefore);
+        showMessage('No gap removed.', 1800);
+        return;
+    }
+    s.seq = result.seq;
+    applyColumnEdit({ type: 'delete', cols: [pos] }, [rowIndex]);
+    finalizeGeneDocEdit('Single GeneDoc gap removed.', 1800, pos, oldWidth);
+}
+
+function handleAlignmentPanStart(e) {
+    if (e.button !== 2) return;
+    if (!alignmentContainer) return;
+    // Only pan if NOT on a seq-data or seq-name element
+    const dataTarget = e.target.closest('.seq-data');
+    const nameTarget = e.target.closest('.seq-name');
+    if (dataTarget || nameTarget) return;
+
+    // Don't preventDefault here - let the contextmenu handler decide
+    // (context menu is only suppressed after actual pan movement)
+    state.panning.active = true;
+    state.panning.started = false;
+    state.panning.startX = e.clientX;
+    state.panning.startY = e.clientY;
+    state.panning.scrollLeft = alignmentContainer.scrollLeft;
+    state.panning.scrollTop = alignmentContainer.scrollTop;
+}
+
+function handleAlignmentPanMove(e) {
+    if (!state.panning.active || !alignmentContainer) return;
+
+    // Check if right button is still held
+    if (e.buttons !== undefined && (e.buttons & 2) === 0) {
+        handleAlignmentPanEnd();
+        return;
+    }
+
+    const deltaX = state.panning.startX - e.clientX;
+    const deltaY = state.panning.startY - e.clientY;
+
+    // Small threshold before activating pan
+    if (!state.panning.started) {
+        if (Math.abs(deltaX) < 3 && Math.abs(deltaY) < 3) {
+            return;
+        }
+        state.panning.started = true;
+    }
+
+    e.preventDefault();
+    alignmentContainer.scrollLeft = state.panning.scrollLeft + deltaX;
+    alignmentContainer.scrollTop = state.panning.scrollTop + deltaY;
+}
+
+function handleAlignmentPanEnd() {
+    if (!state.panning.active) return;
+    state.panning.active = false;
+    state.panning.started = false;
+}
+
+function handleAlignmentPanContextMenu(e) {
+    if (state.panning.started) {
+        e.preventDefault();
+    }
+}
+
+// Ctrl+A on fastaInput handled by main capture-phase handler - no special override needed
+
+// Drag handlers are defined at top of file (window.handleDragStart / window.handleDragEnd)
+
+// ============================================================================
+// FULL-WINDOW DRAG AND DROP - Add at the very end of script.js
+// ============================================================================
+
+(function() {
+    // Create overlay element if it doesn't exist
+    let dragOverlay = document.getElementById('drag-overlay');
+    if (!dragOverlay) {
+        dragOverlay = document.createElement('div');
+        dragOverlay.id = 'drag-overlay';
+        dragOverlay.className = 'drag-overlay hidden';
+        // Empty overlay - just visual backdrop
+        document.body.appendChild(dragOverlay);
+    }
+
+    let dragCounter = 0;
+
+    // Prevent default drag behaviors on entire document
+    ['dragenter', 'dragover', 'dragleave', 'drop'].forEach(eventName => {
+        document.body.addEventListener(eventName, function(e) {
+            // Only prevent if it's a file drag, not text/element drag
+            if (e.dataTransfer && e.dataTransfer.types && e.dataTransfer.types.includes('Files')) {
+                e.preventDefault();
+                e.stopPropagation();
+            }
+        }, true); // Use capture phase to catch events early
+    });
+
+    // A drop handled earlier (a genome's files, genome-view.js) never gets to the handler below that clears this
+    window._dragOverlayDone = () => { dragCounter = 0; dragOverlay.classList.remove('active'); dragOverlay.classList.add('hidden'); };
+    // Show overlay when file enters window
+    document.body.addEventListener('dragenter', function(e) {
+        if (e.dataTransfer && e.dataTransfer.types && e.dataTransfer.types.includes('Files')) {
+            dragCounter++;
+            dragOverlay.classList.remove('hidden');
+            dragOverlay.classList.add('active');
+        }
+    }, true);
+
+    // Hide overlay when file leaves window
+    document.body.addEventListener('dragleave', function(e) {
+        if (e.dataTransfer && e.dataTransfer.types && e.dataTransfer.types.includes('Files')) {
+            dragCounter--;
+            if (dragCounter === 0) {
+                dragOverlay.classList.remove('active');
+                dragOverlay.classList.add('hidden');
+            }
+        }
+    }, true);
+
+    // Handle file drop on entire window
+    document.body.addEventListener('drop', function(e) {
+        if (e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files.length > 0) {
+            e.preventDefault();
+            e.stopPropagation();
+
+            dragCounter = 0;
+            dragOverlay.classList.remove('active');
+            dragOverlay.classList.add('hidden');
+
+            const file = e.dataTransfer.files[0];
+
+            // Validate file type
+            const validExtensions = ['.fasta', '.fa', '.msf', '.aln', '.clustal', '.txt'];
+            const fileName = file.name.toLowerCase();
+            const isValid = validExtensions.some(ext => fileName.endsWith(ext));
+
+            if (!isValid) {
+                showMessage('Please upload a valid alignment file (FASTA, MSF, Clustal, .txt)', 4000);
+                return;
+            }
+
+            // Process the file
+            state.currentFilename = file.name;
+            const reader = new FileReader();
+            reader.onload = function(event) {
+                const fastaInputElement = el('fastaInput');
+                if (fastaInputElement) {
+                    _setInputText(event.target.result);
+                    parseAndRender(true);
+                }
+            };
+            reader.onerror = function() {
+                showMessage('Error reading file. Please try again.', 5000);
+            };
+            reader.readAsText(file);
+        }
+    }, true);
+})();
+
+// The name column's width by dragging the (invisible) boundary between the names and the sequences, in Full,

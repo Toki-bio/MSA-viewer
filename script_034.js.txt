@@ -1,0 +1,476 @@
+[script.js lines 14031-14505 of ViewAlign fd8b8e4]
+function ensureSpanCacheRow(row) {
+    let rowCache = state.spanCache.get(row);
+    if (!rowCache) {
+        rowCache = new Map();
+        state.spanCache.set(row, rowCache);
+    }
+    return rowCache;
+}
+
+function registerSpanInCache(row, pos, span) {
+    ensureSpanCacheRow(row).set(pos, span);
+}
+
+function getCachedSpan(row, pos) {
+    return state.spanCache.get(row)?.get(pos) || null;
+}
+
+function isConsensusSeqLine(row) {
+    return !!row?.classList?.contains('consensus-line');
+}
+
+function resolveNucRowIndex(row) {
+    if (!row) return NaN;
+    if (isConsensusSeqLine(row)) return CONSENSUS_ROW_INDEX;
+    return parseInt(row.dataset.seqIndex, 10);
+}
+
+function getConsensusSequenceGapped() {
+    const len = state.seqs?.length
+        ? _maxOf(state.seqs, s => s.seq.length)
+        : 0;
+    if (len > 0 && state.consensusCache?.values?.length === len) {
+        return state.consensusCache.values.join('');
+    }
+    if (!state.seqs?.length) return '';
+    return computeConsensusForSequences(state.seqs.map(s => s.seq));
+}
+
+function getNucRowSequence(rowIndex) {
+    if (rowIndex === CONSENSUS_ROW_INDEX) return getConsensusSequenceGapped();
+    return state.seqs[rowIndex]?.seq || '';
+}
+
+function isAlignmentGapChar(ch) {
+    const c = String(ch ?? '');
+    return c === '' || c === '*' || /[-.~\s]/.test(c);
+}
+
+// Drops gaps only; '*' (stop) is a residue here as it is in coordinates
+// (calculateGaplessPositions), so ungapped copies keep internal stops
+function degapResidues(seq) {
+    return String(seq || '').replace(/[-.~\s]/g, '');
+}
+
+function getNucCharAt(rowIndex, pos) {
+    const seq = getNucRowSequence(rowIndex);
+    return pos >= 0 && pos < seq.length ? seq[pos] : '-';
+}
+
+/** All alignment columns in the clicked/dragged range (gaps included for highlight). */
+// A rectangle of rows x columns (owner, 2026-10-23: "select rectangle area in the alignment"): every row
+// between the two corners gets the same column range. Rows below 0 (the consensus) are left out.
+function _setNucRectangle(row0, pos0, row1, pos1) {
+    state.selectedNucs.clear();
+    const r0 = Math.min(row0, row1), r1 = Math.max(row0, row1);
+    for (let r = Math.max(0, r0); r <= r1; r++) {
+        if (!state.seqs[r]) continue;
+        state.selectedNucs.set(r, buildNucSelectionSet(r, pos0, pos1));
+    }
+}
+// The selected residues as one rectangle: { rows, rowSet, c0, c1 } when every selected row holds the same
+// unbroken column range and there are two or more rows and columns, else null
+function _nucSelectionRectangle() {
+    const rows = [...state.selectedNucs.keys()].filter(r => r >= 0 && state.seqs[r]).sort((a, b) => a - b);
+    if (rows.length < 2) return null;
+    let c0 = -1, c1 = -1;
+    for (const r of rows) {
+        const set = state.selectedNucs.get(r);
+        if (!set || !set.size) return null;
+        let lo = Infinity, hi = -Infinity;
+        set.forEach(c => { if (c < lo) lo = c; if (c > hi) hi = c; });
+        if (set.size !== hi - lo + 1) return null;
+        if (c0 < 0) { c0 = lo; c1 = hi; } else if (lo !== c0 || hi !== c1) return null;
+    }
+    if (c1 - c0 + 1 < 2) return null;
+    return { rows, rowSet: new Set(rows), c0, c1 };
+}
+
+function buildNucSelectionSet(rowIndex, startPos, endPos) {
+    const lo = Math.min(startPos, endPos);
+    const hi = Math.max(startPos, endPos);
+    const rowSet = new Set();
+    for (let p = lo; p <= hi; p++) rowSet.add(p);
+    return rowSet;
+}
+
+function extractNucSubstring(seqStr, start, end, stripGaps = true) {
+    const sub = String(seqStr || '').slice(start, end + 1);
+    return stripGaps ? degapResidues(sub) : sub;
+}
+
+/** Plain degapped sequence for the selected alignment column span(s). */
+function copyNucPositions(seqStr, positions) {
+    if (!positions || positions.size === 0) return '';
+    const poss = Array.from(positions).sort((a, b) => a - b);
+    const lo = poss[0];
+    const hi = poss[poss.length - 1];
+    return degapResidues(String(seqStr || '').slice(lo, hi + 1));
+}
+
+// The selected bases as FASTA: per row ">name:first-last" (residue numbers of the ungapped row) and the bases, ungapped
+function buildNucFastaText() {
+    if (!state.selectedNucs.size) return '';
+    const parts = [];
+    for (const [i, posSet] of [...state.selectedNucs.entries()].sort((a, b) => a[0] - b[0])) {
+        if (!posSet || posSet.size === 0) continue;
+        const seqStr = getNucRowSequence(i);
+        if (!seqStr) continue;
+        const frag = copyNucPositions(seqStr, posSet);
+        if (!frag) continue;
+        const lo = Math.min(...posSet);
+        const first = degapResidues(String(seqStr).slice(0, lo)).length + 1;
+        const name = i === CONSENSUS_ROW_INDEX ? 'Consensus' : (state.seqs[i]?.fullHeader || state.seqs[i]?.header || 'row' + (i + 1));
+        parts.push(`>${name}:${first}-${first + frag.length - 1}\n${frag}\n`);
+    }
+    return parts.join('');
+}
+function buildNucCopyText() {
+    if (!state.selectedNucs.size) return '';
+    const parts = [];
+    for (const [i, posSet] of state.selectedNucs.entries()) {
+        if (!posSet || posSet.size === 0) continue;
+        const seqStr = getNucRowSequence(i);
+        if (!seqStr) continue;
+        const frag = copyNucPositions(seqStr, posSet);
+        if (frag) parts.push(frag);
+    }
+    return parts.join('\n');
+}
+
+function nucRowSpanSelector(row, pos) {
+    if (row === CONSENSUS_ROW_INDEX) {
+        return `.seq-line.consensus-line .seq-data > span[data-pos="${pos}"]`;
+    }
+    return `.seq-line[data-seq-index="${row}"] .seq-data > span[data-pos="${pos}"]`;
+}
+
+function getSpanElement(row, pos) {
+    const cached = getCachedSpan(row, pos);
+    if (cached) return cached;
+    if (!alignmentContainer) return null;
+    return alignmentContainer.querySelector(nucRowSpanSelector(row, pos));
+}
+
+function forEachRowSpanAtPosition(row, pos, callback) {
+    const cached = getCachedSpan(row, pos);
+    if (cached) {
+        callback(cached);
+        return;
+    }
+    if (!alignmentContainer) return;
+    alignmentContainer.querySelectorAll(nucRowSpanSelector(row, pos)).forEach(callback);
+}
+
+function forEachColumnSpan(pos, callback) {
+    let found = 0;
+    if (state.spanCache) {
+        state.spanCache.forEach(rowMap => {
+            const span = rowMap.get(pos);
+            if (span) {
+                found++;
+                callback(span);
+            }
+        });
+    }
+    if (found > 0) return;
+    if (!alignmentContainer) return;
+    alignmentContainer.querySelectorAll(`.seq-data > span[data-pos="${pos}"]`).forEach(callback);
+}
+
+const RENDER_STANDARD_BASES = new Set(['A', 'C', 'G', 'T', 'U', 'N', '-', '.', 'a', 'c', 'g', 't', 'u', 'n']);
+const RENDER_AMBIGUOUS_BASES = new Set(['R','Y','M','K','S','W','H','B','V','D','r','y','m','k','s','w','h','b','v','d']);
+const ALIGNMENT_COLOR_SCHEMES = new Set([
+    'monochrome',
+    'nucleotide',
+    'nucleotide-cb',
+    'purine-pyrimidine',
+    'ambiguity',
+    'aa-clustal',
+    'aa-jalview'
+]);
+const ALIGNMENT_COLOR_SCHEME_CLASSES = Array.from(ALIGNMENT_COLOR_SCHEMES, scheme => `color-scheme-${scheme}`);
+const AMINO_ACID_GROUP_CLASSES = {
+    A: 'aa-hydrophobic', V: 'aa-hydrophobic', I: 'aa-hydrophobic', L: 'aa-hydrophobic', M: 'aa-hydrophobic',
+    R: 'aa-positive', K: 'aa-positive', H: 'aa-positive',
+    D: 'aa-negative', E: 'aa-negative',
+    S: 'aa-polar', T: 'aa-polar', N: 'aa-polar', Q: 'aa-polar',
+    F: 'aa-aromatic', W: 'aa-aromatic', Y: 'aa-aromatic',
+    C: 'aa-special', G: 'aa-special', P: 'aa-special',
+    // B (D/N), Z (E/Q), J (I/L) and X are uncertain: a neutral colour, not G/P/C's
+    B: 'aa-unknown', Z: 'aa-unknown', X: 'aa-unknown', J: 'aa-unknown', O: 'aa-special', U: 'aa-special',
+    '*': 'aa-stop'
+};
+const NUCLEOTIDE_ORIENTED_SCHEMES = new Set(['nucleotide', 'nucleotide-cb', 'purine-pyrimidine', 'ambiguity']);
+const RESIDUE_SCHEME_STYLES = {
+    'aa-clustal': {
+        'aa-hydrophobic': { bg: '#80b1ff', fg: '#062a5f' },
+        'aa-positive': { bg: '#ff9a9a', fg: '#650808' },
+        'aa-negative': { bg: '#ff77dd', fg: '#5d064e' },
+        'aa-polar': { bg: '#8ee68e', fg: '#064906' },
+        'aa-aromatic': { bg: '#8fe6ff', fg: '#07495a' },
+        'aa-special': { bg: '#ffe680', fg: '#5c4600' },
+        'aa-unknown': { bg: '#dddddd', fg: '#333333' },
+        'aa-stop': { bg: '#222222', fg: '#ffffff' }
+    },
+    'aa-jalview': {
+        'aa-hydrophobic': { bg: '#ffcc99', fg: '#5c2c00' },
+        'aa-positive': { bg: '#99ccff', fg: '#06345f' },
+        'aa-negative': { bg: '#ff9999', fg: '#620909' },
+        'aa-polar': { bg: '#99e699', fg: '#064906' },
+        'aa-aromatic': { bg: '#d6b3ff', fg: '#3d0b63' },
+        'aa-special': { bg: '#ffff99', fg: '#555500' },
+        'aa-unknown': { bg: '#dddddd', fg: '#333333' },
+        'aa-stop': { bg: '#222222', fg: '#ffffff' }
+    },
+    'nucleotide': {
+        'base-A': { bg: '#8ddf88', fg: '#063b09' },
+        'base-C': { bg: '#87c7ff', fg: '#07335e' },
+        'base-G': { bg: '#ffc878', fg: '#5f3300' },
+        'base-T': { bg: '#ff8c8c', fg: '#5e0505' },
+        'base-U': { bg: '#ff8c8c', fg: '#5e0505' },
+        'base-N': { bg: '#d9d9d9', fg: '#333333' }
+    },
+    // Okabe-Ito colours: A, C, G and T stay distinct under the common forms of
+    // colour blindness (the default Nucleotide scheme puts green A beside red T)
+    'nucleotide-cb': {
+        'base-A': { bg: '#56b4e9', fg: '#000000' },
+        'base-C': { bg: '#e69f00', fg: '#000000' },
+        'base-G': { bg: '#f0e442', fg: '#000000' },
+        'base-T': { bg: '#cc79a7', fg: '#000000' },
+        'base-U': { bg: '#cc79a7', fg: '#000000' },
+        'base-N': { bg: '#d9d9d9', fg: '#333333' }
+    },
+    'purine-pyrimidine': {
+        'pp-purine': { bg: '#ffe9a8', fg: '#6b4500' },
+        'pp-pyrimidine': { bg: '#cbe7ff', fg: '#06466d' },
+        'iupac-ambiguous': { bg: '#e5e5e5', fg: '#333333' },
+        'base-N': { bg: '#e5e5e5', fg: '#333333' }
+    },
+    'ambiguity': {
+        'iupac-ambiguous': { bg: '#e8ddff', fg: '#3f1375' },
+        'base-R': { bg: '#d7ffd7', fg: '#075007' },
+        'base-Y': { bg: '#d7edff', fg: '#06466d' },
+        'base-S': { bg: '#dff7ff', fg: '#06515f' },
+        'base-W': { bg: '#fff4c7', fg: '#6b5200' },
+        'base-K': { bg: '#ffe2ce', fg: '#6a2a00' },
+        'base-M': { bg: '#f4dcff', fg: '#5d126d' },
+        'base-N': { bg: '#d9d9d9', fg: '#333333' }
+    }
+};
+const RESIDUE_SCHEME_CLASS_PRIORITY = [
+    'aa-stop', 'aa-hydrophobic', 'aa-positive', 'aa-negative', 'aa-polar', 'aa-aromatic', 'aa-special', 'aa-unknown',
+    // per-code colours first: the stylesheet lets base-R etc. override iupac-ambiguous
+    'base-R', 'base-Y', 'base-S', 'base-W', 'base-K', 'base-M', 'base-H', 'base-B', 'base-V', 'base-D', 'iupac-ambiguous',
+    'pp-purine', 'pp-pyrimidine',
+    'base-A', 'base-C', 'base-G', 'base-T', 'base-U', 'base-N'
+];
+let _proteinSchemeRemapWarned = false;
+// A parser can leave a one-line note about what it did not load (e.g. reads on
+// other references); parseAndRender shows it instead of the plain success message.
+let _parseNotice = '';
+
+let _proteinMemoArr = null, _proteinMemoType = null, _proteinMemoVal = false;
+// Protein when a protein-only letter (E F I J L O P Q Z) occurs, or when more
+// than 10% of the letters are not nucleotide/IUPAC codes. One masked X or a
+// '*' no longer turns a nucleotide alignment into protein.
+const _NUCLEOTIDE_LETTER = new Uint8Array(128);
+for (const ch of 'ACGTUNRYMKSWHBVDacgtunrymkswhbvd') _NUCLEOTIDE_LETTER[ch.charCodeAt(0)] = 1;
+function _alignmentLooksProtein(seqs) {
+    let letters = 0, other = 0;
+    for (const entry of seqs) {
+        const seq = entry.seq || '';
+        if (/[EFIJLOPQZefijlopqz]/.test(seq)) return true;
+        for (let i = 0; i < seq.length && letters < 2000000; i++) {
+            const c = seq.charCodeAt(i);
+            if (c >= 128 || !((c >= 65 && c <= 90) || (c >= 97 && c <= 122))) continue;
+            letters++;
+            if (!_NUCLEOTIDE_LETTER[c]) other++;
+        }
+    }
+    return letters > 0 && other / letters > 0.1;
+}
+function isProteinAlignment(seqs = state.seqs) {
+    if (!seqs || seqs.length === 0) return false;
+    const seqType = el('mafftSeqType')?.value;
+    if (seqType === '0' || seqType === '1') return true;
+    // Scanning every sequence is O(seqs x cols). This runs once per glyph in the
+    // canvas hot loops, so memoize by array identity (a new array is created on
+    // load; edits mutate in place and never flip nucleotide/protein status).
+    if (seqs === _proteinMemoArr && seqType === _proteinMemoType) return _proteinMemoVal;
+    const value = _alignmentLooksProtein(seqs);
+    _proteinMemoArr = seqs;
+    _proteinMemoType = seqType;
+    _proteinMemoVal = value;
+    return value;
+}
+
+function usesMonochromeShading(colorScheme = getAlignmentColorScheme()) {
+    return colorScheme === 'monochrome';
+}
+
+function getEffectiveColorScheme(scheme = getAlignmentColorScheme()) {
+    if (isProteinAlignment() && NUCLEOTIDE_ORIENTED_SCHEMES.has(scheme)) {
+        if (!_proteinSchemeRemapWarned) {
+            _proteinSchemeRemapWarned = true;
+            showMessage('Nucleotide colour scheme selected for protein alignment - using amino-acid colours', 3500);
+        }
+        return 'aa-clustal';
+    }
+    return scheme;
+}
+
+function getResidueSchemeStyle(base, scheme = getEffectiveColorScheme()) {
+    if (usesMonochromeShading(scheme)) return null;
+    const palette = RESIDUE_SCHEME_STYLES[scheme];
+    if (!palette) return null;
+    const classes = getResidueAnnotationClasses(base, RENDER_STANDARD_BASES, RENDER_AMBIGUOUS_BASES, scheme).split(/\s+/);
+    for (const key of RESIDUE_SCHEME_CLASS_PRIORITY) {
+        if (classes.includes(key) && palette[key]) return palette[key];
+    }
+    return null;
+}
+
+function getAlignmentColorScheme() {
+    const scheme = el('colorSchemeSelect')?.value || DEFAULTS.colorScheme;
+    return ALIGNMENT_COLOR_SCHEMES.has(scheme) ? scheme : DEFAULTS.colorScheme;
+}
+
+function setAlignmentColorSchemeClass() {
+    if (!alignmentContainer) return;
+    alignmentContainer.classList.remove(...ALIGNMENT_COLOR_SCHEME_CLASSES);
+    alignmentContainer.classList.add(`color-scheme-${getEffectiveColorScheme()}`);
+}
+
+function getResidueAnnotationClasses(base, standard = RENDER_STANDARD_BASES, ambiguous = RENDER_AMBIGUOUS_BASES, colorScheme = getEffectiveColorScheme()) {
+    const baseUp = String(base || '-').toUpperCase();
+    if (baseUp === '-' || baseUp === '.') return '';
+
+    const classes = [];
+    if (/^[A-Z]$/.test(baseUp)) {
+        classes.push(`base-${baseUp}`);
+    } else if (baseUp === '*') {
+        classes.push('base-STOP');
+    }
+
+    // Protein residues are judged as amino acids whatever the colour scheme:
+    // in the default monochrome scheme E, F, I, L, P, Q used to be flagged as
+    // non-nucleotide "artifacts" (red on pink) and M as an IUPAC code
+    const isProtein = colorScheme === 'aa-clustal' || colorScheme === 'aa-jalview' || isProteinAlignment();
+    const isAmbiguousNucleotide = !isProtein && (ambiguous.has(base) || ambiguous.has(baseUp));
+    const isKnownNucleotide = !isProtein && (standard.has(base) || standard.has(baseUp) || isAmbiguousNucleotide);
+    const isAminoAcidSymbol = /^[A-Z*]$/.test(baseUp) && Boolean(AMINO_ACID_GROUP_CLASSES[baseUp]);
+
+    if (!isKnownNucleotide && !(isProtein && isAminoAcidSymbol)) {
+        classes.push('artifact');
+    } else if (isAmbiguousNucleotide) {
+        classes.push('ambiguous', 'iupac-ambiguous');
+    }
+
+    if (baseUp === 'A' || baseUp === 'G') classes.push('pp-purine');
+    if (baseUp === 'C' || baseUp === 'T' || baseUp === 'U') classes.push('pp-pyrimidine');
+    if (AMINO_ACID_GROUP_CLASSES[baseUp]) classes.push(AMINO_ACID_GROUP_CLASSES[baseUp]);
+
+    return classes.join(' ');
+}
+
+// Shared empty conservation array: every lookup misses, so residues render unshaded.
+const NO_CONSERVATION_DATA = [];
+
+function getSequenceRenderConfig() {
+    return {
+        blackThresh: parseInt(el('blackSlider')?.value || '100', 10) / 100,
+        darkThresh: parseInt(el('darkSlider')?.value || '80', 10) / 100,
+        lightThresh: parseInt(el('lightSlider')?.value || '60', 10) / 100,
+        enableBlack: !!el('enableBlack')?.checked,
+        enableDark: !!el('enableDark')?.checked,
+        enableLight: !!el('enableLight')?.checked,
+        shadeMode: document.querySelector('input[name="shadeMode"]:checked')?.value || 'all',
+        colorScheme: getAlignmentColorScheme(),
+        effectiveColorScheme: getEffectiveColorScheme()
+    };
+}
+
+function applyConservationShadeClass(baseUp, posData, config) {
+    if (!usesMonochromeShading(config.effectiveColorScheme || config.colorScheme)) {
+        return baseUp === '-' || baseUp === '.' ? 'gap' : 'other';
+    }
+    if (posData.hasData && posData.hasValidCoverage) {
+        if (baseUp !== '-' && baseUp !== '.' && posData.consensusBases?.has(baseUp)) {
+            if (config.enableBlack && posData.conservation >= config.blackThresh) return 'black';
+            if (config.enableDark && posData.conservation >= config.darkThresh) return 'dark';
+            if (config.enableLight && posData.conservation >= config.lightThresh) return 'light';
+        }
+        if (baseUp === '-' || baseUp === '.') return 'gap';
+    } else if (baseUp === '-' || baseUp === '.') {
+        return 'gap';
+    }
+    return 'other';
+}
+
+function getSequenceBaseRenderClass(base, pos, config, conservationData) {
+    const baseUp = (base || '-').toUpperCase();
+    const effectiveScheme = config.effectiveColorScheme || getEffectiveColorScheme(config.colorScheme);
+    const baseClass = getResidueAnnotationClasses(base, RENDER_STANDARD_BASES, RENDER_AMBIGUOUS_BASES, effectiveScheme);
+
+    const posData = conservationData?.[pos] || { hasData: false, hasValidCoverage: false };
+    let cls = applyConservationShadeClass(baseUp, posData, config);
+
+    const sc = state.selectedColumns;
+    if (sc.has(pos)) cls += ' column-selected' + (sc.has(pos - 1) ? '' : ' col-sel-l') + (sc.has(pos + 1) ? '' : ' col-sel-r');
+    if (baseClass) cls += ` ${baseClass}`;
+    return cls;
+}
+
+// limitPositions: optional Set of columns to repaint. Everything outside it is left
+// stale, so callers must reconcile the whole row before the edit is considered done
+// (the drag does this on mouse-up).
+// referenceSeq: the row as it was before the current edit. Columns that still match it
+// keep their existing conservation shading, because nothing about them changed: same
+// residue in this row, and no other row was touched, so the column consensus is
+// identical. Only repositioned residues drop to unshaded. Without a reference the row
+// falls back to unshaded throughout, which is what a plain refresh has always done.
+// Repaint one residue span in place from state: letter, shading, column selection, TSD
+// mark and search highlight. Every in-place path goes through here, so a span can never
+// keep a highlight that belonged to the residue that used to sit in its column.
+function repaintResidueSpan(span, rowIndex, pos, base, config, conservationData) {
+    const t = span.firstChild;
+    if (t && t.nodeType === 3) { if (t.nodeValue !== base) t.nodeValue = base; }
+    else span.textContent = base;
+    const ctx = _overlayRowCtx(rowIndex);
+    const o = ctx.any ? residueOverlay(ctx, pos, base) : null;
+    const ovc = _overlayClassList(o);
+    const cls = getSequenceBaseRenderClass(base, pos, config, conservationData) + (ovc ? ' ' + ovc : '');
+    // Nucleotide-selection classes are reapplied by scheduleNucSelectionRefresh, like before.
+    if (span.className !== cls) span.className = cls;
+    _applyOverlayAttrs(span, o);
+}
+
+function refreshSequenceRowDom(rowIndex, limitPositions = null, referenceSeq = null) {
+    const seqObj = state.seqs[rowIndex];
+    if (!seqObj || !alignmentContainer) return false;
+    const rowCache = state.spanCache?.get(rowIndex);
+    if (!rowCache || rowCache.size === 0) return false;
+
+    const len = _maxOf(state.seqs, s => s.seq.length);
+    const config = getSequenceRenderConfig();
+    const conservationData = (state.editLiveConservation || referenceSeq)
+        ? (getDeferredConservationData(len, config.shadeMode) || state.conservationDataCache?.data || [])
+        : NO_CONSERVATION_DATA;
+
+    rowCache.forEach((span, pos) => {
+        if (limitPositions && !limitPositions.has(pos)) return;
+        const base = seqObj.seq[pos] || GENEDOC_FILLER;
+        const repositioned = referenceSeq !== null && base !== (referenceSeq[pos] || GENEDOC_FILLER);
+        repaintResidueSpan(span, rowIndex, pos, base, config, repositioned ? NO_CONSERVATION_DATA : conservationData);
+    });
+    // A changed residue can make or break a motif match that reaches outside the
+    // repainted columns (undo of a typed residue, for one)
+    if (limitPositions && state.searchHistory?.length) refreshSequenceRowSearch(rowIndex);
+
+    if (state.selectedNucs.size) scheduleNucSelectionRefresh();
+    updateEditActiveCell();
+    return true;
+}
+

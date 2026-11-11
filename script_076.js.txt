@@ -1,0 +1,569 @@
+[script.js lines 33742-34309 of ViewAlign fd8b8e4]
+// Reverse complement helper for copy-FASTA buttons
+function _rcStr(s) {
+    const comp = {A:'T',T:'A',C:'G',G:'C',a:'t',t:'a',c:'g',g:'c',
+                   R:'Y',Y:'R',S:'S',W:'W',K:'M',M:'K',B:'V',V:'B',D:'H',H:'D',N:'N',
+                   r:'y',y:'r',s:'s',w:'w',k:'m',m:'k',b:'v',v:'b',d:'h',h:'d',n:'n','-':'-'};
+    return s.split('').reverse().map(c => comp[c] || 'N').join('');
+}
+
+// The E-value threshold from the dialog: hits above it are dropped (it was accepted and never applied)
+function _applyEvalueCutoff(results, evalue) {
+    const cut = parseFloat(evalue);
+    if (!Number.isFinite(cut) || cut <= 0) return results;
+    for (const k of Object.keys(results)) {
+        const r = results[k];
+        if (r && Array.isArray(r.hits)) r.hits = r.hits.filter(h => !(h.hsps && h.hsps[0] && h.hsps[0].evalue > cut));
+    }
+    return results;
+}
+
+async function runBlastSearch(seqHeader, seqSeq, databases, evalue) {
+    showMessage('Running BLAST search...', 0);
+    const queryLen = seqSeq.replace(/[-\s]/g, '').length;
+
+    const makeSearch = (db) => new Promise((resolve) => {
+        // db.url is REQUIRED here: this search engine is 100% client-side — the worker
+        // fetches the raw FASTA itself (see blast-worker.js ensureDb()), it never talks
+        // to a BLAST binary. If db.url is missing this fails with a confusing
+        // "HTTP 404 fetching undefined" deep inside the worker instead of here, at the
+        // one place that actually knows which database and why. Regressed once already
+        // (commit c38abf2 replaced a hardcoded db list that had url set on every entry
+        // with a server-fetched one that didn't carry `url` over) — fail loudly, not
+        // silently, so the next regression is obvious immediately instead of a mystery
+        // hours later.
+        if (!db.url) {
+            resolve([db.name, { error: `No URL configured for database "${db.name}" — check the /api/blast-db response includes a "url" field for it.` }]);
+            return;
+        }
+        primingWanted.add(db.name);
+        primingDbUrls.set(db.name, db.url);
+
+        const fullPool = getBlastWorkerPool();
+        const pool = primedWorkersFor(db.name);
+        // Use whatever subset of the pool is already primed for this database
+        // (grows organically over the session — see maybeAdvancePriming). Never
+        // primed yet -> exactly one worker, byte-identical cost to no sharding.
+        const shardWorkers = pool.length > 0 ? pool : [fullPool[0]];
+        const n = shardWorkers.length;
+        const requestIdBase = `${Date.now()}-${Math.random()}`;
+        let received = 0;
+        const shardHits = [];
+        let numSeqsTotal = 0, searchMsMax = 0, firstError = null, lastPreset = null;
+
+        shardWorkers.forEach((worker, i) => {
+            const requestId = `${requestIdBase}-${i}`;
+            const handler = (e) => {
+                const d = e.data;
+                if (d.requestId !== requestId) return;
+                if (d.type === 'progress') {
+                    showMessage(n > 1 ? `[${db.name}] shard ${i + 1}/${n}: ${d.stage}...` : `[${db.name}] ${d.stage}...`, 0);
+                    return;
+                }
+                if (d.type === 'result') {
+                    worker.removeEventListener('message', handler);
+                    received++;
+                    if (!d.success) {
+                        if (!firstError) firstError = d.error;
+                    } else {
+                        shardHits.push(...d.hits);
+                        numSeqsTotal = d.numSeqs;
+                        searchMsMax = Math.max(searchMsMax, d.searchMs);
+                        lastPreset = d.preset;
+                        const wi = blastWorkerPool.indexOf(worker);
+                        if (wi >= 0) workerPrimed[wi].add(db.name); // this worker now demonstrably has it indexed
+                    }
+                    if (received === n) {
+                        if (firstError && shardHits.length === 0) {
+                            resolve([db.name, { success: false, error: firstError }]);
+                        } else {
+                            shardHits.sort((a, b) => b.hsps[0].bitScore - a.hsps[0].bitScore);
+                            resolve([db.name, {
+                                success: true, hits: shardHits.slice(0, 10),
+                                numHits: Math.min(shardHits.length, 10),
+                                numSeqs: numSeqsTotal, searchMs: searchMsMax, preset: lastPreset,
+                            }]);
+                        }
+                    }
+                }
+            };
+            worker.addEventListener('message', handler);
+            worker.postMessage({
+                type: 'search', requestId, querySeq: seqSeq, dbName: db.name, dbUrl: db.url,
+                maxHits: 10, shard: { count: n, index: i },
+            });
+        });
+    });
+
+    activeSearchCount++;
+    try {
+        const pairs = await Promise.all(databases.map(db => makeSearch(db)));
+        const results = _applyEvalueCutoff(Object.fromEntries(pairs), evalue);
+        showMessage('BLAST search complete!', 2000);
+        displayBlastResults(seqHeader, queryLen, results);
+    } catch (err) {
+        console.error('BLAST search error:', err);
+        showMessage(`Error: ${err.message}`, 5000);
+    } finally {
+        activeSearchCount--;
+        maybeAdvancePriming(); // only takes effect once activeSearchCount reaches 0
+    }
+}
+
+function buildBlastHitElement(hit, hitIndex, dbIndex, queryLen) {
+    const W = 60;
+    const hsp = hit.hsps[0];
+
+    const div = document.createElement('div');
+    div.className = 'blast-hit';
+    div.id = `blast-hit-${dbIndex}-${hitIndex}`;
+
+    // Header
+    const header = document.createElement('div');
+    header.className = 'blast-hit-header';
+    header.textContent = `>> ${hit.def || hit.id}  (${hit.length} nt)`;
+    div.appendChild(header);
+
+    // Copy buttons
+    const actions = document.createElement('div');
+    actions.className = 'blast-hit-actions';
+
+    const makeBtn = (label, getFasta) => {
+        const btn = document.createElement('button');
+        btn.className = 'blast-copy-btn';
+        btn.textContent = `\uD83D\uDCCB ${label}`;
+        btn.addEventListener('click', () => {
+            navigator.clipboard.writeText(getFasta()).then(() => {
+                btn.classList.add('copied');
+                btn.textContent = '\u2713 Copied!';
+                setTimeout(() => { btn.classList.remove('copied'); btn.textContent = `\uD83D\uDCCB ${label}`; }, 1800);
+            });
+        });
+        return btn;
+    };
+
+    const regionSeq = hsp.strand === '-'
+        ? _rcStr((hit.seq || '').substring(hsp.hitStart - 1, hsp.hitEnd))
+        : (hit.seq || '').substring(hsp.hitStart - 1, hsp.hitEnd);
+    const regionHeader = `${hit.def || hit.id}:${hsp.hitStart}-${hsp.hitEnd}${hsp.strand === '-' ? '(rc)' : ''}`;
+
+    actions.appendChild(makeBtn('Copy region FASTA', () => `>${regionHeader}\n${regionSeq}`));
+    actions.appendChild(makeBtn('Copy full seq FASTA', () => `>${hit.def || hit.id}\n${hit.seq || ''}`));
+    div.appendChild(actions);
+
+    // Stats
+    const stats = document.createElement('div');
+    stats.className = 'blast-hit-stats';
+    const strandLabel = hsp.strand === '-' ? 'Plus/Minus' : 'Plus/Plus';
+    const strandClass = hsp.strand === '-' ? 'stat-strand-minus' : 'stat-strand-plus';
+    const evalueStr = (typeof hsp.evalue === 'number')
+        ? (hsp.evalue < 0.001 ? hsp.evalue.toExponential(2) : hsp.evalue.toFixed(4))
+        : 'n/a';
+    stats.innerHTML =
+        `Score = ${hsp.bitScore} bits (${Math.round(hsp.score * 10) / 10})&nbsp;&nbsp; ` +
+        `E-value = ${evalueStr}&nbsp;&nbsp; ` +
+        `Identity = ${hsp.identity}/${hsp.alignLen} (${hsp.percent}%)&nbsp;&nbsp; ` +
+        `Gaps = ${hsp.gaps}/${hsp.alignLen}<br>` +
+        `Strand = <span class="${strandClass}">${strandLabel}</span>&nbsp;&nbsp; ` +
+        `Query: ${hsp.queryStart}..${hsp.queryEnd} of ${queryLen} nt &rarr; ` +
+        `Subject: ${hsp.strand === '-' ? `${hsp.hitEnd}..${hsp.hitStart}` : `${hsp.hitStart}..${hsp.hitEnd}`} of ${hit.length} nt`;
+    div.appendChild(stats);
+
+    // Alignment blocks
+    const pre = document.createElement('pre');
+    pre.className = 'blast-alignment-block';
+    let alnText = '';
+    // Plus/Minus (as in BLAST): the query reads along its plus strand and the subject is shown
+    // reverse-complemented beside it, so the subject's positions count down
+    const sStep = hsp.strand === '-' ? -1 : 1;
+    let qPos = hsp.queryStart;
+    let sPos = sStep < 0 ? hsp.hitEnd : hsp.hitStart;
+    const numW = Math.max(String(hsp.queryEnd).length, String(hsp.hitEnd).length, 1);
+    for (let i = 0; i < hsp.querySeq.length; i += W) {
+        const qBlock = hsp.querySeq.substring(i, i + W);
+        const mBlock = hsp.midline.substring(i, i + W);
+        const sBlock = hsp.hitSeq.substring(i, i + W);
+        const qAdv = qBlock.replace(/-/g, '').length;
+        const sAdv = sBlock.replace(/-/g, '').length;
+        const qEnd = qPos + qAdv - 1;
+        const sEnd = sPos + sStep * (sAdv - 1);
+        const pad = ' '.repeat(7 + numW + 2);
+        alnText += `Query  ${String(qPos).padStart(numW)}  ${qBlock}  ${qEnd}\n`;
+        alnText += `${pad}${mBlock}\n`;
+        alnText += `Sbjct  ${String(sPos).padStart(numW)}  ${sBlock}  ${sEnd}\n\n`;
+        qPos = qEnd + 1;
+        sPos = sEnd + sStep;
+    }
+    pre.textContent = alnText;
+    div.appendChild(pre);
+
+    return div;
+}
+
+// Score color follows NCBI BLAST's conventional bit-score bands as GRADIENT
+// STOPS (>=200 red, 80-200 pink/magenta, 50-80 green, 40-50 blue, <40 black)
+// rather than flat discrete buckets — bitScore is linearly interpolated
+// between whichever two stops it falls between, so two hits with close but
+// different scores get visibly different (not identical) bar colors.
+// Exact hex values are a reasonable approximation tuned for contrast on a
+// white background, not pixel-verified against NCBI's own stylesheet.
+const _BLAST_SCORE_GRADIENT_STOPS = [
+    { at: 0,   rgb: [0x1A, 0x1A, 0x1A] }, // black,  <40
+    { at: 40,  rgb: [0x00, 0x50, 0xD0] }, // blue,   40-50
+    { at: 50,  rgb: [0x00, 0x7A, 0x00] }, // green,  50-80
+    { at: 80,  rgb: [0xC8, 0x00, 0xC8] }, // magenta,80-200
+    { at: 200, rgb: [0xE4, 0x00, 0x00] }, // red,    >=200
+];
+function _blastScoreTierColor(bitScore) {
+    const stops = _BLAST_SCORE_GRADIENT_STOPS;
+    if (bitScore <= stops[0].at) return `rgb(${stops[0].rgb.join(',')})`;
+    if (bitScore >= stops[stops.length - 1].at) return `rgb(${stops[stops.length - 1].rgb.join(',')})`;
+    for (let i = 0; i < stops.length - 1; i++) {
+        const a = stops[i], b = stops[i + 1];
+        if (bitScore >= a.at && bitScore <= b.at) {
+            const t = (bitScore - a.at) / (b.at - a.at);
+            const rgb = a.rgb.map((c, k) => Math.round(c + (b.rgb[k] - c) * t));
+            return `rgb(${rgb.join(',')})`;
+        }
+    }
+    return `rgb(${stops[stops.length - 1].rgb.join(',')})`; // unreachable, defensive
+}
+
+// Per-base identity gradient for one hit's bar, built from the real aligned
+// querySeq/hitSeq (not just an overall score tier) -- user-requested
+// 2026-09-19: the bar should visibly show WHERE along the hit it diverges,
+// not render as one uniform color end to end.
+//
+// Walks only alignment columns that consume a QUERY position (querySeq[k] !=
+// '-'), since the bar's left/width are laid out in query coordinates -- an
+// insertion-in-subject column (gap in querySeq) takes zero query-axis width
+// and is skipped rather than drawn. A deletion-in-subject column (gap in
+// hitSeq) still consumes one query base and renders as its own 'gap' tier,
+// distinct from mismatch. Consecutive same-state columns are collapsed into
+// one gradient stop pair instead of one per base, keeping the CSS string
+// short even for long alignments.
+//
+// Case-insensitive match comparison -- matches the fix to the search
+// scoring itself (2026-09-19): querySeq/hitSeq can carry either case
+// (this toolchain's own convention lowercases flanking bases), and a
+// same-base-different-case column must count as identity here too, not
+// display as a false mismatch.
+function _buildHitIdentityGradient(hsp) {
+    const q = hsp.querySeq, s = hsp.hitSeq;
+    if (!q || !s || q.length !== s.length) return null;
+    const TIER_COLOR = { match: '#1b7a1b', mismatch: '#d1483a', gap: '#c9c9c9' };
+    const states = [];
+    for (let k = 0; k < q.length; k++) {
+        if (q[k] === '-') continue; // insertion in subject: no query-axis width
+        if (s[k] === '-') states.push('gap');
+        else states.push(q[k].toUpperCase() === s[k].toUpperCase() ? 'match' : 'mismatch');
+    }
+    const n = states.length;
+    if (n === 0) return null;
+    const stops = [];
+    let i = 0;
+    while (i < n) {
+        let j = i;
+        while (j < n && states[j] === states[i]) j++;
+        const color = TIER_COLOR[states[i]];
+        stops.push(`${color} ${(i / n * 100).toFixed(2)}%`, `${color} ${(j / n * 100).toFixed(2)}%`);
+        i = j;
+    }
+    return `linear-gradient(to right, ${stops.join(', ')})`;
+}
+
+// Graphical hit-distribution diagram: one thin horizontal bar per hit,
+// positioned/sized by its query span, colored by score tier, on a ruler
+// spanning the full query length — the one genuinely "graphical" element
+// real NCBI BLAST's web output is known for, that a plain summary table
+// doesn't give you (added 2026-08-24, user-requested; existing summary
+// table/alignment-block layout intentionally left untouched).
+// Single shared tooltip element for the hit-distribution diagram, created
+// once and reused across every bar/database tab — appended to <body> with
+// position:fixed so it's never clipped by the diagram's own scrollable
+// container (see the fix note where it's used, below).
+let _blastHitTooltipEl = null;
+function _getBlastHitTooltipEl() {
+    if (!_blastHitTooltipEl) {
+        _blastHitTooltipEl = document.createElement('div');
+        _blastHitTooltipEl.className = 'blast-hitdist-tooltip';
+        document.body.appendChild(_blastHitTooltipEl);
+    }
+    return _blastHitTooltipEl;
+}
+function _showBlastHitTooltip(html, e) {
+    const tip = _getBlastHitTooltipEl();
+    tip.innerHTML = html;
+    tip.style.display = 'block';
+    _moveBlastHitTooltip(e);
+}
+function _moveBlastHitTooltip(e) {
+    const tip = _getBlastHitTooltipEl();
+    if (tip.style.display !== 'block') return;
+    const pad = 12;
+    let x = e.clientX + pad, y = e.clientY + pad;
+    // Measure after making visible-but-positioned so offsetWidth/Height are
+    // real, then clamp to the viewport so it can never render off-screen.
+    tip.style.left = x + 'px';
+    tip.style.top = y + 'px';
+    const rect = tip.getBoundingClientRect();
+    if (rect.right > window.innerWidth) x = window.innerWidth - rect.width - pad;
+    if (rect.bottom > window.innerHeight) y = e.clientY - rect.height - pad;
+    tip.style.left = Math.max(pad, x) + 'px';
+    tip.style.top = Math.max(pad, y) + 'px';
+}
+function _hideBlastHitTooltip() {
+    if (_blastHitTooltipEl) _blastHitTooltipEl.style.display = 'none';
+}
+
+// "Nice" tick step for a ruler spanning `len` units — same 1/2/5 x 10^n
+// progression genome browsers and chart libraries use so labels land on
+// round numbers (10, 20, 50, 100, 200, 500, ...) instead of awkward
+// fractions of the query length.
+function _niceTickStep(len, targetTicks) {
+    const raw = len / targetTicks;
+    const mag = Math.pow(10, Math.floor(Math.log10(raw)));
+    const norm = raw / mag;
+    const step = norm < 1.5 ? 1 : norm < 3.5 ? 2 : norm < 7.5 ? 5 : 10;
+    return step * mag;
+}
+
+function buildHitDistributionDiagram(hits, queryLen, onHitClick) {
+    const wrap = document.createElement('div');
+    wrap.className = 'blast-hitdist';
+
+    const track = document.createElement('div');
+    track.className = 'blast-hitdist-track';
+    const W = 100; // percentage-based layout, scales with the pane's own width
+
+    // Ruler: interior tick marks + position labels every "nice" step (not
+    // just the two endpoints), so a hit's approximate query position can be
+    // read directly off the diagram instead of only inferred from bar
+    // position relative to the far edges.
+    const ruler = document.createElement('div');
+    ruler.className = 'blast-hitdist-ruler';
+    const step = _niceTickStep(queryLen, 6);
+    let rulerHtml = `<span class="tick-left">1</span><span class="tick-right">${queryLen} nt</span>`;
+    for (let pos = step; pos < queryLen - step * 0.4; pos += step) {
+        const pct = (pos / queryLen) * W;
+        rulerHtml += `<span class="tick-mid" style="left:${pct}%">${Math.round(pos)}</span>`;
+    }
+    ruler.innerHTML = rulerHtml;
+    track.appendChild(ruler);
+
+    hits.forEach((hit, hi) => {
+        const hsp = hit.hsps[0];
+        const s0 = Math.min(hsp.queryStart, hsp.queryEnd);
+        const s1 = Math.max(hsp.queryStart, hsp.queryEnd);
+        const leftPct = ((s0 - 1) / queryLen) * W;
+        const widthPct = Math.max(0.8, ((s1 - s0 + 1) / queryLen) * W); // min width so short spans stay visible/clickable
+
+        const row = document.createElement('div');
+        row.className = 'blast-hitdist-row';
+        const bar = document.createElement('div');
+        bar.className = 'blast-hitdist-bar';
+        bar.style.left = leftPct + '%';
+        bar.style.width = widthPct + '%';
+        // Per-base identity gradient where the alignment strings allow it
+        // (the normal case); falls back to the flat score-tier color for
+        // any hit missing querySeq/hitSeq rather than rendering blank.
+        bar.style.background = _buildHitIdentityGradient(hsp) || _blastScoreTierColor(hsp.bitScore);
+        bar.tabIndex = 0;
+        bar.setAttribute('role', 'button');
+        bar.setAttribute('aria-label', `Hit ${hi + 1}: ${hit.id}, score ${hsp.bitScore} bits, e-value ${hsp.evalue}`);
+
+        // Tooltip content only — NOT appended as a child of `bar`. A tooltip
+        // nested inside .blast-hitdist-section (which scrolls, and can sit
+        // near the top of its own bounded box) gets silently clipped by the
+        // ancestor's overflow:auto the moment it would render above/outside
+        // that box (this is exactly what happened before this fix — visible
+        // in a screenshot as a tooltip cut off mid-render). Using ONE shared
+        // tooltip element appended to <body> and positioned via mouse
+        // coordinates in `position:fixed` (viewport-relative, immune to any
+        // ancestor's overflow/scroll clipping) fixes this regardless of
+        // where the hovered bar sits in its scroll container.
+        const evalueStr = (typeof hsp.evalue === 'number')
+            ? (hsp.evalue < 0.001 ? hsp.evalue.toExponential(2) : hsp.evalue.toFixed(4)) : 'n/a';
+        const tipHtml = `<b>${_escapeHtml((hit.def || hit.id).substring(0, 60))}</b><br>` +
+            `score = ${hsp.bitScore} bits &nbsp; e-value = ${evalueStr}<br>` +
+            `Q ${hsp.queryStart}..${hsp.queryEnd} (${hsp.strand === '-' ? 'Plus/Minus' : 'Plus/Plus'})`;
+        bar.addEventListener('mouseenter', (e) => _showBlastHitTooltip(tipHtml, e));
+        bar.addEventListener('mousemove', (e) => _moveBlastHitTooltip(e));
+        bar.addEventListener('mouseleave', _hideBlastHitTooltip);
+        bar.addEventListener('focus', (e) => _showBlastHitTooltip(tipHtml, { clientX: bar.getBoundingClientRect().left, clientY: bar.getBoundingClientRect().top }));
+        bar.addEventListener('blur', _hideBlastHitTooltip);
+
+        const activate = () => onHitClick(hi);
+        bar.addEventListener('click', activate);
+        bar.addEventListener('keydown', e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); activate(); } });
+
+        row.appendChild(bar);
+        track.appendChild(row);
+    });
+
+    wrap.appendChild(track);
+    return wrap;
+}
+
+function displayBlastResults(queryName, queryLen, results) {
+    if (blastResultsModal) {
+        blastResultsModal.remove();
+        blastResultsModal = null;
+    }
+
+    const overlay = document.createElement('div');
+    overlay.className = 'blast-results-modal-backdrop';
+
+    const dialog = document.createElement('div');
+    dialog.className = 'blast-results-dialog-text';
+    dialog.id = 'blastResultsDialog';
+
+    // ---- Title bar ----
+    const titleBar = document.createElement('div');
+    titleBar.className = 'blast-text-title-bar';
+    titleBar.id = 'blastResultsTitleBar';
+    const titleEl = document.createElement('span');
+    titleEl.textContent = `BLAST Results \u2014 ${queryName}  (${queryLen} nt)`;
+    titleEl.style.fontWeight = 'bold';
+    titleEl.style.fontSize = '13px';
+    const closeBtn = document.createElement('button');
+    closeBtn.textContent = '\u00d7';
+    closeBtn.title = 'Close';
+    closeBtn.className = 'blast-close-btn';
+    closeBtn.onclick = () => { overlay.remove(); blastResultsModal = null; };
+    titleBar.appendChild(titleEl);
+    titleBar.appendChild(closeBtn);
+    dialog.appendChild(titleBar);
+
+    // Wraps tab bar + panes as one unit so the drag/resize/minimize helper
+    // (makeModalDraggableResizable) has a single "content" element to hide
+    // when minimized, without touching the title bar.
+    const contentWrap = document.createElement('div');
+    contentWrap.id = 'blastResultsContentWrap';
+    contentWrap.style.cssText = 'display:flex;flex-direction:column;flex:1;min-height:0;overflow:hidden;';
+    dialog.appendChild(contentWrap);
+
+    // ---- Tab bar ----
+    const tabBar = document.createElement('div');
+    tabBar.className = 'blast-tab-bar';
+    const panes = [];
+
+    const dbNames = Object.keys(results);
+
+    for (let di = 0; di < dbNames.length; di++) {
+        const dbName = dbNames[di];
+        const dbResults = results[dbName];
+        const hits = dbResults.hits || [];
+
+        // Tab button
+        const tab = document.createElement('button');
+        tab.className = 'blast-tab-btn' + (di === 0 ? ' active' : '');
+        tab.textContent = `${dbName}  (${dbResults.error ? 'error' : hits.length + ' hits'})`;
+        tabBar.appendChild(tab);
+
+        // Pane
+        const pane = document.createElement('div');
+        pane.className = 'blast-pane' + (di === 0 ? ' active' : '');
+
+        if (dbResults.error) {
+            const errPre = document.createElement('pre');
+            errPre.className = 'blast-text-content';
+            errPre.textContent = `Error searching ${dbName}:\n${dbResults.error}`;
+            pane.appendChild(errPre);
+        } else if (hits.length === 0) {
+            const noPre = document.createElement('pre');
+            noPre.className = 'blast-text-content';
+            noPre.textContent = `No significant hits found in ${dbName}.`;
+            pane.appendChild(noPre);
+        } else {
+            // --- Graphical hit-distribution diagram: its own independently-
+            // scrollable pane, separate from the summary table below, so a
+            // database with many hits doesn't have the diagram and the table
+            // fight each other for the same bounded scroll area.
+            const highlightRow = (hi) => {
+                const row = pane.querySelector(`tr[data-hit-index="${hi}"]`);
+                if (!row) return;
+                row.scrollIntoView({ block: 'nearest' });
+                row.classList.add('blast-row-flash');
+                setTimeout(() => row.classList.remove('blast-row-flash'), 1500);
+                const target = hitsSection.querySelector(`#blast-hit-${di}-${hi}`);
+                if (target) hitsSection.scrollTop = target.offsetTop;
+            };
+            const diagramSection = document.createElement('div');
+            diagramSection.className = 'blast-hitdist-section';
+            diagramSection.appendChild(buildHitDistributionDiagram(hits, queryLen, highlightRow));
+            pane.appendChild(diagramSection);
+
+            // --- Summary section ---
+            const summarySection = document.createElement('div');
+            summarySection.className = 'blast-summary-section';
+
+            const table = document.createElement('table');
+            table.className = 'blast-summary-table';
+            table.innerHTML = `<thead><tr>
+                <th>#</th><th>Score</th><th>Ident%</th><th>Align</th>
+                <th>Q range</th><th>S range</th><th>S len</th><th>Strand</th><th class="desc">Description</th>
+            </tr></thead>`;
+            const tbody = document.createElement('tbody');
+            hits.forEach((hit, hi) => {
+                const hsp = hit.hsps[0];
+                const tr = document.createElement('tr');
+                tr.className = 'blast-summary-row';
+                tr.dataset.hitIndex = hi;
+                const strandCls = hsp.strand === '-' ? 'strand-minus' : 'strand-plus';
+                const strandTxt = hsp.strand === '-' ? 'Plus/Minus' : 'Plus/Plus';
+                tr.innerHTML = `
+                    <td>${hi + 1}</td>
+                    <td>${hsp.bitScore}</td>
+                    <td>${hsp.percent}%</td>
+                    <td>${hsp.alignLen}</td>
+                    <td>${hsp.queryStart}..${hsp.queryEnd}</td>
+                    <td>${hsp.strand === '-' ? `${hsp.hitEnd}..${hsp.hitStart}` : `${hsp.hitStart}..${hsp.hitEnd}`}</td>
+                    <td>${hit.length}</td>
+                    <td class="${strandCls}">${strandTxt}</td>
+                    <td class="desc">${_escapeHtml((hit.def || hit.id).substring(0, 80))}</td>`;
+                tr.addEventListener('click', () => {
+                    const target = hitsSection.querySelector(`#blast-hit-${di}-${hi}`);
+                    if (target) hitsSection.scrollTop = target.offsetTop;
+                });
+                tbody.appendChild(tr);
+            });
+            table.appendChild(tbody);
+            summarySection.appendChild(table);
+            pane.appendChild(summarySection);
+
+            // --- Hits section ---
+            const hitsSection = document.createElement('div');
+            hitsSection.className = 'blast-hits-section';
+            hits.forEach((hit, hi) => {
+                hitsSection.appendChild(buildBlastHitElement(hit, hi, di, queryLen));
+            });
+            pane.appendChild(hitsSection);
+        }
+
+        contentWrap.appendChild(pane);
+        panes.push(pane);
+
+        tab.addEventListener('click', () => {
+            tabBar.querySelectorAll('.blast-tab-btn').forEach(t => t.classList.remove('active'));
+            panes.forEach(p => p.classList.remove('active'));
+            tab.classList.add('active');
+            pane.classList.add('active');
+        });
+    }
+
+    contentWrap.insertBefore(tabBar, panes[0]);
+    overlay.appendChild(dialog);
+    document.body.appendChild(overlay);
+    blastResultsModal = overlay;
+
+    overlay.addEventListener('click', e => {
+        if (e.target === overlay) { overlay.remove(); blastResultsModal = null; }
+    });
+
+    // Draggable/resizable/minimizable, same reusable helper clusteringModal
+    // uses — user-requested, since a fixed 92vw x 82vh dialog didn't leave
+    // room to adjust for a database with many long alignment blocks.
+    makeModalDraggableResizable('blastResultsDialog', 'blastResultsTitleBar', 'blastResultsContentWrap');
+}
+

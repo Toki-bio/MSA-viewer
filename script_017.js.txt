@@ -1,0 +1,496 @@
+[script.js lines 7084-7578 of ViewAlign fd8b8e4]
+            // canvas's last device row (the tip of a '4' at 1.5x), so a full redraw leaves that row
+            // white while the copy brings the tip in from a frame where the text was further inside.
+            // Redraw the lines within 2 CSS px of that edge (a name's descender hangs about a pixel
+            // below its row) as a full redraw draws them.
+            if (dxDev > 0 && !fixed) drawClipped(0, 0, colEdgeDev(1, false), H);
+            else if (dxDev < 0) drawClipped(colEdgeDev(W - 1, true), 0, W, H);
+            else if (dyDev > 0) drawClipped(0, 0, W, rowEdgeDev(Math.ceil(2 * dpr), false));
+            else if (dyDev < 0) drawClipped(0, rowEdgeDev(H - Math.ceil(2 * dpr), true), W, H);
+            // When NAME_W * dpr is not whole, the device pixel column the name edge falls into
+            // holds both name backing and content: redraw it.
+            const edge = Math.floor(NAME_W * dpr);
+            if (fixed && edge !== fixed) drawClipped(edge, 0, fixed, H);
+            _canvasState.stats.blit++;
+            _canvasState.stats.blitMs.push(performance.now() - t0);
+        } else {
+            clearWhite(ctx, 0, 0, w, h);
+            drawArea(ox, oy, w, h, 0, 0, w, h);
+            _canvasState.stats.full++;
+            _canvasState.stats.fullMs.push(performance.now() - t0);
+        }
+        drawOverlay(ox, oy, w, h);
+        if (_canvasState.stats.fullMs.length > 64) _canvasState.stats.fullMs.shift();
+        if (_canvasState.stats.blitMs.length > 64) _canvasState.stats.blitMs.shift();
+        _canvasState.stats.lastDrawMs = performance.now() - t0;
+        // Canvas mode has no native scrollable DOM node, so notify the
+        // persistent horizontal scrollbar to mirror our internal pan offset.
+        _canvasState.onOffsetChange?.();
+    }
+    // An edit changed rows r0..r1 and columns c0..c1 (typing: one row, one column): redraw
+    // the row band and the column band (and the consensus band) now, nothing else, and
+    // accept the new state as drawn so the next scroll step can still copy the frame.
+    _canvasState.redrawCells = (r0, r1, c0, c1) => {
+        if (drawRaf || _dirty) return;                      // a full draw is coming anyway
+        const w = _cssW(), h = _cssH();
+        const ox = _canvasState.offsetX, oy = _canvasState.offsetY, W = canvas.width, H = canvas.height;
+        const clipDraw = (x0, y0, x1, y1) => {
+            x0 = Math.max(0, Math.round(x0 * dpr)); y0 = Math.max(0, Math.round(y0 * dpr)); x1 = Math.min(W, Math.round(x1 * dpr)); y1 = Math.min(H, Math.round(y1 * dpr));
+            if (x1 <= x0 || y1 <= y0) return;
+            ctx.save();
+            ctx.setTransform(1, 0, 0, 1, 0, 0);
+            ctx.beginPath(); ctx.rect(x0, y0, x1 - x0, y1 - y0); ctx.clip();
+            ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+            clearWhite(ctx, 0, 0, w, h);
+            drawArea(ox, oy, w, h, x0 / dpr, y0 / dpr, x1 / dpr, y1 / dpr);
+            ctx.restore();
+        };
+        let s0 = c0, s1 = c1;
+        if (slotOf) {   // hidden columns have no slot; repaint the band of the shown ones
+            s0 = Infinity; s1 = -1;
+            for (let c = Math.max(0, c0); c <= Math.min(len - 1, c1); c++) { const sc = slotOf[c]; if (sc >= 0) { if (sc < s0) s0 = sc; if (sc > s1) s1 = sc; } }
+        }
+        if (!blockLayout) {
+            clipDraw(0, HEADER_H + r0 * rowPitch - oy, w, HEADER_H + (r1 + 1) * rowPitch - oy);
+            if (s1 >= s0) clipDraw(NAME_W + s0 * CHAR_W - ox, 0, NAME_W + (s1 + 1) * CHAR_W - ox, h);
+            if (consInfo) { const consY = consTop ? TRACK_H + SCALE_H - oy : HEADER_H + nSeqs * rowPitch - oy; clipDraw(0, consY, w, consY + CONS_H); }
+        } else {
+            // Block: the same three repaints in every band in view - the rows (an insertion shifts the
+            // rest of the row, which runs on through the later bands), the changed slots where they are
+            // (their band only) and the consensus row of each band
+            forBands(oy, 0, h, (b, top) => {
+                const p = bandPitch[b], right = bandRight(b), b0 = bandSlot0(b);
+                clipDraw(0, top + HEADER_H + r0 * p, right, top + HEADER_H + (r1 + 1) * p);
+                const a = Math.max(s0, b0), z = Math.min(s1, bandSlot1(b) - 1);
+                if (z >= a) clipDraw(NAME_W + (a - b0) * CHAR_W, top, NAME_W + (z + 1 - b0) * CHAR_W, top + bandBody[b]);
+                if (consInfo) { const consY = top + (consTop ? TRACK_H + SCALE_H : HEADER_H + nSeqs * p); clipDraw(0, consY, right, consY + CONS_H); }
+            });
+        }
+        _canvasState.stats.cells = (_canvasState.stats.cells || 0) + 1;
+        _lastSig = contentSig();
+        drawOverlay(ox, oy, w, h);
+    };
+
+    // The overlay layer: selections, the pending/edit cell and the row drag indicator, in
+    // content coordinates. Cleared and redrawn whole; a few fills, under a millisecond.
+    // The bands that intersect the viewport rows [cy0, cy1): calls f(b, top) with the band's view y
+    function forBands(oy, cy0, cy1, f) {
+        const b0 = bandAt(oy + cy0), b1 = bandAt(oy + cy1 - 1e-6);
+        for (let b = b0; b <= b1; b++) f(b, bandTop[b] - oy);
+    }
+    // drawRegion through the layout: the strip as is, or each band as a strip with its own virtual offsets,
+    // clipped to the band's rectangle (the gap between bands stays white)
+    function drawArea(ox, oy, w, h, cx0, cy0, cx1, cy1) {
+        if (!blockLayout) return drawRegion(ox, oy, w, h, cx0, cy0, cx1, cy1);
+        forBands(oy, cy0, cy1, (b, top) => {
+            const y0 = Math.max(cy0, top), y1 = Math.min(cy1, top + bandBody[b]), right = Math.min(cx1, bandRight(b));
+            if (y1 <= y0 || right <= cx0) return;
+            ctx.save();
+            ctx.beginPath(); ctx.rect(0, top, bandRight(b), bandBody[b]); ctx.clip();
+            setBand(b);
+            drawRegion(_bS0 * CHAR_W, oy - bandTop[b], w, h, cx0, y0, right, y1);
+            ctx.restore();
+        });
+        clearBand();
+    }
+    // Show 2D: the block mask rectangles depend only on the row pitch: made once per overlay draw for
+    // each pitch the bands in view use (they were made again for every band). _canvasState.maskRects
+    // (their click and tooltip) are the strip's, at basePitch.
+    let _maskByPitch = null;
+    const maskRectsFor = p => {
+        if (!state.blockMask) return null;
+        if (!_maskByPitch) _maskByPitch = new Map();
+        let r = _maskByPitch.get(p);
+        if (!r) { r = _canvasBlockMaskRects(CHAR_W, p, nSeqs, posSlot); _maskByPitch.set(p, r); _canvasState.maskRectsMade = (_canvasState.maskRectsMade || 0) + 1; }
+        return r;
+    };
+    // The selected columns' slots: made once per overlay draw (Block drew them again for every band
+    // in view, each pass over every selected column; GLM audit cblk #27)
+    let _selSlots = null;
+    const selSlotsOf = () => {
+        if (!_selSlots) {
+            const slotsSel = new Set(), colOfSlot = new Map();
+            state.selectedColumns.forEach(pos => { const sc = posSlot(pos); if (sc >= 0) { slotsSel.add(sc); colOfSlot.set(sc, pos); } });
+            _selSlots = { sorted: Array.from(slotsSel).sort((a, b) => a - b), colOfSlot };
+        }
+        return _selSlots;
+    };
+    // The mask's rectangles are kept from one paint to the next (a scroll step made them all again: ~10 ms a frame
+    // with 2000 2D blocks; GLM audit cb34 #28) until the mask, its opacity or the rows (order, names) change. The
+    // columns' slots, the cell size and the row count are this render's.
+    let _maskKey = null;
+    const maskStale = () => {
+        const k = _maskKey, seqs = state.seqs;
+        if (!k || k.mask !== state.blockMask || k.op !== _blockMaskOpacity || k.headers.length !== seqs.length) return true;
+        for (let i = 0; i < seqs.length; i++) if (k.headers[i] !== seqs[i].header) return true;
+        return false;
+    };
+    function drawOverlay(ox, oy, w, h) {
+        if (maskStale()) {
+            _maskByPitch = null;
+            _maskKey = state.blockMask ? { mask: state.blockMask, op: _blockMaskOpacity, headers: state.seqs.map(q => q.header) } : null;
+        }
+        _selSlots = null;
+        _canvasState.maskRects = maskRectsFor(basePitch);
+        if (!blockLayout) return drawOverlayStrip(ox, oy, w, h);
+        octx.clearRect(0, 0, w, h);
+        forBands(oy, 0, h, (b, top) => {
+            octx.save();
+            octx.beginPath(); octx.rect(0, top, bandRight(b), bandBody[b]); octx.clip();
+            setBand(b);
+            drawOverlayStrip(bandSlot0(b) * CHAR_W, oy - bandTop[b], w, h, true);
+            octx.restore();
+        });
+        clearBand();
+    }
+    function drawOverlayStrip(ox, oy, w, h, noClear) {
+        if (!noClear) octx.clearRect(0, 0, w, h);
+        // Row reorder in progress: tint the dragged names, draw the drop bar in the name column
+        const rd = _canvasState.rowDrag;
+        if (rd && rd.started) {
+            const nx = stickyNames ? 0 : -ox;
+            octx.fillStyle = 'rgba(25, 118, 210, 0.18)';
+            for (const r of _getDraggedIndices(rd.from)) {
+                const y = HEADER_H + r * rowPitch - oy;
+                if (y + rowPitch >= 0 && y <= h) octx.fillRect(nx, y, NAME_W, CHAR_H);
+            }
+            if (rd.target >= 0) {
+                const y = HEADER_H + (rd.target + (rd.above ? 0 : 1)) * rowPitch - oy;
+                octx.fillStyle = '#1976D2';
+                octx.fillRect(nx + 6, y - 1, NAME_W - 12, 2);
+            }
+        }
+
+        // Marks on residues stay in the data area: with fixed names, a cell scrolled left of the name column's
+        // edge is hidden under the names, not drawn over them (owner's report)
+        const clipData = () => { octx.save(); if (stickyNames) { octx.beginPath(); octx.rect(NAME_W, 0, Math.max(0, w - NAME_W), h); octx.clip(); } };
+        clipData();
+        // Show 2D: the block mask rectangles (DOM: .block-mask-layer SVG), kept for hit-testing
+        const maskRects = maskRectsFor(rowPitch);
+        if (maskRects && maskRects.length) {
+            for (const r of maskRects) {
+                const x = NAME_W + r.x - ox, y = HEADER_H + r.y - oy;
+                if (x + r.w < 0 || x > w || y + r.h < 0 || y > h) continue;
+                octx.globalAlpha = r.op;
+                octx.fillStyle = r.fill;
+                octx.fillRect(x, y, Math.max(0.5, r.w), Math.max(1, r.h));
+                octx.globalAlpha = 0.95;
+                octx.strokeStyle = r.dashed && !r.localOnly ? '#c0392b' : r.fill;
+                octx.lineWidth = r.localOnly ? 2 : 1;
+                octx.setLineDash(r.localOnly ? [4, 3] : (r.dashed ? [3, 2] : []));
+                octx.strokeRect(x + 0.5, y + 0.5, Math.max(0.5, r.w) - 1, Math.max(1, r.h) - 1);
+            }
+            octx.setLineDash([]);
+            octx.globalAlpha = 1;
+        }
+
+        // Highlight selected columns (semi-transparent vertical strips)
+        // A tint alone vanished over black shading (owner 2026-10-28): each run of selected columns also has a
+        // bright line down its left and right edge (Full/Block: .col-sel-l / .col-sel-r)
+        if (state.selectedColumns.size > 0) {
+            const dataTop = Math.max(0, HEADER_H - oy);
+            const dataBottom = Math.min(h, HEADER_H + nSeqs * rowPitch - oy);   // rowPitch: translation rows included
+            const { sorted, colOfSlot } = selSlotsOf();
+            // only the slots in view (a band's, in Block): from the first one at x >= -CHAR_W
+            let lo = 0, hi = sorted.length;
+            const sMin = (ox - NAME_W - CHAR_W) / CHAR_W;
+            while (lo < hi) { const mid = (lo + hi) >> 1; if (sorted[mid] < sMin) lo = mid + 1; else hi = mid; }
+            const inView = [];
+            for (let i = lo; i < sorted.length; i++) {
+                const sc = sorted[i], x = NAME_W + sc * CHAR_W - ox;
+                if (x > w) break;
+                if (x + CHAR_W >= 0) inView.push(sc);
+            }
+            const selC = state.selectedColumns;
+            octx.fillStyle = 'rgba(25, 118, 210, 0.28)';
+            inView.forEach(sc => {
+                const x = NAME_W + sc * CHAR_W - ox;
+                octx.fillRect(x, dataTop, CHAR_W, dataBottom - dataTop);
+            });
+            octx.fillStyle = COL_SEL_EDGE;
+            const lw = Math.max(1.5, 2 / dpr);
+            inView.forEach(sc => {
+                const x = NAME_W + sc * CHAR_W - ox;
+                if (x + CHAR_W < 0 || x > w) return;
+                const pc = colOfSlot.get(sc);   // by column, as Full/Block: a hidden column in between ends the run
+                if (!selC.has(pc - 1)) octx.fillRect(x, dataTop, lw, dataBottom - dataTop);
+                if (!selC.has(pc + 1)) octx.fillRect(x + CHAR_W - lw, dataTop, lw, dataBottom - dataTop);
+            });
+        }
+
+        octx.restore();
+        // Highlight selected rows (semi-transparent horizontal strips; same tint as the DOM)
+        if (state.selectedRows.size > 0) {
+            octx.fillStyle = 'rgba(40, 167, 69, 0.30)';
+            state.selectedRows.forEach(rowIdx => {
+                const y = HEADER_H +rowIdx * rowPitch - oy;
+                if (y + rowPitch < 0 || y > h) return;
+                octx.fillRect(0, y, w, rowPitch);
+            });
+        }
+        // The row a context menu is open for: Full's .seq-line.context-menu-highlight (gold tint and
+        // outline). Canvas and Block drew nothing, so the menu's row was not marked (GLM audit cblk #13)
+        if (contextMenu && contextMenuHighlightedRow !== null && contextMenuHighlightedRow < nSeqs) {
+            const y = HEADER_H + contextMenuHighlightedRow * rowPitch - oy;
+            if (y + rowPitch >= 0 && y <= h) {
+                octx.fillStyle = 'rgba(255, 215, 0, 0.2)';
+                octx.fillRect(0, y, w, rowPitch);
+                octx.fillStyle = 'rgba(255, 215, 0, 0.5)';   // its upper and lower edge (a band clips the sides)
+                octx.fillRect(0, y, w, 2);
+                octx.fillRect(0, y + rowPitch - 2, w, 2);
+            }
+        }
+
+        clipData();
+        // Highlight selected nucleotides: the same yellow tint and brown frame as the DOM's .nuc-selected
+        // (styles.css); Canvas used to draw them blue, so a selection changed colour with the view (GLM audit, v278)
+        if (state.selectedNucs.size > 0) {
+            octx.fillStyle = 'rgba(255, 213, 0, 0.55)';
+            octx.strokeStyle = 'rgba(140, 100, 0, 0.9)';
+            octx.lineWidth = 1;
+            state.selectedNucs.forEach((posSet, rowIdx) => {
+                if (!posSet || posSet.size === 0) return;
+                // the consensus row (Full/Block paint its selected cells; copy and clustering use them)
+                if (rowIdx < 0 && (rowIdx !== CONSENSUS_ROW_INDEX || !consInfo)) return;
+                const y = rowIdx < 0 ? (consTop ? TRACK_H + SCALE_H - oy : HEADER_H + nSeqs * rowPitch - oy + CONS_GAP) : HEADER_H + rowIdx * rowPitch - oy;
+                if (y + CHAR_H < 0 || y > h) return;
+                // one tint and one frame per run of shown cells (a box per cell drew borders between them)
+                // a run = consecutive shown slots AND consecutive alignment positions: a hidden column (Variable
+                // sites only) breaks it, as it does in Full/Block where the hidden cell is not on the page
+                const cells = [];
+                posSet.forEach(pos => { const sc = posSlot(pos); if (sc >= 0) cells.push([sc, pos]); });
+                cells.sort((a, b) => a[0] - b[0]);
+                const slots = cells.map(c => c[0]);
+                for (let i = 0; i < slots.length;) {
+                    let j = i;
+                    while (j + 1 < slots.length && slots[j + 1] === slots[j] + 1 && cells[j + 1][1] === cells[j][1] + 1) j++;
+                    const x = NAME_W + slots[i] * CHAR_W - ox, runW = (slots[j] - slots[i] + 1) * CHAR_W;
+                    if (x + runW >= 0 && x <= w) {
+                        octx.fillRect(x, y, runW, CHAR_H);
+                        octx.strokeRect(x + 0.5, y + 0.5, runW - 1, CHAR_H - 1);
+                    }
+                    i = j + 1;
+                }
+            });
+        }
+        // Draw pending nucleotide start indicator (dashed border, two-click system)
+        // (not when that cell is already selected: the DOM skips it too, and a dashed box inside a run read as a border)
+        if (state.pendingNucStart && !state.selectedNucs.get(state.pendingNucStart.row)?.has(state.pendingNucStart.pos)) {
+            const pr = state.pendingNucStart.row, pp = state.pendingNucStart.pos;
+            if (pr >= 0) {
+                const y = HEADER_H +pr * rowPitch - oy;
+                const x = NAME_W + posSlot(pp) * CHAR_W - ox;
+                if (posSlot(pp) >= 0 && x + CHAR_W >= 0 && x <= w && y + CHAR_H >= 0 && y <= h) {
+                    octx.strokeStyle = '#1976D2';
+                    octx.setLineDash([3, 2]);
+                    octx.lineWidth = 1.5;
+                    octx.strokeRect(x + 0.5, y + 0.5, CHAR_W - 1, CHAR_H - 1);
+                    octx.setLineDash([]);
+                }
+            }
+        }
+
+        // Draw active edit cell highlight (residue typing mode)
+        if (state.editModeActive && state.editTool === 'residue' && state.editCell) {
+            const er = state.editCell.row, ep = state.editCell.pos;
+            if (er >= 0 && er < nSeqs && ep >= 0) {
+                const y = HEADER_H +er * rowPitch - oy;
+                const x = NAME_W + posSlot(ep) * CHAR_W - ox;
+                if (posSlot(ep) >= 0 && x + CHAR_W >= 0 && x <= w && y + CHAR_H >= 0 && y <= h) {
+                    octx.strokeStyle = '#e74c3c';
+                    octx.lineWidth = 2;
+                    octx.strokeRect(x + 1, y + 1, CHAR_W - 2, CHAR_H - 2);
+                }
+            }
+        }
+        // Gap tools: the cell under the pointer (DOM: the :hover outline)
+        const gh = _canvasState.gapHover;
+        if (gh && state.editModeActive && GENEDOC_GAP_TOOLS.has(state.editTool) && gh.row >= 0 && gh.row < nSeqs
+            && gh.col >= 0 && gh.col < (state.seqs[gh.row]?.seq.length || 0)) {   // an edit can shorten the row under a still pointer
+            const sc = posSlot(gh.col);
+            if (sc >= 0) {
+                const y = HEADER_H + gh.row * rowPitch - oy, x = NAME_W + sc * CHAR_W - ox;
+                if (x + CHAR_W >= 0 && x <= w && y + CHAR_H >= 0 && y <= h) {
+                    octx.strokeStyle = '#ff8c00';
+                    octx.lineWidth = 2;
+                    octx.strokeRect(x + 1, y + 1, CHAR_W - 2, CHAR_H - 2);
+                }
+            }
+        }
+        octx.restore();
+    }
+
+    // Draws the cells, ruler, names and overlays that intersect the CSS-pixel rectangle
+    // [cx0, cx1) x [cy0, cy1) of the frame (the viewport, or a region drawToSvg draws). The caller may set no
+    // clip: drawToSvg draws an unscrolled strip or a band's rectangle without one, so every element must keep
+    // itself inside the rectangle (its own row/column range) rather than rely on a clip (GLM audit cb5 #15).
+    function drawRegion(ox, oy, w, h, cx0, cy0, cx1, cy1) {
+        // firstCol/lastCol are SLOTS (columns without Variable sites only)
+        const firstCol = Math.max(_bS0, Math.floor((ox - NAME_W + cx0) / CHAR_W));
+        const lastCol = Math.min(_bS1 - 1, Math.ceil((ox - NAME_W + cx1) / CHAR_W));
+        // A breakpoint marker cell (DOM .col-breakpoint): marker colour, hairline borders, symbol
+        // A fold marker (hidden columns) has its own colour and symbol.
+        const drawMarker = (x, y, sI) => {
+            const fold = foldBefore && foldBefore.has(sI);
+            const alpha = ctx.globalAlpha;   // a marker after a dimmed column (Highlight diffs) is not dimmed
+            ctx.globalAlpha = 1;
+            ctx.fillStyle = fold ? _FOLD_STYLE.color : (brkStyle.color || '#d0d0d0');
+            ctx.fillRect(x, y, CHAR_W, CHAR_H);
+            ctx.fillStyle = fold ? '#b8860b' : '#b0b0b0';
+            ctx.fillRect(x, y, HAIR, CHAR_H);
+            ctx.fillRect(x + CHAR_W - HAIR, y, HAIR, CHAR_H);
+            ctx.fillStyle = '#333';
+            ctx.textAlign = 'center';
+            ctx.fillText(fold ? _FOLD_STYLE.symbol : (brkStyle.symbol || '\u22EE'), x + CHAR_W / 2, y);
+            ctx.textAlign = 'start';
+            ctx.globalAlpha = alpha;
+        };
+        const firstRow = Math.max(0, Math.floor((oy - HEADER_H + cy0) / rowPitch));
+        // the last row whose top is above cy1 (it was floor(... + cy1 - 1): a row whose top lay in the
+        // last CSS pixel was left out, so a full redraw left its first device row(s) white)
+        const lastRow = Math.min(nSeqs - 1, Math.ceil((oy - HEADER_H + cy1) / rowPitch) - 1);
+        // The name column is at [0, NAME_W) when sticky, else scrolls with the content
+        const withNames = stickyNames ? cx0 < NAME_W : cx0 < NAME_W - ox;
+
+        ctx.font = fontStr;
+        ctx.textBaseline = 'top';
+
+        // Resolve the colour scheme and shading palette once per frame, not per
+        // visible cell (getResidueSchemeStyle/getComputedStyle would otherwise be
+        // recomputed for every glyph).
+        const drawScheme = getEffectiveColorScheme();
+        const pal = _getCanvasShadePalette();
+        const canvasCellStyle = _canvasCellStyler(drawScheme, pal, {
+            blackThresh, darkThresh, lightThresh, enableBlack, enableDark, enableLight,
+            colorScheme: drawScheme, effectiveColorScheme: drawScheme,
+        });
+
+        // Position scale (10, *, 20, * ...) - only the visible column window, same
+        // generateScale() as Full/Block mode; cost is O(visible cols), not alignment length.
+        // (Both the track and the ruler below are skipped when the region drawn - a vertical-scroll strip - lies
+        // clear of them: the strip's clip discarded them after a whole row of digits and features was built.)
+        if (TRACK_H > 0 && firstCol <= lastCol && TRACK_H - oy > cy0 && -oy < cy1) {
+            _canvasDrawAnnotTrack(ctx, { ox, oy, w, NAME_W, CHAR_W, CHAR_H, TRACK_H, firstCol, lastCol, stickyNames, fontSizePx, layer: blockLayout && !ctx._svgRecorder, dpr });
+            ctx.font = fontStr;
+        }
+        // Highlight diffs: the same rule as styles.css body.highlight-diffs - every cell, consensus
+        // letter and ruler digit in a conserved column at 40 % opacity, variable columns in bold.
+        const hdCols = document.body.classList.contains('highlight-diffs') ? state._diffColumns : null;
+        const scaleY = TRACK_H - oy;
+        if (scaleY + SCALE_H > 0 && scaleY < h && firstCol <= lastCol && scaleY + SCALE_H > cy0 && scaleY < cy1) {
+            // Each digit is drawn in its column's slot (with Variable sites only, whole labels instead: below) (a marker slot shows nothing, like the DOM
+            // ruler, but keeps the width). With sticky names the digits stop at the name column,
+            // as the DOM's sticky name cell covers them.
+            if (stickyNames) {
+                ctx.fillStyle = '#fff';
+                ctx.fillRect(0, scaleY, NAME_W, SCALE_H);
+                ctx.save();
+                ctx.beginPath(); ctx.rect(NAME_W, scaleY, w, SCALE_H); ctx.clip();
+            }
+            ctx.fillStyle = '#666';
+            ctx.textBaseline = 'alphabetic';
+            const rulerBase = scaleY + _canvasTextBaseline(CHAR_H);   // digits sit in the row as the DOM ruler's do
+            let rulerBold = false;
+            for (let sI = firstCol; sI <= lastCol; sI++) {
+                const pc = slotPos(sI);
+                if (pc < 0) {
+                    // a fold marker is in the ruler too (a click there shows the run again)
+                    if (foldBefore && foldBefore.has(sI)) {
+                        const xm = NAME_W + sI * CHAR_W - ox;
+                        ctx.textBaseline = 'top'; drawMarker(xm, scaleY, sI); ctx.textBaseline = 'alphabetic'; ctx.fillStyle = '#666';
+                    }
+                    continue;
+                }
+                if (varHide) continue;   // Variable sites only: the labels are drawn whole below, not a character per column
+                const ch = _bScale ? _bScale[pc - _bScaleC0] : scaleTextAll[pc];
+                if (!ch || ch === ' ') continue;
+                const x = NAME_W + sI * CHAR_W - ox;
+                if (x + CHAR_W < 0 || x > w) continue;
+                if (hdCols) {
+                    const variable = hdCols.has(pc);
+                    ctx.globalAlpha = variable ? 1 : 0.4;
+                    if (variable !== rulerBold) { rulerBold = variable; ctx.font = variable ? 'bold ' + fontStr : fontStr; }
+                }
+                ctx.fillText(ch, x, rulerBase);
+            }
+            if (varHide) {
+                // whole labels, each character in its own slot (the last on the label's column), only the slots of the strip or band being drawn
+                const rl = _bScale ? _bRL : stripRulerLabels();
+                if (hdCols) { ctx.globalAlpha = 1; ctx.font = 'bold ' + fontStr; rulerBold = true; }
+                let lo = 0, hi = rl.length;
+                while (lo < hi) { const mid = (lo + hi) >> 1; if (rl[mid][0] < firstCol) lo = mid + 1; else hi = mid; }
+                for (let k = lo; k < rl.length; k++) {
+                    const [ls, text] = rl[k];
+                    if (ls - text.length + 1 > lastCol) break;
+                    for (let q = 0; q < text.length; q++) {
+                        const sI = ls - text.length + 1 + q;
+                        if (sI < firstCol || sI > lastCol) continue;
+                        const x = NAME_W + sI * CHAR_W - ox;
+                        if (x + CHAR_W < 0 || x > w) continue;
+                        ctx.fillText(text[q], x, rulerBase);
+                    }
+                }
+            }
+            ctx.textBaseline = 'top';
+            if (hdCols) { ctx.globalAlpha = 1; if (rulerBold) ctx.font = fontStr; }
+            if (stickyNames) ctx.restore();
+            // (No rule under the ruler: Full and Block have none, and in Canvas it doubled the consensus row's rule.)
+        }
+
+        // Edits reshade changed columns into state.conservationDataCache; use it when current
+        const consPos = (state.conservationDataCache?.len === len && state.conservationDataCache?.shadeMode === shadeMode)
+            ? state.conservationDataCache.data : conservationData;
+        let dimmed = false;   // ctx.globalAlpha is 0.4 while this is true (Highlight diffs, conserved column)
+        const caseMode = state.residueCase || 'asis';
+        for (let i = firstRow; i <= lastRow; i++) {
+            const y = HEADER_H +i * rowPitch - oy;
+            const seq = state.seqs[i].seq;
+            const ovCtx = _overlayRowCtx(i);
+            const trim = state.trimBoundaries;
+            // Codon analysis on this row: stop codon bases (span.codon-stop), synonymous /
+            // non-synonymous underlines (span.codon-syn / .codon-nonsyn); AA only hides the bases
+            const cd = hasCodon ? state._codonData : null;
+            let codonRows = cd ? _canvasCodonRows(i) : null;
+            if (codonRows && _bLanes >= 0 && codonRows.length > _bLanes) codonRows = codonRows.slice(0, _bLanes);   // Block: this band's lanes
+            const basesHidden = aaOnly && codonRows && codonRows.some(r => r.aaData && r.aaData.length);
+            const stopSet = cd && cd.stops && cd.stops[i] && cd.stops[i].length ? new Set(cd.stops[i]) : null;
+            const snRow = cd && cd.synNonSyn ? cd.synNonSyn[i] : null;
+
+            // Residues (glyph-cached: 1 drawImage per cell vs fillRect+fillText)
+            if (!basesHidden) for (let sI = firstCol; sI <= lastCol; sI++) {
+                const x = NAME_W + sI * CHAR_W - ox;
+                const p = slotPos(sI);
+                if (p < 0) { drawMarker(x, y, sI); continue; }
+                const raw = seq[p] || '-';
+                const base = caseMode === 'upper' ? raw.toUpperCase() : caseMode === 'lower' ? raw.toLowerCase() : raw;   // the aa | Aa | AA switch
+                const pd = consPos[p];
+                // Same class list and stylesheet colours as a Full/Block cell
+                const cellStyle = canvasCellStyle(raw, pd);
+                let textFill = cellStyle.fg;
+                let bgFill = cellStyle.bg === '#ffffff' ? null : cellStyle.bg;
+
+                // Trim preview tint (DOM: .trim-left / .trim-right)
+                const trimmed = trim && (p <= trim.leftTrimEnd || p >= trim.rightTrimStart);
+                if (trimmed) bgFill = p <= trim.leftTrimEnd ? 'rgba(255,107,107,0.28)' : 'rgba(78,205,196,0.28)';
+
+                // Search hits, TSD marks, repeats, SNP letters: the same rule as the DOM
+                const ov = ovCtx.any ? residueOverlay(ovCtx, p, base) : null;
+                let variant = cellStyle.bold ? 'b' : '';
+                if (ov) {
+                    if (ov.bg) bgFill = ov.bg;
+                    if (ov.fg) textFill = ov.fg;
+                    variant = (ov.bold || cellStyle.bold ? 'b' : '') + (ov.italic ? 'i' : '') + (ov.sans ? 's' : '');
+                }
+                if (hdCols) {
+                    const dim = !hdCols.has(p);
+                    if (!dim && !variant.includes('b')) variant = 'b' + variant;
+                    if (dim !== dimmed) { dimmed = dim; ctx.globalAlpha = dim ? 0.4 : 1; }
+                }
+                let sn = null;
+                if (cd) {
+                    if (stopSet && stopSet.has(p)) { const st = canvasCellStyle(base, pd, 'codon-stop'); bgFill = st.bg === '#ffffff' ? null : st.bg; textFill = st.fg; if (st.bold && !variant.includes('b')) variant = 'b' + variant; }
+                    if (snRow && snRow[p]) sn = snRow[p];
+                }
+                // Single blit from glyph cache (eliminates fillStyle+fillRect+fillStyle+fillText)
+                ctx.drawImage(_makeGlyph(base, bgFill, textFill, variant), x, y, CHAR_W, CHAR_H);
+                if (sn) {   // text-decoration underline, 2 px under the baseline; non-synonymous 2 px thick

@@ -1,0 +1,465 @@
+[server.js lines 1-464 of ViewAlign fd8b8e4]
+const express = require('express');
+const { execSync, spawn, spawnSync } = require('child_process');
+const fs = require('fs');
+const path = require('path');
+const os = require('os');
+const app = express();
+
+app.use(express.json({ limit: '10mb' }));
+
+// ============ ACCESS CONTROL ============
+// The server reads local files and runs SSH/samtools on behalf of the page, so
+// it must only take orders from the viewer itself:
+//  - it listens on loopback unless HOST says otherwise;
+//  - the Host header must be localhost, an IP literal or a name listed in
+//    ALLOWED_HOSTS (stops DNS-rebinding pages from reaching it by name);
+//  - /api requests sent by another site's page are refused (CSRF), using
+//    Sec-Fetch-Site and Origin; curl and the viewer's own page pass;
+//  - the routes that read files or reach SSH servers, and the ones that add or
+//    delete databases or run MAFFT/BLAST, answer only clients on this machine
+//    unless ALLOW_REMOTE_FILE_ACCESS=1;
+//  - those same routes, and the list of SSH servers, need the access key (below): another user of this
+//    computer, or a program that only knows the port, cannot use them;
+//  - only the files the viewer loads are served (STATIC_SERVE_ALL=1 serves the
+//    whole folder, for development pages such as benchmark.html).
+const PORT = Number(process.env.PORT) || 3000;
+const HOST = process.env.HOST || '127.0.0.1';
+const CORS_ORIGINS = new Set(['http://localhost:' + PORT, 'http://127.0.0.1:' + PORT]);
+if (process.env.CORS_ORIGIN) CORS_ORIGINS.add(process.env.CORS_ORIGIN);
+const ALLOWED_HOSTS = new Set(['localhost']);
+for (const h of [process.env.TAILSCALE_IP, ...(process.env.ALLOWED_HOSTS || '').split(',')]) {
+    if (h && h.trim()) ALLOWED_HOSTS.add(h.trim().toLowerCase());
+}
+const ALLOW_REMOTE_FILE_ACCESS = process.env.ALLOW_REMOTE_FILE_ACCESS === '1';
+
+// ---- Access key (audit 2026-11-10, H10) ----
+// 127.0.0.1 is shared by every user and program of the computer, so "the client is on this machine" did not
+// mean "the client is the owner": another user could read the owner's files through /api/local-cat. The
+// server keeps a random key in the owner's home folder (~/.viewalign/access-key, readable by the owner
+// only) and prints a link that carries it. Opening that link once stores the key in a cookie of that
+// browser (HttpOnly: page scripts cannot read it; SameSite=Strict: other sites cannot send it). The key
+// stays the same across restarts, so the bookmark http://localhost:3000 keeps working afterwards.
+const crypto = require('crypto');
+const ACCESS_KEY_FILE = path.join(os.homedir(), '.viewalign', 'access-key');
+const ACCESS_COOKIE = 'viewalign_key_' + PORT;   // cookies are shared between ports of one host
+function loadAccessKey() {
+    try {
+        const k = fs.readFileSync(ACCESS_KEY_FILE, 'utf8').trim();
+        if (/^[0-9a-f]{48}$/.test(k)) {
+            try { fs.chmodSync(ACCESS_KEY_FILE, 0o600); } catch (_) {}
+            return k;
+        }
+    } catch (_) {}
+    const k = crypto.randomBytes(24).toString('hex');
+    try {
+        fs.mkdirSync(path.dirname(ACCESS_KEY_FILE), { recursive: true, mode: 0o700 });
+        fs.writeFileSync(ACCESS_KEY_FILE, k + '\n', { mode: 0o600 });
+        fs.chmodSync(ACCESS_KEY_FILE, 0o600);
+    } catch (e) {
+        console.warn('Could not save the access key (' + e.message + '): it is valid until the server stops.');
+    }
+    return k;
+}
+const ACCESS_KEY = loadAccessKey();
+function sameKey(given) {
+    const a = Buffer.from(String(given || '')), b = Buffer.from(ACCESS_KEY);
+    return a.length === b.length && crypto.timingSafeEqual(a, b);
+}
+function hasAccessKey(req) {
+    for (const part of String(req.headers.cookie || '').split(';')) {
+        const i = part.indexOf('=');
+        if (i > 0 && part.slice(0, i).trim() === ACCESS_COOKIE && sameKey(part.slice(i + 1).trim())) return true;
+    }
+    return false;
+}
+
+function hostnameOf(hostHeader) {
+    const h = String(hostHeader || '').toLowerCase();
+    if (h.startsWith('[')) return h.slice(0, h.indexOf(']') + 1);
+    return h.replace(/:\d+$/, '');
+}
+
+function isAllowedHost(hostHeader) {
+    const h = hostnameOf(hostHeader);
+    if (!h) return false;
+    if (ALLOWED_HOSTS.has(h)) return true;
+    // IP literals cannot be re-pointed by DNS, so they are safe to accept
+    return /^\d{1,3}(\.\d{1,3}){3}$/.test(h) || /^\[[0-9a-f:.]+\]$/.test(h);
+}
+
+function isLoopbackClient(req) {
+    if (req.headers['x-forwarded-for'] || req.headers['x-real-ip']) return false;
+    const a = req.socket.remoteAddress || '';
+    return a === '127.0.0.1' || a === '::1' || a === '::ffff:127.0.0.1';
+}
+
+// The path the access checks compare. Express matches routes ignoring case and a trailing slash, so
+// /API/local-cat and /api/local-cat/ reached the routes while the checks, which compared the exact
+// path, let them through (no loopback or cross-site check).
+function routePath(req) {
+    return req.path.toLowerCase().replace(/\/+$/, '') || '/';
+}
+
+function isCrossSiteRequest(req) {
+    const origin = req.get('origin');
+    if (origin && !CORS_ORIGINS.has(origin)) {
+        let originHost = '';
+        try { originHost = new URL(origin).host.toLowerCase(); } catch (_) { return true; }
+        if (originHost !== String(req.headers.host || '').toLowerCase()) return true;
+    }
+    const site = req.get('sec-fetch-site');
+    if (site && site !== 'same-origin' && site !== 'none' && !(origin && CORS_ORIGINS.has(origin))) return true;
+    return false;
+}
+
+app.use((req, res, next) => {
+    if (!isAllowedHost(req.headers.host)) {
+        return res.status(403).type('text/plain').send('Host not allowed. Add it to ALLOWED_HOSTS to use this name.');
+    }
+    const origin = req.get('origin') || '';
+    if (CORS_ORIGINS.has(origin)) res.header('Access-Control-Allow-Origin', origin);
+    res.header('Access-Control-Allow-Headers', 'Content-Type');
+    res.header('Access-Control-Allow-Methods', 'GET, POST, DELETE, OPTIONS');
+    if (req.method === 'OPTIONS') return res.sendStatus(200);
+    if (routePath(req).startsWith('/api/') && isCrossSiteRequest(req)) {
+        return res.status(403).json({ error: 'Cross-site request refused' });
+    }
+    next();
+});
+
+// Routes that read local files or reach configured SSH servers
+const FILE_ACCESS_ROUTES = new Set(['/api/local-cat', '/api/bam2sam', '/api/ssh-cat', '/api/ssh-ls',
+    '/api/ssh-poll-file', '/api/queue-file', '/api/poll-file']);
+// Routes that write or delete files on this machine or run programs (MAFFT, BLAST). With HOST=0.0.0.0
+// any machine on the network could delete or add databases and run MAFFT here.
+function changesThisMachine(req) {
+    const p = routePath(req);
+    if (req.method === 'POST' && ['/api/blast-db', '/api/mafft', '/api/blast', '/api/blast-all'].includes(p)) return true;
+    return req.method === 'DELETE' && p.startsWith('/api/blast-db/');
+}
+app.use((req, res, next) => {
+    if (ALLOW_REMOTE_FILE_ACCESS || isLoopbackClient(req)) return next();
+    if (FILE_ACCESS_ROUTES.has(routePath(req))) {
+        return res.status(403).json({ error: 'File and SSH access is limited to this machine (set ALLOW_REMOTE_FILE_ACCESS=1 to change)' });
+    }
+    if (changesThisMachine(req)) {
+        return res.status(403).json({ error: 'Adding or deleting databases and running MAFFT/BLAST is limited to this machine (set ALLOW_REMOTE_FILE_ACCESS=1 to change)' });
+    }
+    next();
+});
+
+// The link with the key: store it in a cookie and go on to the same address without the key, so the key
+// stays out of the address bar, the history and bookmarks.
+app.use((req, res, next) => {
+    if (req.method !== 'GET' || req.query.key === undefined || routePath(req).startsWith('/api/')) return next();
+    if (!sameKey(req.query.key)) {
+        return res.status(403).type('text/plain').send('This access key is not the one of the running server. Use the link the server printed when it started.');
+    }
+    res.setHeader('Set-Cookie', `${ACCESS_COOKIE}=${ACCESS_KEY}; Path=/; Max-Age=31536000; HttpOnly; SameSite=Strict`);
+    res.setHeader('Cache-Control', 'no-store');
+    res.redirect(302, req.path);
+});
+const NEEDS_KEY_MESSAGE = 'The local server does not know this browser yet. Open the link the server printed when it started '
+    + '(it is also shown by start-server.bat); it has to be opened once per browser.';
+app.use((req, res, next) => {
+    const p = routePath(req);
+    if (!(FILE_ACCESS_ROUTES.has(p) || p === '/api/ssh-servers' || changesThisMachine(req)) || hasAccessKey(req)) return next();
+    res.status(401).json({ error: NEEDS_KEY_MESSAGE, needsKey: true });
+});
+
+// Never serve private configuration, logs or the server source
+const PRIVATE_STATIC = /(^|\/)(ssh-servers\.json|blast_dbs\.json|server\.js|\.env[^/]*|[^/]*\.log|[^/]*\.out)$/i;
+app.use((req, res, next) => {
+    let p = req.path;
+    try { p = decodeURIComponent(p); } catch (_) { return res.sendStatus(400); }
+    if (PRIVATE_STATIC.test(p) || p.split('/').some(seg => seg.startsWith('.') && seg !== '.well-known')) {
+        return res.sendStatus(404);
+    }
+    next();
+});
+// The static handler served the whole folder: tests, notes, package.json, anything put in it. Now it
+// serves what the viewer loads: the public site's files (keep in step with APP_FILES and the folders in
+// tools/build-site.sh; tests/server/hardening.test.js checks both), the user's snapshots and the
+// BLAST databases added in the page (the search worker fetches their FASTA).
+const PUBLIC_FILES = new Set([
+    'index.html', 'manual.html', 'styles.css', 'version.json',
+    'script.js', 'genome-fasta.js', 'genome-window.js', 'genome-view.js', 'a11y.js', 'ab1-parser.js', 'bam-parser.js',
+    'block-bicluster.js', 'block-mask.js', 'chromatogram-viewer.js', 'cluster.js', 'kmer-tree.js', 'peel.js',
+    'realign-region.js', 'sample-call.js', 'variant-effect.js', 'tree-draw.js', 'finder.js',
+    'mafft-wasm.js', 'mafft-worker.js', 'disttbfast.js', 'disttbfast.wasm',
+    'blast-worker.js', 'doter-worker.js', 'doter-word-worker.js',
+    'codon-align-worker.js', 'codon-align.js',
+    'macse-worker.js', 'macse-align.js', 'macse-dp-wasm.js',
+    'example-colour-names.fa',
+    'README.md', 'LICENSE', 'LICENSE-MACSE', 'LICENSE-MAFFT', 'THIRD_PARTY_NOTICES.md',
+]);
+const PUBLIC_DIRS = new Set(['img', 'examples', 'vendor', 'snapshots', 'blast_dbs']);
+const STATIC_SERVE_ALL = process.env.STATIC_SERVE_ALL === '1';
+function isPublicPath(urlPath) {
+    let p;
+    try { p = decodeURIComponent(urlPath); } catch (_) { return false; }
+    if (p === '/') return true;   // index.html
+    const segs = p.slice(1).split('/');
+    if (segs.some(seg => seg === '' || seg === '.' || seg === '..' || seg.includes('\\'))) return false;
+    if (segs.length === 1) return PUBLIC_FILES.has(segs[0]);
+    return PUBLIC_DIRS.has(segs[0]);
+}
+app.use((req, res, next) => {
+    if (STATIC_SERVE_ALL || routePath(req).startsWith('/api/') || isPublicPath(req.path)) return next();
+    res.sendStatus(404);
+});
+app.use(express.static(__dirname, { dotfiles: 'deny' }));
+
+app.get('/api/viewer-info', (req, res) => {
+    let scriptVersion = '?';
+    let buildTag = '?';
+    try {
+        const html = fs.readFileSync(path.join(__dirname, 'index.html'), 'utf8');
+        const m = html.match(/script\.js\?v=(\d+)/);
+        if (m) scriptVersion = m[1];
+    } catch (_) {}
+    try {
+        const js = fs.readFileSync(path.join(__dirname, 'script.js'), 'utf8');
+        const m = js.match(/const BUILD_TAG = '(v\d+)'/);
+        if (m) buildTag = m[1];
+    } catch (_) {}
+    res.json({ root: __dirname, scriptVersion, buildTag, authorized: hasAccessKey(req) });
+});
+
+
+// ============ BLAST DATABASE REGISTRY ============
+const DB_REGISTRY_FILE = path.join(__dirname, 'blast_dbs.json');
+
+// Load persistent registry (survives server restarts)
+function loadDbRegistry() {
+    try {
+        if (fs.existsSync(DB_REGISTRY_FILE)) {
+            return JSON.parse(fs.readFileSync(DB_REGISTRY_FILE, 'utf8'));
+        }
+    } catch (e) {
+        console.error('Failed to load DB registry:', e.message);
+    }
+    // No databases are bundled (RepBase may not be redistributed; add your own
+    // FASTA files from the Search panel or in blast_dbs.json)
+    return {};
+}
+
+function saveDbRegistry(registry, { throwOnError = false } = {}) {
+    try {
+        fs.writeFileSync(DB_REGISTRY_FILE, JSON.stringify(registry, null, 2), 'utf8');
+    } catch (e) {
+        console.error('Failed to save DB registry:', e.message);
+        if (throwOnError) throw e;
+    }
+}
+
+// Files the server may delete: those in blast_dbs/ (after resolving links), never a link itself. A
+// database registered from elsewhere is the user's own file: deleting the database used to unlink it.
+const BLAST_DB_DIR = path.join(__dirname, 'blast_dbs');
+function isOwnedDbFile(f) {
+    try {
+        const st = fs.lstatSync(f);
+        if (!st.isFile()) return false;
+        const dirReal = fs.realpathSync(BLAST_DB_DIR);
+        const real = fs.realpathSync(f);
+        return real.startsWith(dirReal + path.sep);
+    } catch (_) {
+        return false;
+    }
+}
+
+function dbPublicUrl(dbPath) {
+    const rel = path.relative(__dirname, dbPath).split(path.sep).join('/');
+    return '/' + rel.replace(/^\.?\//, '');
+}
+
+function blastDbStatus(name, info) {
+    const exists = !!(info?.path && fs.existsSync(info.path));
+    const dbDir = exists ? path.dirname(info.path) : '';
+    const indexByName = exists && fs.existsSync(path.join(dbDir, name + '.nhr'));
+    const stem = exists ? path.basename(info.path, path.extname(info.path)) : '';
+    const indexByStem = exists && fs.existsSync(path.join(dbDir, stem + '.nhr'));
+    const formatted = indexByName || indexByStem;
+    const loaded = !!(DB_CACHE[name]?.length);
+    return {
+        description: info.desc || name,
+        url: exists ? dbPublicUrl(info.path) : null,
+        exists,
+        formatted,
+        loaded,
+        // Browser worker only needs the FASTA file; blastn indices are optional
+        available: exists,
+    };
+}
+
+let DATABASES = loadDbRegistry();
+
+// Reload registry (hot-reload)
+function reloadDbRegistry() {
+    DATABASES = loadDbRegistry();
+}
+
+function runMakeBlastDb(args) {
+    const result = spawnSync('makeblastdb', args, { stdio: 'ignore', timeout: 120000 });
+    if (result.error) throw result.error;
+    if (result.status !== 0) {
+        throw new Error(`makeblastdb exited with code ${result.status}`);
+    }
+}
+
+function runBlastn(args, options = {}) {
+    const result = spawnSync('blastn', args, {
+        encoding: 'utf8',
+        timeout: options.timeout ?? 60000,
+        stdio: options.stdio ?? 'pipe',
+    });
+    if (result.error) throw result.error;
+    if (result.status !== 0) {
+        throw new Error(result.stderr || `blastn exited with code ${result.status}`);
+    }
+    return result;
+}
+
+// Format a FASTA database for BLAST
+function formatDatabase(dbPath, dbName) {
+    if (!fs.existsSync(dbPath)) {
+        console.warn(`Database file not found: ${dbPath}`);
+        return false;
+    }
+
+    try {
+        const dbDir = path.dirname(dbPath);
+        const outBase = path.join(dbDir, dbName);
+        // Check if already formatted (.nhr is the sequence header index)
+        if (fs.existsSync(outBase + '.nhr')) {
+            return true;
+        }
+
+        // Try makeblastdb
+        console.log(`Formatting database: ${dbName}`);
+        runMakeBlastDb(['-in', dbPath, '-dbtype', 'nucl', '-title', dbName, '-out', outBase]);
+        return true;
+    } catch (err) {
+        console.error(`Failed to format database ${dbName}:`, err.message);
+        return false;
+    }
+}
+
+// Initialize and format databases on startup
+function initializeDatabases() {
+    console.log('Initializing BLAST databases...');
+    const results = {};
+    for (const [name, info] of Object.entries(DATABASES)) {
+        results[name] = {
+            description: info.desc || name,
+            exists: fs.existsSync(info.path),
+            formatted: formatDatabase(info.path, name)
+        };
+    }
+    return results;
+}
+
+// ============ IN-MEMORY DATABASE CACHE ============
+const DB_CACHE = {};
+const DB_INDEX = {};
+
+function parseFasta(content) {
+    const seqs = [];
+    const blocks = content.split('>');
+    for (const block of blocks) {
+        if (!block.trim()) continue;
+        const lines = block.split('\n');
+        const header = lines[0].trim();
+        const seq = lines.slice(1).join('').replace(/\s/g, '').toUpperCase().replace(/[^ACGTUN]/g, 'N');
+        if (!seq || seq.length < 20) continue;
+        const spaceIdx = header.indexOf(' ');
+        const id = spaceIdx > 0 ? header.substring(0, spaceIdx) : header;
+        seqs.push({ id, def: header, seq, length: seq.length });
+    }
+    return seqs;
+}
+
+function loadDbCache() {
+    for (const [name, dbInfo] of Object.entries(DATABASES)) {
+        if (fs.existsSync(dbInfo.path)) {
+            console.log(`Loading ${name} into memory...`);
+            const t0 = Date.now();
+            DB_CACHE[name] = parseFasta(fs.readFileSync(dbInfo.path, 'utf8'));
+            // Pre-encode and build inverted kmer index
+            for (const e of DB_CACHE[name]) e._enc = encodeSeq(e.seq, 600);
+            DB_INDEX[name] = buildInvertedIndex(DB_CACHE[name]);
+            console.log(`  ${DB_CACHE[name].length} sequences loaded + indexed in ${Date.now() - t0} ms`);
+        } else {
+            console.warn(`  Not found: ${dbInfo.path}`);
+            DB_CACHE[name] = [];
+        }
+    }
+}
+
+// ============ SMITH-WATERMAN WITH TRACEBACK ============
+function smithWaterman(query, subject) {
+    // Cap sequences to keep it fast
+    const q = query.substring(0, 600);
+    const s = subject.substring(0, 600);
+    const m = q.length, n = s.length;
+
+    const MATCH = 2, MISMATCH = -3, GAP_EXT = -2;
+    // Use flat typed arrays for speed
+    const H  = new Int32Array((m + 1) * (n + 1));
+    const TB = new Uint8Array((m + 1) * (n + 1)); // 1=diag 2=up 3=left
+
+    let maxScore = 0, maxI = 0, maxJ = 0;
+
+    for (let i = 1; i <= m; i++) {
+        for (let j = 1; j <= n; j++) {
+            const base = i * (n + 1) + j;
+            const d = q[i - 1] === s[j - 1] ? MATCH : MISMATCH;
+            const diag = H[(i - 1) * (n + 1) + (j - 1)] + d;
+            const up   = H[(i - 1) * (n + 1) + j] + GAP_EXT;
+            const left = H[i * (n + 1) + (j - 1)] + GAP_EXT;
+            const best = Math.max(0, diag, up, left);
+            H[base] = best;
+            TB[base] = best === 0 ? 0 : best === diag ? 1 : best === up ? 2 : 3;
+            if (best > maxScore) { maxScore = best; maxI = i; maxJ = j; }
+        }
+    }
+
+    if (maxScore === 0) return null;
+
+    // Traceback
+    let alignQ = '', alignS = '';
+    let i = maxI, j = maxJ;
+    while (i > 0 && j > 0 && H[i * (n + 1) + j] > 0) {
+        const dir = TB[i * (n + 1) + j];
+        if (dir === 1) { alignQ = q[i - 1] + alignQ; alignS = s[j - 1] + alignS; i--; j--; }
+        else if (dir === 2) { alignQ = q[i - 1] + alignQ; alignS = '-' + alignS; i--; }
+        else { alignQ = '-' + alignQ; alignS = s[j - 1] + alignS; j--; }
+    }
+    const qStart = i + 1, sStart = j + 1;
+
+    let identity = 0;
+    let midline = '';
+    for (let k = 0; k < alignQ.length; k++) {
+        if (alignQ[k] !== '-' && alignQ[k] === alignS[k]) { identity++; midline += '|'; }
+        else if (alignQ[k] === '-' || alignS[k] === '-') midline += ' ';
+        else midline += '.';
+    }
+
+    const alignLen = alignQ.length;
+    const percent  = alignLen > 0 ? ((identity / alignLen) * 100).toFixed(1) : '0.0';
+    const bitScore = parseFloat(Math.max(0, (maxScore * 0.625 - Math.log(0.41)) / Math.log(2)).toFixed(1));
+
+    return { score: maxScore, bitScore, identity, alignLen, percent,
+             queryStart: qStart, queryEnd: maxI,
+             hitStart: sStart,   hitEnd: maxJ,
+             querySeq: alignQ, hitSeq: alignS, midline };
+}
+
+// ============ KMER ENCODING & INVERTED INDEX SEARCH ============
+const BASE_MAP = new Uint8Array(128);
+BASE_MAP['A'.charCodeAt(0)] = 0; BASE_MAP['C'.charCodeAt(0)] = 1;
+BASE_MAP['G'.charCodeAt(0)] = 2; BASE_MAP['T'.charCodeAt(0)] = 3;
+BASE_MAP['a'.charCodeAt(0)] = 0; BASE_MAP['c'.charCodeAt(0)] = 1;
+BASE_MAP['g'.charCodeAt(0)] = 2; BASE_MAP['t'.charCodeAt(0)] = 3;
+

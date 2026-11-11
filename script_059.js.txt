@@ -1,0 +1,348 @@
+[script.js lines 25359-25705 of ViewAlign fd8b8e4]
+function _statsDelimited(grid, fmt) {
+    const sep = fmt === 'csv' ? ',' : '\t';
+    const cell = fmt === 'csv'
+        ? v => {
+            // a text cell that a spreadsheet program would run as a formula (=..., @..., +... or -... that is
+            // no number) starts with an apostrophe in the .csv (audit L20)
+            let t = String(v);
+            if (typeof v !== 'number' && /^[=@+\-]/.test(t) && !/^[+-]?(\d+\.?\d*|\.\d+)(e[+-]?\d+)?$/i.test(t)) t = "'" + t;
+            return /[",\r\n]/.test(t) ? '"' + t.replace(/"/g, '""') + '"' : t;
+        }
+        : v => String(v).replace(/[\t\r\n]+/g, ' ');
+    return grid.map(r => r.map(cell).join(sep)).join('\r\n') + '\r\n';
+}
+
+function saveStatsMatrix(fmt, kind) {
+    kind = kind || _statsCurrentKind();
+    if (!state._statsData?.[kind]) { showMessage('No statistics matrix available to save.', 2200); return; }
+    const grid = _statsMatrixGrid(kind);
+    const base = _statsFileBase(kind);
+    if (fmt === 'xlsx') {
+        _statsDownload(_xlsxBlob(grid, kind === 'distance' ? 'distance' : kind === 'identity' ? 'identity' : 'matrix'), base + '.xlsx');
+    } else {
+        _statsDownload(new Blob([_statsDelimited(grid, fmt)], { type: fmt === 'csv' ? 'text/csv;charset=utf-8' : 'text/tab-separated-values;charset=utf-8' }), base + '.' + fmt);
+    }
+}
+
+// Minimal .xlsx writer: one sheet, header row and column frozen. Names are inline
+// strings and matrix values are numbers. The package is an uncompressed (stored) zip.
+function _crc32(bytes) {
+    let t = _crc32.table;
+    if (!t) {
+        t = _crc32.table = new Uint32Array(256);
+        for (let n = 0; n < 256; n++) {
+            let c = n;
+            for (let k = 0; k < 8; k++) c = c & 1 ? 0xEDB88320 ^ (c >>> 1) : c >>> 1;
+            t[n] = c >>> 0;
+        }
+    }
+    let c = 0xFFFFFFFF;
+    for (let i = 0; i < bytes.length; i++) c = t[(c ^ bytes[i]) & 0xFF] ^ (c >>> 8);
+    return (c ^ 0xFFFFFFFF) >>> 0;
+}
+
+function _zipStored(files, type) {
+    const enc = new TextEncoder();
+    const parts = [], central = [];
+    let offset = 0;
+    for (const f of files) {
+        const name = enc.encode(f.name), data = enc.encode(f.text);
+        const crc = _crc32(data), size = data.length;
+        const h = new DataView(new ArrayBuffer(30));
+        h.setUint32(0, 0x04034b50, true); h.setUint16(4, 20, true); h.setUint16(6, 0x0800, true);
+        h.setUint16(8, 0, true); h.setUint16(10, 0, true); h.setUint16(12, 0x21, true);   // stored; 1980-01-01
+        h.setUint32(14, crc, true); h.setUint32(18, size, true); h.setUint32(22, size, true);
+        h.setUint16(26, name.length, true); h.setUint16(28, 0, true);
+        parts.push(new Uint8Array(h.buffer), name, data);
+        const c = new DataView(new ArrayBuffer(46));
+        c.setUint32(0, 0x02014b50, true); c.setUint16(4, 20, true); c.setUint16(6, 20, true); c.setUint16(8, 0x0800, true);
+        c.setUint16(10, 0, true); c.setUint16(12, 0, true); c.setUint16(14, 0x21, true);
+        c.setUint32(16, crc, true); c.setUint32(20, size, true); c.setUint32(24, size, true);
+        c.setUint16(28, name.length, true); c.setUint32(42, offset, true);
+        central.push(new Uint8Array(c.buffer), name);
+        offset += 30 + name.length + size;
+    }
+    const cdSize = central.reduce((n, b) => n + b.length, 0);
+    const e = new DataView(new ArrayBuffer(22));
+    e.setUint32(0, 0x06054b50, true); e.setUint16(8, files.length, true); e.setUint16(10, files.length, true);
+    e.setUint32(12, cdSize, true); e.setUint32(16, offset, true);
+    return new Blob([...parts, ...central, new Uint8Array(e.buffer)], { type });
+}
+
+function _xlsxBlob(grid, sheetName) {
+    const x = v => String(v).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c])
+        .replace(/[\x00-\x08\x0B\x0C\x0E-\x1F]/g, '');
+    const col = (c) => { let s = ''; c++; while (c > 0) { const m = (c - 1) % 26; s = String.fromCharCode(65 + m) + s; c = Math.floor((c - 1) / 26); } return s; };
+    let rows = '';
+    grid.forEach((r, ri) => {
+        rows += `<row r="${ri + 1}">`;
+        r.forEach((v, ci) => {
+            if (v === '' || v == null) return;
+            const ref = col(ci) + (ri + 1);
+            const isNum = ri > 0 && ci > 0 && /^-?\d+(\.\d+)?$/.test(String(v));
+            rows += isNum ? `<c r="${ref}"><v>${Number(v)}</v></c>` : `<c r="${ref}" t="inlineStr"><is><t>${x(v)}</t></is></c>`;
+        });
+        rows += '</row>';
+    });
+    const X = '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n';
+    const sheet = String(sheetName).replace(/[\[\]:*?\/\\]/g, '_').slice(0, 31) || 'Sheet1';
+    return _zipStored([
+        { name: '[Content_Types].xml', text: X + '<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/><Override PartName="/xl/worksheets/sheet1.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/></Types>' },
+        { name: '_rels/.rels', text: X + '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="xl/workbook.xml"/></Relationships>' },
+        { name: 'xl/workbook.xml', text: X + `<workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><sheets><sheet name="${x(sheet)}" sheetId="1" r:id="rId1"/></sheets></workbook>` },
+        { name: 'xl/_rels/workbook.xml.rels', text: X + '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet1.xml"/></Relationships>' },
+        { name: 'xl/worksheets/sheet1.xml', text: X + '<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><sheetViews><sheetView workbookViewId="0"><pane xSplit="1" ySplit="1" topLeftCell="B2" activePane="bottomRight" state="frozen"/></sheetView></sheetViews>' +
+            `<sheetData>${rows}</sheetData></worksheet>` },
+    ], 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+}
+
+// ── Pair filter: pairs at or above / at or below a value of the shown matrix ──
+function _statsFilterHits() {
+    const d = state._statsData, f = state._statsFilter;
+    if (!d || !f) return [];
+    const n = d.n, pid = d.pid[d.mode];
+    const hits = [];
+    for (let i = 0; i < n; i++) for (let j = i + 1; j < n; j++) {
+        const id = pid[i * n + j];
+        const v = f.kind === 'distance' ? 1 - id / 100 : id;
+        if (f.op === 'ge' ? v >= f.value - 1e-12 : v <= f.value + 1e-12) hits.push([i, j, id]);
+    }
+    hits.sort((a, b) => f.op === 'ge' ? b[2] - a[2] : a[2] - b[2]);
+    return f.kind === 'distance' ? hits.reverse() : hits;
+}
+
+function _statsCellHit(i, j, rawId) {
+    const f = state._statsFilter;
+    if (!f || i === j) return false;
+    const v = f.kind === 'distance' ? 1 - rawId / 100 : rawId;
+    return f.op === 'ge' ? v >= f.value - 1e-12 : v <= f.value + 1e-12;
+}
+
+function _statsFilterKind() { return document.getElementById('statsFilterKind')?.value === 'distance' ? 'distance' : 'identity'; }
+function _statsReadFilter() {
+    const kind = _statsFilterKind();
+    const op = document.getElementById('statsFilterOp')?.value || 'ge';
+    const raw = document.getElementById('statsFilterValue')?.value;
+    const value = parseFloat(raw);
+    state._statsFilter = raw === '' || raw == null || !Number.isFinite(value) ? null : { kind, op, value };
+}
+
+function _statsUpdateFilterUI() {
+    const d = state._statsData;
+    const kind = _statsFilterKind();
+    const valueEl = document.getElementById('statsFilterValue');
+    if (valueEl) { valueEl.min = 0; valueEl.max = kind === 'distance' ? 1 : 100; valueEl.step = kind === 'distance' ? 0.01 : 0.5; }
+    const count = document.getElementById('statsFilterCount');
+    const saveBtn = document.getElementById('statsFilterSaveBtn');
+    const clear = document.getElementById('statsFilterClear');
+    const f = state._statsFilter;
+    if (!f || !d) {
+        if (count) count.textContent = '';
+        if (saveBtn) saveBtn.disabled = true;
+        if (clear) clear.hidden = true;
+        state._statsHits = [];
+        return;
+    }
+    const hits = _statsFilterHits();
+    state._statsHits = hits;
+    const seqsIn = new Set();
+    hits.forEach(([i, j]) => { seqsIn.add(i); seqsIn.add(j); });
+    if (count) count.textContent = `${hits.length.toLocaleString()} pair${hits.length === 1 ? '' : 's'} · ${seqsIn.size} sequence${seqsIn.size === 1 ? '' : 's'}`;
+    if (saveBtn) saveBtn.disabled = hits.length === 0;
+    if (clear) clear.hidden = false;
+}
+
+function _statsSavePairs(what) {
+    const d = state._statsData, hits = state._statsHits || [], f = state._statsFilter;
+    if (!d || !f || !hits.length) return;
+    const base = (state.currentFilename || 'alignment').replace(/\.[^.]+$/, '') +
+        `_pairs_${f.kind === 'distance' ? 'dist' : 'id'}_${f.op}${String(f.value).replace('.', 'p')}`;
+    const idx = [...new Set(hits.flatMap(([i, j]) => [i, j]))].sort((a, b) => a - b);
+    const header = q => (q.fullHeader != null ? q.fullHeader : q.header);
+    if (what === 'pairs') {
+        const def = d.mode === 'esl' ? 'identity_pct_over_shorter_seq' : 'identity_pct_over_shared_columns';
+        const grid = [['sequence_1', 'sequence_2', def, 'distance']].concat(hits.map(([i, j, id]) => [d.names[i], d.names[j], id.toFixed(1), (1 - id / 100).toFixed(2)]));
+        _statsDownload(new Blob([_statsDelimited(grid, 'tsv')], { type: 'text/tab-separated-values;charset=utf-8' }), base + '.tsv');
+    } else if (what === 'names') {
+        _statsDownload(new Blob([idx.map(i => d.names[i]).join('\n') + '\n'], { type: 'text/plain;charset=utf-8' }), base + '_names.txt');
+    } else {
+        const raw = what === 'fasta-raw';
+        const fa = idx.map(i => `>${header(d.seqs[i])}\n${raw ? d.seqs[i].seq.replace(/[-.]/g, '') : d.seqs[i].seq}`).join('\n') + '\n';
+        _statsDownload(new Blob([fa], { type: 'text/plain;charset=utf-8' }), base + (raw ? '_ungapped' : '_aligned') + '.fasta');
+    }
+}
+
+// Pair list view: the matching pairs, closest (or farthest) first; click one to see it in the matrix
+function _statsRenderPairList(body) {
+    const d = state._statsData, hits = state._statsHits || [], f = state._statsFilter;
+    const CAP = 3000;
+    if (!f) { body.innerHTML = '<div class="stats-empty">Set a value in “Pairs with …” to list the matching pairs.</div>'; return; }
+    if (!hits.length) { body.innerHTML = '<div class="stats-empty">No pair matches.</div>'; return; }
+    const esc = _escStats;
+    let html = `<div class="stats-mx-scroll"><table class="stats-pairs"><thead><tr><th>#</th><th>Sequence 1</th><th>Sequence 2</th><th>Identity %</th><th>Distance</th></tr></thead><tbody>`;
+    const hc = _statsHeatCtx(f.kind);
+    const paint = (kind, id) => { if (!hc || kind !== f.kind) return ''; const c = _statsHeatColour(hc, _statsValue(kind, id)); return ` style="background:${c.bg};color:${c.fg}"`; };
+    hits.slice(0, CAP).forEach(([i, j, id], k) => {
+        html += `<tr data-i="${i}" data-j="${j}"><td>${k + 1}</td><td>${esc(d.names[i])}</td><td>${esc(d.names[j])}</td><td${paint('identity', id)}>${id.toFixed(1)}</td><td${paint('distance', id)}>${(1 - id / 100).toFixed(2)}</td></tr>`;
+    });
+    html += '</tbody></table></div>';
+    if (hits.length > CAP) html += `<div class="stats-note">Showing the first ${CAP.toLocaleString()} of ${hits.length.toLocaleString()} pairs; “Save pairs” writes them all.</div>`;
+    body.innerHTML = html;
+}
+
+function _statsView() {
+    return document.querySelector('#statsSummaryTab .stats-view button.on')?.dataset.view || 'matrix';
+}
+
+function _statsSetView(view) {
+    document.querySelectorAll('#statsSummaryTab .stats-view button').forEach(b => b.classList.toggle('on', b.dataset.view === view));
+    _renderOpenStatsMatrices();
+}
+
+// ── Matrix table ──
+function _statsLabelOpts() {
+    let saved = null;
+    try { saved = JSON.parse(localStorage.getItem('msaviewer_statsLabels') || 'null'); } catch (e) {}
+    const style = ['angled', 'vertical', 'numbers'].includes(saved?.style) ? saved.style : 'angled';
+    const chars = Math.max(3, Math.min(80, parseInt(saved?.chars, 10) || 20));
+    const kind = saved?.kind === 'distance' ? 'distance' : 'identity';
+    const idMode = saved?.idMode === 'cols' ? 'cols' : 'esl';
+    return { style, chars, kind, idMode };
+}
+
+function _statsSaveLabelOpts(patch) {
+    try { localStorage.setItem('msaviewer_statsLabels', JSON.stringify({ ..._statsLabelOpts(), ...patch })); } catch (e) {}
+}
+
+function _escStats(t) {
+    return String(t).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c]);
+}
+
+// Build one matrix as an HTML table. Column labels: 'angled' (rotated 45° over the
+// column, the classic heat-map header), 'vertical' (read bottom-to-top), or 'numbers'
+// (row names carry the same numbers, plus a key of full names underneath).
+// Above STATS_MX_WINDOW_MIN sequences only the rows on screen (plus a margin) are in the
+// DOM: a full 600 x 600 table is 360,000 cells and took 5-9 s to lay out.
+const STATS_MX_WINDOW_MIN = 120;
+const STATS_MX_COL_MARGIN = 20;   // columns kept on each side of the viewport (rows: STATS_MX_ROW_MARGIN)
+const STATS_MX_ROW_MARGIN = 25;
+
+function _statsMatrixCtx(kind) {
+    const d = state._statsData;
+    const m = d[kind], n = d.names.length;
+    const { style, chars } = _statsLabelOpts();
+    const short = name => name.length > chars ? name.slice(0, chars - 1) + '…' : name;
+    const labels = d.names.map(short);
+    return { d, m, n, style, chars, labels, windowed: n > STATS_MX_WINDOW_MIN, sel: state._statsSelCols || new Set(), pid: d.pid[d.mode], heat: _statsHeatCtx(kind === 'combined' ? 'identity' : kind), kind };
+}
+
+// Rows i0..i1 holding the cells of columns c0..c1 only; spacer cells (csp) stand in for the columns outside
+// the window (the header row has every column, so the spacers take their widths from it).
+function _statsMatrixRows(ctx, i0, i1, c0 = 0, c1 = ctx.n) {
+    const { d, m, n, style, labels, sel, pid } = ctx;
+    const filtering = !!state._statsFilter;
+    // the spacers carry the width of the columns they stand for (ctx.cellW, the measured cell pitch), so the
+    // columns under the header do not move when the window shifts
+    const w = k => ctx.cellW ? ` style="width:${Math.round(k * ctx.cellW)}px;min-width:${Math.round(k * ctx.cellW)}px"` : '';
+    const left = c0 > 0 ? `<td class="csp" colspan="${c0}"${w(c0)}></td>` : '';
+    const right = c1 < n ? `<td class="csp" colspan="${n - c1}"${w(n - c1)}></td>` : '';
+    let html = '';
+    for (let i = i0; i < i1; i++) {
+        let row = `<tr><th class="rn" data-r="${i}" title="${_escStats(d.names[i])}"><span class="ix">${i + 1}</span> ${_escStats(labels[i])}</th>` + left;
+        const mi = m[i];
+        for (let j = c0; j < c1; j++) {
+            let cls = i === j ? 'dg' : '';
+            if (sel.has(j)) cls += ' cs';
+            if (filtering && i !== j) cls += _statsCellHit(i, j, pid[i * n + j]) ? ' hit' : ' miss';
+            let st = '';
+            if (ctx.heat && i !== j) { const c = _statsHeatColour(ctx.heat, _statsValue(ctx.heat.kind, pid[i * n + j])); st = ` style="background:${c.bg};color:${c.fg}"`; }
+            row += cls ? `<td class="${cls.trim()}"${st}>${mi[j]}</td>` : `<td${st}>${mi[j]}</td>`;
+        }
+        html += row + right + (style === 'angled' ? '<td class="pad"></td>' : '') + '</tr>';
+    }
+    return html;
+}
+// The cell of column j in a live row (the row may start with a spacer cell)
+function _statsCellAt(tbody, tr, j) {
+    const c0 = +tbody.dataset.c0 || 0, c1 = tbody.dataset.c1 != null ? +tbody.dataset.c1 : Infinity;
+    if (j < c0 || j >= c1) return null;
+    return tr.cells[1 + (c0 > 0 ? 1 : 0) + (j - c0)] || null;
+}
+// The column of a cell in a live row, or -1 for a spacer / pad cell
+function _statsColOf(tbody, td) {
+    if (!td || td.classList.contains('csp') || td.classList.contains('pad')) return -1;
+    const c0 = +tbody.dataset.c0 || 0;
+    return c0 + td.cellIndex - 1 - (c0 > 0 ? 1 : 0);
+}
+
+function _statsSpacer(ctx, px) {
+    return `<tr class="sp"><td colspan="${ctx.n + (ctx.style === 'angled' ? 2 : 1)}" style="height:${px}px;padding:0;border:0;"></td></tr>`;
+}
+
+function _buildStatsMatrixTable(kind) {
+    if (!state._statsData) return '';
+    const ctx = _statsMatrixCtx(kind);
+    const { d, n, style, chars, labels, sel } = ctx;
+    const longest = Math.max(1, ...labels.map(l => l.length));
+    const cellW = 6;   // in ch, fits "100.0" / "0.12"
+    const hcls = (j, extra) => `c${extra}${sel.has(j) ? ' cs' : ''}`;
+    const htitle = j => `${_escStats(d.names[j])} (click to select this column; Ctrl-click adds, Shift-click selects a range)`;
+    let head;
+    if (style === 'numbers') {
+        head = labels.map((l, j) => `<th class="${hcls(j, '')}" data-c="${j}" title="${htitle(j)}">${j + 1}</th>`).join('');
+    } else if (style === 'vertical') {
+        head = labels.map((l, j) => `<th class="${hcls(j, ' v')}" data-c="${j}" title="${htitle(j)}"><div>${_escStats(l)}</div></th>`).join('');
+    } else {
+        const h = Math.ceil(longest * 0.72) + 2;   // text length x sin 45°, in ch
+        head = labels.map((l, j) => `<th class="${hcls(j, ' a')}" data-c="${j}" title="${htitle(j)}"><div style="height:${h}ch;"><span>${_escStats(l)}</span></div></th>`).join('')
+            + `<th class="pad" style="width:${h}ch;"></th>`;   // room for the last labels' overhang
+    }
+    const rowNameW = Math.min(longest, chars) + String(n).length + 2;
+    const firstRows = ctx.windowed ? Math.min(n, 3 * STATS_MX_ROW_MARGIN) : n;
+    const firstCols = ctx.windowed ? Math.min(n, 3 * STATS_MX_COL_MARGIN) : n;   // place() corrects both once a cell is measured
+    let html = `<div class="stats-mx-scroll"><table class="stats-mx${state._statsFilter ? ' filtering' : ''}${ctx.heat ? ' heat' : ''}" data-kind="${kind}" style="--cw:${cellW}ch;">` +
+        `<thead><tr><th class="corner" style="min-width:${rowNameW}ch;"></th>${head}</tr></thead>` +
+        `<tbody data-r0="0" data-r1="${firstRows}" data-c0="0" data-c1="${firstCols}">${_statsMatrixRows(ctx, 0, firstRows, 0, firstCols)}</tbody></table></div>`;
+    if (style === 'numbers') {
+        html += `<div class="stats-mx-key">` + d.names.map((name, i) => `<span><b>${i + 1}</b> ${_escStats(name)}</span>`).join('') + `</div>`;
+    }
+    return html;
+}
+
+// Mark the found / clicked row, column and cell (class fx on the labels, focus on the cell)
+function _statsMarkFocus(table) {
+    const f = state._statsFocus || { i: -1, j: -1 };
+    table.querySelectorAll('.fx, td.focus').forEach(e => e.classList.remove('fx', 'focus'));
+    if (f.j >= 0) table.tHead.rows[0].cells[f.j + 1]?.classList.add('fx');
+    if (f.i < 0) return;
+    const tbody = table.tBodies[0];
+    for (const tr of tbody.rows) {
+        const rn = tr.cells[0];
+        if (!rn?.dataset.r || +rn.dataset.r !== f.i) continue;
+        rn.classList.add('fx');
+        if (f.j >= 0) _statsCellAt(tbody, tr, f.j)?.classList.add('focus');
+    }
+}
+
+// Scroll the matrix so row i / column j sit just inside the sticky labels, and mark them.
+// Pass -1 to leave an axis where it is.
+function _statsJumpTo(i, j) {
+    if (_statsView() !== 'matrix') _statsSetView('matrix');
+    const sc = document.querySelector('#statsSummaryTab .stats-mx-scroll');
+    const table = sc?.querySelector('table.stats-mx');
+    if (!table) return;
+    state._statsFocus = { i, j };
+    _statsMarkFocus(table);
+    if (i >= 0) {
+        const rowH = sc._rowH || table.tBodies[0].querySelector('tr:not(.sp)')?.getBoundingClientRect().height || 16;
+        sc.scrollTop = Math.max(0, (i - 3) * rowH);
+    }
+    if (j >= 0) {
+        const hr = table.tHead.rows[0];
+        const th = hr.cells[j + 1];
+        sc.scrollLeft = Math.max(0, th.offsetLeft - hr.cells[0].offsetWidth - 2 * th.offsetWidth);
+    }
+    if (sc._statsPlace) sc._statsPlace();   // the window for the new position at once, not after the scroll event
+}
+

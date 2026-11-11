@@ -1,0 +1,374 @@
+[cluster.js lines 698-1071 of ViewAlign fd8b8e4]
+        for (let i = 0; i < poss.length; i++) {
+            const p = poss[i];
+            const f = byPos.get(p);
+            if (run && p === run.end + 1) {
+                run.end = p;
+                run.motif += f.char;
+                if (f.grade === 'strict') run.nStrict++;
+                else run.nCloudy++;
+            } else {
+                if (run) runs.push(run);
+                run = {
+                    start: p,
+                    end: p,
+                    motif: f.char,
+                    nStrict: f.grade === 'strict' ? 1 : 0,
+                    nCloudy: f.grade === 'cloudy' ? 1 : 0
+                };
+            }
+        }
+        if (run) runs.push(run);
+        return runs;
+    }
+
+    /**
+     * How many groups to cut an UPGMA guide tree into. mergeDistances[i] is
+     * the distance of the i-th closest merge (first merge = 0). The cut is
+     * the largest jump in that series; if several jumps are close, the
+     * finer split (more groups) is kept so visual bands are not collapsed.
+     */
+    static suggestGroupCount(mergeDistances, n) {
+        const dists = mergeDistances || [];
+        const maxK = Math.min(15, Math.max(2, (n || 0) - 1));
+        if (!n || n < 3 || !dists.length) return Math.min(4, Math.max(2, n || 2));
+        const candidates = [];
+        for (let m = 0; m < dists.length; m++) {
+            const kAfter = n - (m + 1);
+            if (kAfter < 2 || kAfter > maxK) continue;
+            const d0 = dists[m];
+            const d1 = m + 1 < dists.length ? dists[m + 1] : d0;
+            candidates.push({ k: kAfter, gap: d1 - d0 });
+        }
+        if (!candidates.length) return Math.min(4, maxK);
+        let maxGap = 0;
+        for (let i = 0; i < candidates.length; i++) {
+            if (candidates[i].gap > maxGap) maxGap = candidates[i].gap;
+        }
+        if (maxGap <= 0) return Math.min(4, maxK);
+        const prominent = candidates.filter(c => c.gap >= maxGap * 0.5);
+        prominent.sort((a, b) => b.k - a.k);
+        return prominent[0].k;
+    }
+
+    /**
+     * Tag a bicluster rectangle's row-ids against type id-lists (same id space:
+     * sequence indices or headers). inside = all rect rows subset of one type;
+     * supports = Jaccard >= 0.5 but not a subset; discordant = mixed types.
+     */
+    static tagRectangleAgainstTypes(rectIds, typeIdLists) {
+        if (!rectIds || rectIds === 'all' || !rectIds.length) {
+            return { kind: 'none', typeIdx: -1, jaccard: 0 };
+        }
+        const R = new Set(rectIds);
+        let bestInside = null;
+        let bestSupport = null;
+        let typesHit = 0;
+        const lists = typeIdLists || [];
+        for (let t = 0; t < lists.length; t++) {
+            const T = new Set(lists[t] || []);
+            if (!T.size) continue;
+            let inter = 0;
+            R.forEach(function (id) { if (T.has(id)) inter++; });
+            if (inter === 0) continue;
+            typesHit++;
+            const union = R.size + T.size - inter;
+            const jaccard = union ? inter / union : 0;
+            const subset = inter === R.size && R.size >= 2;
+            if (subset) {
+                if (!bestInside || jaccard > bestInside.jaccard) {
+                    bestInside = { kind: 'inside', typeIdx: t, jaccard: jaccard };
+                }
+            } else if (jaccard >= 0.5) {
+                if (!bestSupport || jaccard > bestSupport.jaccard) {
+                    bestSupport = { kind: 'supports', typeIdx: t, jaccard: jaccard };
+                }
+            }
+        }
+        if (bestInside) return bestInside;
+        if (bestSupport) return bestSupport;
+        if (typesHit >= 2) return { kind: 'discordant', typeIdx: -1, jaccard: 0 };
+        return { kind: 'none', typeIdx: -1, jaccard: 0 };
+    }
+
+    _makeOptions(opts = {}) {
+        return {
+            minSize: 3,
+            minPerfect: 4,
+            maxIterations: 20,
+            qualitySmall: 85,
+            qualityMedium: 75,
+            qualityLarge: 65,
+            minOccurrences: 2,
+            trimStart: 0,            // Default to no trimming
+            trimEnd: this.alnLen,    // Default to full length
+            ...opts
+        };
+    }
+
+    async cluster(opts = {}) {
+        const o = this._makeOptions(opts);
+
+        const clusters = [];
+        let avail = Array.from({length:this.nSeqs},(_,i)=>i);
+        const onProgress = o.onProgress || (() => {});
+
+        console.log('Starting SINE clustering — final stable version');
+
+        let it = 0;
+        while (avail.length >= o.minSize && it < o.maxIterations) {
+            it++;
+            const step = await this._clusterIteration(avail, clusters, o, it);
+            // A miss this round is not the end: later rounds relax minPerfect /
+            // quality. Stopping here made Max Iter a no-op whenever round 1
+            // found nothing (the svk 600-consensus case).
+            if (!step.group) continue;
+            clusters.push(step.group);
+            avail = step.avail;
+            onProgress(`Cluster ${clusters.length}: ${step.group.size} seqs, ${clusters.reduce((a,c)=>a+c.size,0)} assigned, ${avail.length} remaining`);
+        }
+
+        return this._finaliseClusters(clusters, avail, o);
+    }
+
+    // One round of the search, shared by cluster() and clusterChunked() below,
+    // so the two cannot drift apart. Now async: yields within findBestGroup.
+    async _clusterIteration(avail, clusters, o, it) {
+            const prog = it / o.maxIterations;
+
+            // Later rounds may ease Min Features, but never down to 1–2:
+            // that harvested noise triplets on uniform alignments (clean_core).
+            const minPFloor = Math.min(3, o.minPerfect);
+            const curMinP = Math.max(minPFloor, Math.round(o.minPerfect * (1 - prog * 0.5)));
+            const curMinO = avail.length <= 20 ? 1 : o.minOccurrences;
+            const curQS = Math.max(25, o.qualitySmall - prog*50);
+            const curQM = Math.max(20, o.qualityMedium - prog*50);
+            const curQL = Math.max(15, o.qualityLarge - prog*50);
+
+            const assigned = clusters.flatMap(c => c.sequences);
+
+            const go = {
+                minSize: o.minSize,
+                minPerfect: curMinP,
+                minOccurrences: curMinO,
+                qualitySmall: curQS,
+                qualityMedium: curQM,
+                qualityLarge: curQL,
+                sizeSmallMedium: o.sizeSmallMedium,
+                sizeMediumLarge: o.sizeMediumLarge,
+                datasetSize: this.nSeqs,
+                assignedSeqs: assigned,
+                relaxUpperBound: false,
+                trimStart: o.trimStart, // Pass trimming down
+                trimEnd: o.trimEnd,      // Pass trimming down
+                shouldCancel: o.shouldCancel || (() => false)
+            };
+
+            if (avail.length <= 10) {
+                // Tiny leftover: still require a real diagnostic column, not a forced fit.
+                go.minOccurrences = 1;
+            }
+
+            let group = await this.findBestGroup(avail, go);
+
+            // Retry with relaxed upper bound if strict search fails — but do NOT
+            // also relax Min Features. A leftover clump with 1–4 weak columns is
+            // how this used to report a fake "cluster" of hundreds of sequences
+            // (svk 600-consensus). A real majority subfamily still passes because
+            // it has the original number of diagnostic positions.
+            if (!group && avail.length >= o.minSize && !(o.shouldCancel && o.shouldCancel())) {
+                console.log(`[RETRY] No group found. Retrying with relaxed upper bound...`);
+                go.relaxUpperBound = true;
+                go.minPerfect = o.minPerfect;
+                go.minOccurrences = o.minOccurrences;
+                group = await this.findBestGroup(avail, go);
+                // All-of-remaining with too few *perfect* (outside=0) columns is
+                // the leftover pile. Quality-passing imperfect columns are shared
+                // ancestral noise (svk mixed sisters had 64 such and only 3
+                // perfect). A real last type has minPerfect exclusive columns
+                // (planted B: 8 T's that the extracted A's lack).
+                if (group && group.size >= avail.length) {
+                    const nPerf = (this.getFeaturesByQuality(group).perfectFeatures || []).length;
+                    if (nPerf < o.minPerfect) group = null;
+                }
+            }
+
+            if (group) {
+                // Attach features to the group object for script.js access
+                const f = this.getFeaturesByQuality(group);
+                group.perfectFeatures = f.perfectFeatures;
+                group.imperfectFeatures = f.imperfectFeatures;
+                console.log(`Cluster ${clusters.length + 1}: size=${group.size} perfect=${f.perfectFeatures.length} total=${group.nOccurrences}`);
+                return { group, avail: avail.filter(i => !group.sequences.includes(i)) };
+            }
+            // cluster() goes on to the next round with relaxed settings, so this is not the end
+            if (avail.length >= o.minSize) console.log(`Round ${it}: no group found; ${avail.length} still unassigned`);
+            return { group: null, avail };
+    }
+
+    // Same search, yielding between rounds AND within each round's findBestGroup call,
+    // so the page can repaint and the run can be stopped promptly at any point.
+    async clusterChunked(opts = {}) {
+        const o = this._makeOptions(opts);
+        const clusters = [];
+        let avail = Array.from({length:this.nSeqs},(_,i)=>i);
+        const onProgress = o.onProgress || (() => {});
+        const shouldCancel = o.shouldCancel || (() => false);
+        const yieldNow = () => new Promise(r => setTimeout(r, 0));
+
+        let it = 0, cancelled = false;
+        while (avail.length >= o.minSize && it < o.maxIterations) {
+            it++;
+            onProgress(`Round ${it} of at most ${o.maxIterations} - ${clusters.length} found, ${avail.length} sequences left`);
+            await yieldNow();
+            if (shouldCancel()) { cancelled = true; break; }
+            const step = await this._clusterIteration(avail, clusters, o, it);
+            if (!step.group) continue;
+            clusters.push(step.group);
+            avail = step.avail;
+        }
+        const out = this._finaliseClusters(clusters, avail, o);
+        out.cancelled = cancelled;
+        return out;
+    }
+
+    _finaliseClusters(clusters, avail, o) {
+        // Return object structure expected by script.js
+        // Map sequence indices to full sequence objects for the clusters
+        const validClusters = clusters.map(c => ({
+            ...c,
+            sequences: c.sequences.map(idx => ({
+                index: idx,
+                id: this.sequences[idx].id,
+                seq: this.sequences[idx].seq
+            }))
+        }));
+        
+        const assignedCount = validClusters.reduce((a,c) => a + c.size, 0);
+
+        return {
+            clusters: validClusters,
+            unassigned: avail.map(i => ({index: i, id: this.sequences[i].id, seq: this.sequences[i].seq})),
+            summary: {
+                nClusters: validClusters.length,
+                nAssigned: assignedCount,
+                nUnassigned: avail.length,
+                nTotal: this.nSeqs
+            }
+        };
+    }
+
+    static getClusterColors() {
+        return [
+            '#e41a1c', // red
+            '#377eb8', // blue
+            '#4daf4a', // green
+            '#984ea3', // purple
+            '#ff7f00', // orange
+            '#ffff33', // yellow
+            '#a65628', // brown
+            '#f781bf', // pink
+            '#999999'  // gray
+        ];
+    }
+}
+
+/**
+ * Calculate trim boundaries using sliding window gap analysis
+ * @param {Array} sequences - [{id, seq}, ...]
+ * @param {Object} options - {edgeWindow, leftGapThresh, rightGapThresh}
+ * @returns {Object} {leftTrimEnd, rightTrimStart} - 0-based indices
+ */
+function getTrimBoundaries(sequences, options = {}) {
+    const EDGE_WINDOW = options.edgeWindow || 15;
+    const LEFT_GAP = options.leftGapThresh !== undefined ? options.leftGapThresh : 0.50;
+    const RIGHT_GAP = options.rightGapThresh !== undefined ? options.rightGapThresh : 0.80;
+    
+    const nSeqs = sequences.length;
+    const alnLen = sequences[0].seq.length;
+    
+    // Convert to matrix for fast access
+    const matrix = sequences.map(s => s.seq.split(''));
+    
+    let leftTrimEnd = -1;
+    let rightTrimStart = alnLen;
+    
+    // STEP 1: Trim from LEFT
+    let winGaps = 0;
+    let winCols = 0;
+    
+    for (let col = 0; col < alnLen; col++) {
+        // Count gaps in current column
+        let gapCount = 0;
+        for (let s = 0; s < nSeqs; s++) {
+            const char = matrix[s][col];
+            if (char === '-' || char === '.') gapCount++;
+        }
+        
+        // Add to window
+        winCols++;
+        winGaps += gapCount;
+        
+        // Slide window if larger than EDGE_WINDOW
+        if (winCols > EDGE_WINDOW) {
+            let oldGapCount = 0;
+            const oldCol = col - EDGE_WINDOW;
+            for (let s = 0; s < nSeqs; s++) {
+                const char = matrix[s][oldCol];
+                if (char === '-' || char === '.') oldGapCount++;
+            }
+            winGaps -= oldGapCount;
+            winCols--;
+        }
+        
+        const cumulativeGapPct = winGaps / (winCols * nSeqs);
+        
+        if (cumulativeGapPct > LEFT_GAP) {
+            leftTrimEnd = col;
+        } else {
+            // Found first position with acceptable gaps, stop trimming left
+            break;
+        }
+    }
+    
+    // STEP 2: Trim from RIGHT
+    winGaps = 0;
+    winCols = 0;
+    const winGapArray = [];
+    
+    for (let col = alnLen - 1; col >= 0; col--) {
+        // Count gaps in current column
+        let gapCount = 0;
+        for (let s = 0; s < nSeqs; s++) {
+            const char = matrix[s][col];
+            if (char === '-' || char === '.') gapCount++;
+        }
+        
+        // Add to window
+        winGapArray.push(gapCount);
+        winCols++;
+        winGaps += gapCount;
+        
+        // Slide window if larger than EDGE_WINDOW
+        if (winCols > EDGE_WINDOW) {
+            winGaps -= winGapArray.shift();
+            winCols--;
+        }
+        
+        const cumulativeGapPct = winGaps / (winCols * nSeqs);
+        
+        if (cumulativeGapPct > RIGHT_GAP) {
+            rightTrimStart = col;
+        } else {
+            // Found last position with acceptable gaps, stop trimming right
+            break;
+        }
+    }
+    
+    console.log(`Trim boundaries: left=${leftTrimEnd + 1} cols removed, right=${alnLen - rightTrimStart} cols removed`);
+    
+    return {
+        leftTrimEnd: leftTrimEnd,    // Last removed column index on left (0-based)
+        rightTrimStart: rightTrimStart // First removed column index on right (0-based)
+    };
+}

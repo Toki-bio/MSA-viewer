@@ -1,0 +1,646 @@
+[script.js lines 16657-17301 of ViewAlign fd8b8e4]
+function isAltModifier(e) {
+    if (e.altKey) return true;
+    if (typeof e.getModifierState === 'function') {
+        return e.getModifierState('Alt');
+    }
+    return false;
+}
+
+function setCanvasNoticeVisible(visible) {
+    const notice = ensureCanvasModeNotice();
+    if (notice) notice.classList.toggle('is-visible', visible);
+}
+
+function syncCodonModePanel() {
+    const panel = document.getElementById('codonModePanel');
+    if (!panel) return;
+    const codonOn = document.getElementById('codonAnalysis')?.checked;
+    const hasData = !!(state._codonFrames && state._codonData);
+    const hasSeqs = !!(state.seqs && state.seqs.length > 0);
+    const readsMode = document.getElementById('modeReads')?.checked;
+    const visible = codonOn && hasData && hasSeqs && !readsMode;
+    panel.classList.toggle('is-visible', visible);
+    if (visible) panel.removeAttribute('hidden');
+    else panel.setAttribute('hidden', '');
+    if (!visible) return;
+
+    const frameSel = document.getElementById('codonFrame')?.value || 'auto';
+    document.querySelectorAll('#codonFrameSwitch input[name="codonFrameQuick"]').forEach(r => {
+        r.checked = (r.value === frameSel);
+    });
+    // "Genes" only when an annotation track with CDS features is loaded
+    const hasGenes = _annotCdsFeatures().length > 0;
+    const gRadio = document.getElementById('cfGenes');
+    if (gRadio) { gRadio.hidden = !hasGenes; const lbl = gRadio.nextElementSibling; if (lbl) lbl.hidden = !hasGenes; }
+}
+
+// AA only (Codon bar button, Display menu checkbox): the translation in place of the
+// nucleotides. Only with codon analysis on, in Full and Block (Canvas draws its own).
+function _aaOnlyActive() {
+    return !!(document.getElementById('aaOnly')?.checked && state._codonData);
+}
+function syncAaOnly() {
+    const on = !!document.getElementById('aaOnly')?.checked;
+    document.body.classList.toggle('aa-only', on);
+    const btn = document.getElementById('aaOnlyButton');
+    if (btn) btn.setAttribute('aria-pressed', on ? 'true' : 'false');
+}
+function setAaOnly(on) {
+    const cb = document.getElementById('aaOnly');
+    if (!cb || cb.checked === on) { syncAaOnly(); return; }
+    cb.checked = on;
+    syncAaOnly();
+    _invalidateUnifiedWindowMeasurements();
+    renderAlignment({ deferConservation: true });
+}
+
+function domEventTarget(e) {
+    const target = e?.target;
+    if (!target) return null;
+    return target.nodeType === Node.TEXT_NODE ? target.parentElement : target;
+}
+
+function closestFromEvent(e, selector) {
+    return domEventTarget(e)?.closest(selector) || null;
+}
+
+function handleColumnSelectMouseDown(e) {
+    if (e.button !== 0) return false;
+    if (!isCtrlModifier(e) || !isAltModifier(e)) return false;
+    const row = closestFromEvent(e, '.seq-line');
+    if (!row || row.classList.contains('consensus-line') || row.classList.contains('scale-ruler-line')) return false;
+    const span = closestFromEvent(e, '.seq-data span[data-pos]');
+    if (!span) return false;
+    const pos = parseInt(span.dataset.pos, 10);
+    if (!Number.isFinite(pos)) return false;
+
+    state.isDragging = true;
+    state.dragStartCol = pos;
+    state.dragMode = 'col';
+
+    if (e.shiftKey && state.lastSelectedColumn !== null) {
+        const start = Math.min(state.lastSelectedColumn, pos);
+        const end = Math.max(state.lastSelectedColumn, pos);
+        for (let p = start; p <= end; p++) {
+            state.selectedColumns.add(p);
+        }
+    } else if (state.selectedColumns.has(pos)) {
+        state.selectedColumns.delete(pos);
+    } else {
+        state.selectedColumns.add(pos);
+    }
+
+    state.lastSelectedColumn = pos;
+    updateColumnSelections();
+    hideTooltip();
+    e.preventDefault();
+    e.stopPropagation();
+    return true;
+}
+
+function handleNucleotideSelectMouseDown(e) {
+    if (e.button !== 0) return false;
+    if (isAltModifier(e)) return false;
+    // Plain click (no Ctrl) starts a selection drag — EXCEPT while GeneDoc edit
+    // mode is already active, where a plain click still needs to reach
+    // handleGeneDocEditMouseDown unchanged (moving the edit cursor, drag tools,
+    // etc.). Ctrl+click always means "select," active edit mode or not, same
+    // as before this change.
+    if (!isCtrlModifier(e) && state.editModeActive) return false;
+
+    const span = closestFromEvent(e, '.seq-data span[data-pos]');
+    if (!span || span.classList.contains('seq-length')) return false;
+
+    if (isCanvasMode() || document.getElementById('modeReads')?.checked) {
+        return false; // Canvas mode handles selection via its own mousedown handler
+    }
+
+    const row = span.closest('.seq-line');
+    if (!row || row.classList.contains('scale-ruler-line')) return false;
+    const index = resolveNucRowIndex(row);
+    const pos = parseInt(span.dataset.pos, 10);
+    if (!Number.isInteger(index) || !Number.isInteger(pos)) return false;
+
+    if (state.pendingNucStart === null) {
+        state.selectedNucs.clear();
+        state.pendingNucStart = { row: index, pos };
+        state.isDragging = true;
+        state.dragStartRow = index;
+        state.dragStartCol = pos;
+        state.dragMode = 'nuc';
+        const rowSet = new Set([pos]);
+        state.selectedNucs.set(index, rowSet);
+        scheduleNucSelectionRefresh();
+    } else if (state.pendingNucStart.row === index) {
+        const rowSet = buildNucSelectionSet(index, state.pendingNucStart.pos, pos);
+        state.selectedNucs.set(index, rowSet);
+        state.pendingNucStart = null;
+        scheduleNucSelectionRefresh();
+    } else if (state.pendingNucStart.row >= 0 && index >= 0) {
+        // the second click on another row: the rectangle between the two cells (a drag from here replaces it)
+        _setNucRectangle(state.pendingNucStart.row, state.pendingNucStart.pos, index, pos);
+        state.pendingNucStart = null;
+        state.isDragging = true;
+        state.dragStartRow = index;
+        state.dragStartCol = pos;
+        state.dragMode = 'nuc';
+        scheduleNucSelectionRefresh();
+    } else {
+        state.selectedNucs.clear();
+        state.pendingNucStart = { row: index, pos };
+        state.isDragging = true;
+        state.dragStartRow = index;
+        state.dragStartCol = pos;
+        state.dragMode = 'nuc';
+        const rowSet = new Set([pos]);
+        state.selectedNucs.set(index, rowSet);
+        scheduleNucSelectionRefresh();
+    }
+
+    hideTooltip();
+    e.preventDefault();
+    e.stopPropagation();
+    return true;
+}
+
+function handleRowSelectMouseDown(e) {
+    if (e.button !== 0) return false;
+    const name = closestFromEvent(e, '.seq-name');
+    if (!name) return false;
+    const row = name.closest('.seq-line');
+    if (!row || row.classList.contains('consensus-line') || row.classList.contains('scale-ruler-line')) return false;
+    const index = parseInt(row.dataset.seqIndex, 10);
+    if (!Number.isInteger(index)) return false;
+
+    if (isCtrlModifier(e) && !isAltModifier(e)) {
+        state.isDragging = true;
+        state.dragStartRow = index;
+        state.dragMode = 'row';
+        state.selectedNucs.clear();
+        state.pendingNucStart = null;
+        scheduleNucSelectionRefresh();
+        toggleRowSelection(index);
+        state.dragRowRemove = !state.selectedRows.has(index);   // a drag from a selected row deselects
+        e.preventDefault();
+        e.stopPropagation();
+        return true;
+    }
+    if (e.shiftKey && state.lastSelectedIndex !== null) {
+        _rowRangeSelect(state.lastSelectedIndex, index, state.selectedRows.has(index));
+        state.lastSelectedIndex = index;
+        // a residue click before this started a two-click range; it must not complete with that old anchor
+        if (state.pendingNucStart) { state.pendingNucStart = null; scheduleNucSelectionRefresh(); }
+        updateRowSelections();
+        e.preventDefault();
+        e.stopPropagation();
+        return true;
+    }
+    return false;
+}
+
+// Shift+click on names: the rows from the last clicked one to this one are added, or, when this row is already
+// selected, deselected (owner 2026-10-26: there was no way to deselect a range)
+function _rowRangeSelect(from, to, remove) {
+    const start = Math.min(from, to), end = Math.max(from, to);
+    for (let i = start; i <= end; i++) {
+        if (remove) state.selectedRows.delete(i); else state.selectedRows.add(i);
+    }
+}
+// Selection helper consolidating toggle behavior
+function toggleRowSelection(index) {
+    if (state.selectedRows.has(index)) {
+        state.selectedRows.delete(index);
+    } else {
+        state.selectedRows.add(index);
+    }
+    state.lastSelectedIndex = index;
+    updateRowSelections();
+}
+function handleMouseMove(e) {
+    if (_trimDragSide) {
+        _onTrimDragMove(e);
+        return;
+    }
+    if (!state.isDragging) return;
+    if (state.dragMode === 'row') {
+        if (isCanvasMode()) {
+            let index = _canvasRowFromClientY(e.clientY);
+            if (index < 0) index = (_canvasDragCell(e.clientX, e.clientY) || { row: -1 }).row;   // past the last row: up to it (audit M17)
+            if (index >= 0) {
+                _rowRangeSelect(state.dragStartRow, index, !!state.dragRowRemove);
+                updateRowSelections();
+                (_canvasState.scheduleOverlay || _canvasState.scheduleDraw)?.();
+            }
+        } else {
+            const row = closestFromEvent(e, '.seq-line');
+            if (row) {
+                const index = parseInt(row.dataset.seqIndex, 10);
+                // the consensus line is -1: dragging onto it selected "row -1", and Delete then
+                // spliced (-1, 1), removing the last sequence instead
+                if (Number.isInteger(index) && index >= 0 && Number.isInteger(state.dragStartRow) && state.dragStartRow >= 0) {
+                    _rowRangeSelect(state.dragStartRow, index, !!state.dragRowRemove);
+                    updateRowSelections();
+                }
+            }
+        }
+    } else if (state.dragMode === 'col') {
+        hideTooltip();
+        if (isCanvasMode()) {
+            let pos = _canvasColFromClientX(e.clientX, e.clientY);
+            if (pos < 0) pos = (_canvasDragCell(e.clientX, e.clientY) || { col: -1 }).col;   // past the last column: up to it (audit M17)
+            if (pos >= 0) {
+                const start = Math.min(state.dragStartCol, pos);
+                const end = Math.max(state.dragStartCol, pos);
+                for (let p = start; p <= end; p++) state.selectedColumns.add(p);
+                updateColumnSelections();
+                (_canvasState.scheduleOverlay || _canvasState.scheduleDraw)?.();
+            }
+        } else {
+            const span = closestFromEvent(e, '.seq-data span[data-pos]');
+            if (span) {
+                const pos = parseInt(span.dataset.pos);
+                if (isNaN(pos)) return;
+                const start = Math.min(state.dragStartCol, pos);
+                const end = Math.max(state.dragStartCol, pos);
+                for (let p = start; p <= end; p++) {
+                    state.selectedColumns.add(p);
+                }
+                updateColumnSelections();
+            }
+        }
+    } else if (state.dragMode === 'nuc') {
+        if (isCanvasMode()) {
+            // Canvas mode: hit-test instead of DOM span lookup
+            const hit = _canvasHitTest(e.clientX, e.clientY) || _canvasDragCell(e.clientX, e.clientY);   // off the cells: the nearest one (audit M17)
+            if (hit && hit.row === state.dragStartRow) {
+                const rowSet = buildNucSelectionSet(hit.row, state.dragStartCol, hit.col);
+                state.selectedNucs.clear();
+                state.selectedNucs.set(hit.row, rowSet);
+                (_canvasState.scheduleOverlay || _canvasState.scheduleDraw)?.();
+            } else if (hit && hit.row >= 0 && state.dragStartRow >= 0) {
+                // across rows: the rectangle between the press and the pointer
+                _setNucRectangle(state.dragStartRow, state.dragStartCol, hit.row, hit.col);
+                (_canvasState.scheduleOverlay || _canvasState.scheduleDraw)?.();
+            }
+        } else {
+            const span = closestFromEvent(e, '.seq-data span[data-pos]');
+            if (span) {
+                const pos = parseInt(span.dataset.pos);
+                if (isNaN(pos)) return;
+                const rowEl = span.closest('.seq-line');
+                const currentIndex = resolveNucRowIndex(rowEl);
+                if (!Number.isInteger(currentIndex)) return;
+                // within the row: a run; across rows: the rectangle between the press and the pointer
+                if (currentIndex === state.dragStartRow) {
+                    const rowSet = buildNucSelectionSet(currentIndex, state.dragStartCol, pos);
+                    state.selectedNucs.clear();
+                    state.selectedNucs.set(currentIndex, rowSet);
+                    scheduleNucSelectionRefresh();
+                } else if (currentIndex >= 0 && state.dragStartRow >= 0) {
+                    _setNucRectangle(state.dragStartRow, state.dragStartCol, currentIndex, pos);
+                    scheduleNucSelectionRefresh();
+                }
+            }
+        }
+    }
+    e.preventDefault();
+}
+function handleMouseUp() {
+    _endTrimDrag();
+    if (state.dragMode === 'nuc') {
+        // A simple click keeps its pending start for the two-click system; a drag that selected more than
+        // one cell is complete (a stale start used to make the next click elsewhere finish a selection)
+        if (state.pendingNucStart) {
+            let cells = 0;
+            state.selectedNucs.forEach(set => { cells += set.size; });
+            if (cells > 1) { state.pendingNucStart = null; scheduleNucSelectionRefresh(); if (typeof isCanvasMode === 'function' && isCanvasMode()) (_canvasState.scheduleOverlay || _canvasState.scheduleDraw)?.(); }
+        }
+    }
+    state.isDragging = false;
+    state.dragStartRow = null;
+    state.dragStartCol = null;
+    state.dragMode = null;
+}
+// A field that takes typed text; a focused checkbox, radio or button is not "open"
+function _isTextEntry(node) {
+    if (!node || node === document.body) return false;
+    if (node.tagName === 'TEXTAREA' || node.tagName === 'SELECT' || node.isContentEditable) return true;
+    return node.tagName === 'INPUT' && !/^(checkbox|radio|button|submit|reset|color|range|file|image)$/i.test(node.type || '');
+}
+// Where the keyboard is when it is not the alignment's: 'busy' while the busy overlay is up (a job is running),
+// 'window' when focus is inside an open window or a blocking dialog is open, '' otherwise.
+const _KEY_WINDOW_IDS = ['statsModal'];   // non-blocking windows: only while focus is inside them
+const _KEY_BLOCKING_IDS = ['infoModal', 'seqEditModal', 'addSeqModal', 'mafftAskOverlay'];   // dialogs: while they are open
+function _alignmentKeysAway() {
+    const busy = document.getElementById('busyOverlay');
+    if (busy && !busy.hidden) return 'busy';
+    const shown = (id) => { const m = document.getElementById(id); return !!m && m.style.display !== 'none' && m.getClientRects().length > 0; };
+    if (_KEY_BLOCKING_IDS.some(shown)) return 'window';
+    const ae = document.activeElement;
+    if (ae && ae !== document.body) {
+        for (const id of EXCLUSIVE_MODAL_IDS.concat(_KEY_WINDOW_IDS)) {
+            const m = document.getElementById(id);
+            if (m && m.contains(ae) && shown(id)) return 'window';
+        }
+    }
+    return '';
+}
+// A press on the alignment takes the keyboard back from an open window. The handlers that call preventDefault (a
+// residue in Full mode, the name column of the canvas, ...) kept the focus on the window's button, so the next
+// shortcut said "click the alignment first" (GLM check 2026-11-10, #4).
+function _blurFocusInWindow() {
+    const ae = document.activeElement;
+    if (!ae || ae === document.body) return;
+    if (EXCLUSIVE_MODAL_IDS.concat(_KEY_WINDOW_IDS).some(id => { const m = document.getElementById(id); return m && m.contains(ae); })) ae.blur();
+}
+// Load reads the Input box again, which still holds the text first loaded: with edits made since, that silently threw
+// them and the undo history away (audit 2026-11-10, U1, for Ctrl+L outside the box). The owner decided (2026-11-10,
+// GLM check #9) that the Load button itself, and so Ctrl+L in the Input box, asks first too.
+function _loadDiscardsEditsOk() {
+    const edits = state.deletedHistory.length;
+    return !edits || confirm(`Load the text in the Input box again? This discards ${edits} edit${edits === 1 ? '' : 's'} made since and cannot be undone.`);
+}
+function handleKeyDown(e) {
+    if (e.key === 'Escape') {
+        // while a job runs Esc leaves the selection alone (it cleared it behind the busy overlay; GLM check 2026-11-10, #5)
+        if (_alignmentKeysAway() === 'busy') { e.preventDefault(); return; }
+        // A rename box handles its own Esc (cancel); closing menus here blurred it, and the
+        // blur saved the name, so Esc used to commit the rename
+        if (document.activeElement?.classList?.contains('seq-name-edit')) return;
+        // First Esc closes whatever is open; with nothing open it clears the selection
+        // (rows, columns, residues). Undo in the Selections panel brings it back.
+        const somethingOpen = !!document.querySelector('#controls .menu-section.menu-open')
+            || EXCLUSIVE_MODAL_IDS.some(id => { const m = el(id); return m && m.style.display && m.style.display !== 'none'; })
+            || !!document.querySelector('.context-menu')
+            || _isTextEntry(document.activeElement);
+        // Typing in a cell (Type tool): Esc leaves the cell, the selection stays
+        if (!somethingOpen && state.editModeActive && state.editTool === 'residue' && state.editCell) {
+            state.editCell = null;
+            updateEditActiveCell();
+            closeAllMenusViaEsc();
+            e.preventDefault();
+            return;
+        }
+        closeAllMenusViaEsc();
+        closeContextMenu();
+        if (!somethingOpen && !state.editDrag) clearActiveSelection();
+        e.preventDefault();
+        return;
+    }
+
+    // The alignment's shortcuts do nothing while the aligner runs or while the keyboard is in an open window
+    // (audit 2026-11-10, H1-H3). The busy overlay stopped the mouse only: Ctrl+Up during Realign Selected moved
+    // rows and the result landed in the wrong ones. With focus on a button of Statistics, Info, the Tree window
+    // and the rest, Ctrl+R / Ctrl+U / Ctrl+D edited the alignment behind the window.
+    const keysAway = _alignmentKeysAway();
+    if (keysAway) {
+        const ae = document.activeElement;
+        // a drop-down has no shortcuts of its own: the text-field branch below does not treat it as one, so a SELECT let
+        // Ctrl+U / Ctrl+R / Ctrl+A through to the alignment behind the window (GLM check 2026-11-10, #1)
+        const inText = _isTextEntry(ae) && ae.tagName !== 'SELECT' && ae.getClientRects().length > 0;
+        // the Sequence editor's own undo keys (handled further down) and native keys of a text field stay
+        const editorUndo = keysAway === 'window' && _seqEditOpen() && (e.ctrlKey || e.metaKey) && /^[zy]$/i.test(e.key);
+        if (!editorUndo && !(keysAway === 'window' && inText)) {
+            if (e.ctrlKey || e.metaKey || e.altKey) {
+                const k = e.key.toLowerCase();
+                // copy, paste, cut, select all, find and print stay the browser's; the rest must not reach it either
+                // (Ctrl+R would reload the page in the middle of a run)
+                if (!((e.ctrlKey || e.metaKey) && !e.altKey && /^[cvxafp]$/.test(k)) && !/^(control|meta|alt|shift)$/.test(k)) {
+                    e.preventDefault();
+                    showMessage(keysAway === 'busy' ? 'Wait until the running job is done (or press Stop): the alignment cannot be changed meanwhile.'
+                        : 'This shortcut works on the alignment: click the alignment first.', 3000);
+                }
+            }
+            return;
+        }
+    }
+
+    // Ctrl+D (Ctrl+Shift+D: ask first) deletes columns. Handled before everything else
+    // and never left to the browser (bookmark dialog) unless the user is typing in a
+    // visible text field: before, the browser got it whenever the viewer had nothing to
+    // delete by its own rules - residues selected instead of columns, or focus left in
+    // a text box such as the Input box after Ctrl+L.
+    if ((e.ctrlKey || e.metaKey) && !e.altKey && e.key.toLowerCase() === 'd') {
+        const ae = document.activeElement;
+        // any field that takes typed text or a choice (a number box or a drop-down too: Ctrl+D used to delete
+        // columns from there, audit 2026-11-10 U5)
+        const typing = ae && ae.getClientRects().length && _isTextEntry(ae);
+        if (!typing) {
+            e.preventDefault();
+            if (!state.seqs?.length) return;
+            if (state.selectedColumns.size > 0) deleteSelectedColumns(!e.shiftKey);
+            else if (state.selectedNucs.size > 0) deleteColumnsOfResidueSelection(!e.shiftKey);   // a plain drag selects residues
+            else showMessage('Ctrl+D deletes the selected columns: select them with Ctrl+Alt+drag, or click a gene in the annotation track', 4500);
+            return;
+        }
+    }
+
+    // If focus is in an input/textarea, block unmodified keypresses (normal typing),
+    // but allow Ctrl/Meta/Alt shortcuts to pass through - EXCEPT in TEXTAREA
+    // where browser-native shortcuts (Ctrl+A select-all-text, Ctrl+C copy, etc.) should work.
+    const activeEl = document.activeElement;
+    const isFormField = activeEl && (activeEl.tagName === 'INPUT' || activeEl.tagName === 'TEXTAREA' || activeEl.isContentEditable);
+    if (isFormField) {
+        if (activeEl.tagName === 'TEXTAREA') {
+            if (activeEl === fastaInput && (e.ctrlKey || e.metaKey) && !e.shiftKey && !e.altKey && e.key.toLowerCase() === 'l') {
+                el('loadButton')?.click(); // Ctrl+L = Load, as the Load button advertises
+                e.preventDefault();
+            }
+            return; // let browser handle all keys in textarea (Input window etc.)
+        }
+        // A single-line text field (search box, rename box, SeqEdit name...) gets native
+        // editing only. Ctrl+Z/Y/Home/End/arrows used to reach the viewer from here:
+        // Ctrl+Z undid the alignment instead of the typing, and a rename box then saved onto
+        // another row. Ctrl+F in the search box still searches.
+        if (_isTextEntry(activeEl)) {
+            if (activeEl.id === 'searchInput' && (e.ctrlKey || e.metaKey) && !e.altKey && !e.shiftKey && e.key.toLowerCase() === 'f') {
+                searchMotif();
+                e.preventDefault();
+            }
+            return;
+        }
+        if ((e.ctrlKey || e.metaKey) && !e.altKey) {
+            const key = e.key.toLowerCase();
+            if ((key === 'v' || key === 'c' || key === 'x' || key === 'a') && !e.shiftKey) {
+                return; // native copy/paste/cut/select-all in single-line inputs
+            }
+            // delete a word in the field: Ctrl+Delete was the shortcut to delete the selected sequences
+            if (key === 'delete' || key === 'backspace') return;
+        }
+        if (e.ctrlKey || e.metaKey || e.altKey) {
+            // other modifier shortcuts may still apply
+        } else if (state.editModeActive && state.editTool === 'residue' && state.editCell) {
+            // GeneDoc residue editing mode - allow unmodified keys
+        } else {
+            return; // normal typing in input - don't intercept
+        }
+    }
+    if (handleGeneDocResidueKey(e)) {
+        return;
+    }
+    if (e.ctrlKey || e.metaKey) {
+        state.ctrlPressed = true;
+    }
+    if (e.altKey) {
+        state.altPressed = true;
+    }
+    if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'c' && !isFormField) {
+        // If the user has a real native text selection (e.g. text selected inside
+        // a BLAST results panel or any other element), let the browser copy that
+        // text natively - don't hijack Ctrl+C for the app's own selection copy.
+        const sel = window.getSelection();
+        const hasNativeTextSelection = sel && !sel.isCollapsed && String(sel).length > 0;
+        if (!hasNativeTextSelection) {
+            copySelected();
+            e.preventDefault();
+        }
+    }
+    if (e.ctrlKey || e.metaKey) {
+        switch (e.key.toLowerCase()) {
+            case 'r':
+                if (e.shiftKey) {
+                    // Ctrl+Shift+R is browser hard refresh — only hijack when there is a span of
+                    // 2+ adjacent columns to realign (two separate single columns are not one)
+                    const hasSpan = typeof RealignRegion !== 'undefined'
+                        && RealignRegion.columnRuns(state.selectedColumns).length > 0;
+                    if (hasSpan) {
+                        realignSelectedBlock();
+                        e.preventDefault();
+                    }
+                } else {
+                    reverseComplementSelected();
+                    e.preventDefault();
+                }
+                break;
+            case 'delete': // e.key is 'Delete'; the old 'del' never matched
+                deleteSelected();
+                e.preventDefault();
+                break;
+            case 'z':
+                // Ctrl+Shift+Z / Cmd+Shift+Z is redo (it used to undo once more)
+                // while the Sequence editor is open these keys are the editor's, wherever focus is outside a text
+                // field: they used to change the alignment behind the dialog
+                if (_seqEditOpen()) { if (e.shiftKey) _seqEditRedo(); else _seqEditUndo(); }
+                else if (e.shiftKey) redoAction();
+                else undoDelete();
+                e.preventDefault();
+                break;
+            case 'y':
+                if (_seqEditOpen()) _seqEditRedo();
+                else redoAction();
+                e.preventDefault();
+                break;
+            case 'b':
+                insertGroupConsensus();
+                e.preventDefault();
+                break;
+            case 'u':
+                duplicateSelected();
+                e.preventDefault();
+                break;
+            case 't':
+                // Chrome/Edge/Firefox reserve Ctrl+T for a browser tab; this only
+                // reaches the page in an installed-app window. Alt+T is the portable key.
+                openSelectedInNewTab();
+                e.preventDefault();
+                break;
+            case 'l':
+                if (!e.shiftKey && !e.altKey) {
+                    e.preventDefault();
+                    el('loadButton')?.click();   // the Load button asks first when there are edits (_loadDiscardsEditsOk)
+                }
+                break;
+            case 'a':
+                selectAllSequences();
+                e.preventDefault();
+                break;
+            case 's':
+                if (e.shiftKey) {
+                    savePreset();
+                    e.preventDefault();
+                }
+                break;
+            case 'o':
+                loadPreset();
+                e.preventDefault();
+                break;
+            case 'i':
+                openInfoModal();
+                e.preventDefault();
+                break;
+            case 'h':
+                minimizeMenu();
+                e.preventDefault();
+                break;
+            case 'f':
+                if (e.shiftKey) {
+                    clearLastSearch();
+                } else if (e.altKey) {
+                    clearAllSearches();
+                } else {
+                    // Ctrl+F opens the Search box (Canvas and Block draw letters as pixels, so the
+                    // browser's find bar cannot see them) and runs the search when it holds a motif
+                    const inp = el('searchInput');
+                    const sec = inp?.closest('.menu-section');
+                    if (sec) openMenuSection(sec);
+                    if (inp && inp.value.trim()) searchMotif();
+                    if (inp) { inp.focus(); inp.select(); }
+                }
+                e.preventDefault();
+                break;
+            case 'k':
+                if (e.shiftKey) {
+                    copyConsensus();
+                    e.preventDefault();
+                }
+                break;
+            case 'j':
+                if (e.shiftKey) {   // alias of Alt+J (browsers keep Ctrl+Shift+J for DevTools)
+                    copySelectedConsensus();
+                    e.preventDefault();
+                }
+                break;
+            case 'v':
+                if (e.shiftKey) {
+                    copySelectedColumns();
+                    e.preventDefault();
+                }
+                break;
+            case '+':
+            case '=': // Ctrl with the main-row +/= key reports '=' without Shift
+                adjustZoom(10);
+                e.preventDefault();
+                break;
+            case '-':
+                adjustZoom(-10);
+                e.preventDefault();
+                break;
+            case '0':
+                resetZoom();
+                e.preventDefault();
+                break;
+            case 'm':
+                // Toggle all menu sections
+                toggleAllSections();
+                e.preventDefault();
+                break;
+        }
+    }
+    if (e.ctrlKey || e.metaKey) {
+        if (e.key === 'ArrowUp') {
+            moveSelectedUp();
+            e.preventDefault();
+        } else if (e.key === 'ArrowDown') {
+            moveSelectedDown();
+            e.preventDefault();
+        } else if (e.key === 'Home') {
+            moveSelectedToTop();
+            e.preventDefault();
+        } else if (e.key === 'End') {
+            moveSelectedToBottom();
+            e.preventDefault();
+        }
+    }
+
+    // Alt+T: open selected in a new tab (e.code, since Alt+T types a symbol on macOS)

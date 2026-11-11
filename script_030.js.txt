@@ -1,0 +1,393 @@
+[script.js lines 12354-12745 of ViewAlign fd8b8e4]
+let _userDismissedAutoCanvas = false;
+// Canvas is the default view at every size (v261). Choosing Full or Block (or ?view=full|block in the
+// link) is remembered for the session: smaller files then open in that view, and only alignments from
+// ALIGN_CANVAS_DEFAULT_RESIDUES still go to Canvas, as before v261.
+let _userChoseDomView = false;
+let _canvasNoteShown = false;
+
+function _updateCodonAnalysisState(len) {
+    const codonAnalysis = document.getElementById('codonAnalysis')?.checked;
+    if (codonAnalysis) {
+        try {
+            const frameSel = document.getElementById('codonFrame')?.value || 'auto';
+            // Frame: Genes, or Auto with an annotation track that has CDS features: each
+            // gene in its own frame and strand, nothing outside the genes
+            if (frameSel === 'genes' || frameSel === 'auto') {
+                const nCds = _annotCdsFeatures().length;
+                const byGene = nCds ? _computeAnnotatedCodonAnalysis(state.seqs, len) : null;
+                if (byGene) {
+                    state._codonFrames = { frames: [byGene], refIdx: 0, bestFrame: 0, byGene: true };
+                    state._codonData = byGene;
+                    state._codonActiveFrame = 0;
+                    document.body.classList.add('codon-mode');
+                    if (state._lastAnnouncedCodonFrame !== 'genes') {
+                        state._lastAnnouncedCodonFrame = 'genes';
+                        // Name where the translations start: the first screen may hold no CDS at all
+                        const first = _annotCdsFeatures().reduce((a, d) => (!a || d.cs < a.cs ? d : a), null);
+                        const where = first ? `; first: ${first.f.name || 'CDS'} at column ${(first.cs + 1).toLocaleString()}` : '';
+                        // a third overlapping CDS has no lane: say so instead of claiming every CDS is shown
+                        const hid = byGene.hidden && byGene.hidden.length ? `. Not shown where two other CDS already overlap: ${byGene.hidden.slice(0, 3).join(', ')}${byGene.hidden.length > 3 ? ' and more' : ''}` : '';
+                        showMessage(`Codon analysis: ${byGene.genes} CDS from the annotation track, each in its own frame and strand${where}${hid}`, hid ? 8000 : 5000);
+                    }
+                    return;
+                }
+                if (frameSel === 'genes') showMessage('Frame "Genes" needs an annotation track with CDS features (Annotation menu); using Auto', 4000);
+            }
+            state._codonFrames = _computeMultiFrameCodonAnalysis(state.seqs, len);
+            const validFrames = state._codonFrames?.frames?.filter(Boolean);
+            if (state._codonFrames && validFrames && validFrames.length > 0) {
+                let activeFrame;
+                if (frameSel === 'auto' || frameSel === 'genes') {
+                    activeFrame = state._codonFrames.bestFrame;
+                } else if (frameSel === 'all') {
+                    activeFrame = -1;
+                } else {
+                    activeFrame = parseInt(frameSel) || 0;
+                }
+                const displayFrame = activeFrame >= 0 ? activeFrame : 0;
+                state._codonData = state._codonFrames.frames[displayFrame] || validFrames[0];
+                state._codonActiveFrame = activeFrame;
+                document.body.classList.add('codon-mode');
+                if (frameSel === 'auto' || frameSel === 'genes') {
+                    const bf = state._codonFrames.bestFrame;
+                    if (state._lastAnnouncedCodonFrame !== bf) {
+                        state._lastAnnouncedCodonFrame = bf;
+                        showMessage(`Codon analysis: auto-selected frame Pos ${bf + 1} (ATG start)`, 2500);   // as the Pos 1/2/3 buttons (said 'frame 0')
+                    }
+                }
+            } else {
+                state._codonFrames = null;
+                state._codonData = null;
+                state._codonActiveFrame = 0;
+                document.body.classList.remove('codon-mode');
+                showMessage('Codon analysis requires a nucleotide alignment', 4000);
+            }
+        } catch (codonErr) {
+            console.error('Codon analysis failed:', codonErr);
+            state._codonFrames = null;
+            state._codonData = null;
+            state._codonActiveFrame = 0;
+            document.body.classList.remove('codon-mode');
+            showMessage('Codon analysis failed: ' + codonErr.message, 4000);
+        }
+    } else {
+        state._codonData = null;
+        state._codonFrames = null;
+        state._codonActiveFrame = 0;
+        document.body.classList.remove('codon-mode');
+    }
+}
+
+// ── HIDDEN COLUMNS (folds) ──────────────────────────────────────────────────
+// state.hiddenCols: sorted, disjoint, non-touching [start, end] column ranges (0-based, inclusive). A
+// property of the view like the colour scheme: the alignment does not change; analyses, Copy and Save
+// see every column unless 'visible columns only' is ticked. Canvas lays the content out in slots (as for Variable sites only) and puts
+// one marker cell where a run is hidden; a click on the marker (row or ruler) shows the run again.
+// Full and Block hide the folded spans and show the same markers (_foldDomInfo); the windowed Full/Block view
+// shows every column (the commands go to Canvas there).
+const _FOLD_STYLE = { color: '#f2c14e', symbol: '\u2194' };
+function _foldNormalize(ranges, len) {
+    const r = (ranges || []).map(x => [Math.max(0, x[0] | 0), Math.min(len - 1, x[1] | 0)]).filter(x => x[0] <= x[1]).sort((a, b) => a[0] - b[0]);
+    const out = [];
+    for (const x of r) {
+        const last = out[out.length - 1];
+        if (last && x[0] <= last[1] + 1) last[1] = Math.max(last[1], x[1]);
+        else out.push([x[0], x[1]]);
+    }
+    return out;
+}
+function _foldLen() { return state.seqs && state.seqs.length ? _maxOf(state.seqs, q => q.seq.length) : 0; }
+// Full / Block (A2): a hidden column's spans carry .fold-hidden (display: none) in every row, the consensus row and
+// the ruler, and one marker cell (.col-fold) stands before the first column shown after each run (at len for a run
+// that ends the alignment), so the ruler stays over its columns. Not in the windowed view (it builds only the
+// columns near the viewport, by column number): the commands go to Canvas there. null when nothing is folded here.
+function _foldDomInfo() {
+    const f = state.hiddenCols;
+    if (!f || !f.length || isCanvasMode() || state._needsWindowedDom) return null;
+    if (state._foldDom && state._foldDom.f === f) return state._foldDom;
+    const len = _foldLen();
+    const hidden = new Uint8Array(len + 1), before = new Map();
+    for (const r of f) {
+        for (let c = r[0]; c <= r[1] && c < len; c++) hidden[c] = 1;
+        before.set(Math.min(r[1] + 1, len), r);
+    }
+    state._foldDom = { f, len, hidden, before };
+    return state._foldDom;
+}
+function _foldMarkerHtml(r) {
+    return `<span class="col-fold" data-fold="${r[0]}-${r[1]}" title="${_foldRangeText(r)} \u00b7 click to show">${_FOLD_STYLE.symbol}</span>`;
+}
+function _foldMarkerEl(r) {
+    const m = document.createElement('span');
+    m.className = 'col-fold';
+    m.dataset.fold = r[0] + '-' + r[1];
+    m.title = _foldRangeText(r) + ' \u00b7 click to show';
+    m.textContent = _FOLD_STYLE.symbol;
+    return m;
+}
+// "Copy, Save, Tree: visible columns only" (owner: the whole alignment by default, this as an option): a row's
+// text without its folded columns
+function _foldVisibleOnly() {
+    return !!(el('foldVisibleOnly')?.checked && state.hiddenCols && state.hiddenCols.length
+        && (isCanvasMode() || !state._needsWindowedDom));   // the windowed Full / Block view shows every column
+}
+function _foldVisibleSeq(seq) {
+    let out = '', p = 0;
+    for (const r of state.hiddenCols) { out += seq.slice(p, r[0]); p = r[1] + 1; }
+    return out + seq.slice(p);
+}
+// The text after ">" for a row. Normally the long name as read. Where the row's name is not how
+// the long name starts (NEXUS keeps Homo_sapiens with the long name "Homo sapiens"), the name goes
+// first, or the file read back would name the row by the long name's first word (audit M5).
+function _fastaDefline(q) {
+    const full = q.fullHeader != null ? q.fullHeader : q.header;
+    if (!full || !q.header || full.startsWith(q.header)) return full;
+    return q.header + ' ' + full;
+}
+// The FASTA text of Copy Align / the toolbar Copy and Save, and of Copy Sel (selected rows, degapped)
+function _alignmentFastaText() {
+    const vis = _foldVisibleOnly();
+    return state.seqs.map(q => `>${_fastaDefline(q)}\n${vis ? _foldVisibleSeq(q.seq) : q.seq}`).join('\n');
+}
+function _selectedRowsFastaText() {
+    const vis = _foldVisibleOnly();
+    return Array.from(state.selectedRows).sort((a, b) => a - b).filter(i => state.seqs[i]).map(i => {
+        const q = state.seqs[i];
+        return `>${_fastaDefline(q)}\n${degapResidues(vis ? _foldVisibleSeq(q.seq) : q.seq)}`;
+    }).join('\n');
+}
+// The fold holding a column, or null
+function _foldAt(col) {
+    const f = state.hiddenCols;
+    if (!f || !f.length) return null;
+    let lo = 0, hi = f.length - 1;
+    while (lo <= hi) {
+        const mid = (lo + hi) >> 1;
+        if (f[mid][1] < col) lo = mid + 1;
+        else if (f[mid][0] > col) hi = mid - 1;
+        else return f[mid];
+    }
+    return null;
+}
+function _foldCount() { return (state.hiddenCols || []).reduce((n, r) => n + r[1] - r[0] + 1, 0); }
+function _foldRangeText(r) { const n = r[1] - r[0] + 1; return `${n} column${n > 1 ? 's' : ''} hidden (positions ${r[0] + 1}\u2013${r[1] + 1})`; }
+function _foldRefreshUi() {
+    const st = el('foldStatus');
+    if (st) {
+        const f = state.hiddenCols || [];
+        st.textContent = f.length ? `${_foldCount()} columns hidden in ${f.length} fold${f.length > 1 ? 's' : ''}` + (isCanvasMode() || !state._needsWindowedDom ? '' : ' (folded in the Canvas view: this alignment is too large to fold in Full/Block)') : '';
+    }
+    const rv = el('revealColumnsButton');
+    if (rv) rv.disabled = !(state.hiddenCols && state.hiddenCols.length);
+    const vo = el('foldVisibleOnly');
+    if (vo) { vo.disabled = !(state.hiddenCols && state.hiddenCols.length); if (vo.disabled) vo.checked = false; }
+}
+// A different alignment length (columns added or removed by an edit) makes the ranges meaningless
+function _foldCheckLength(len) {
+    if (state.hiddenCols && state.hiddenCols.length && state._hiddenColsLen != null && state._hiddenColsLen !== len) {
+        state.hiddenCols = [];
+        showMessageAfterRender('Hidden columns are shown again: the alignment length changed.', 3500);
+    }
+    state._hiddenColsLen = len;
+    _foldRefreshUi();   // also after a new file (Reveal and the count follow the folds)
+}
+// Set the folds and redraw at the same place
+function _foldApply(ranges) {
+    const len = _foldLen();
+    if (!len) return;
+    const norm = _foldNormalize(ranges, len);
+    if (norm.length === 1 && norm[0][0] === 0 && norm[0][1] === len - 1) {
+        showMessage('At least one column must stay shown.', 3500);
+        return false;
+    }
+    const a = isCanvasMode() ? _captureViewAnchor(true) : null;
+    state.hiddenCols = norm;
+    state._foldDom = null;
+    state._hiddenColsLen = len;
+    _foldRefreshUi();
+    if (!isCanvasMode() && state._needsWindowedDom) return;   // the windowed Full / Block view shows every column
+    const da = isCanvasMode() ? null : _captureViewAnchor(false);
+    renderAlignment();
+    if (a) _applyViewAnchor(a);
+    else if (da) _applyViewAnchor(da);
+}
+// Folds show in Canvas: the commands switch to it from Full or Block
+async function _foldEnsureCanvas() {
+    if (isCanvasMode()) return true;
+    if (!state._needsWindowedDom && isSpanRenderMode()) return true;   // Full / Block fold their spans (A2)
+    if (typeof bamState !== 'undefined' && bamState && bamState.active) { showMessage('Columns cannot be hidden in the reads view (its reference positions must stay continuous).', 4000); return false; }
+    const r = el('modeCanvas');
+    if (!r) return false;
+    r.checked = true;
+    await onModeChange();
+    showMessage('Switched to the Canvas view: this alignment is too large to fold columns in Full/Block.', 3500);
+    return isCanvasMode();
+}
+// The selected columns: the column selection, else the columns of the residue selection
+function _foldSelectedColumns() {
+    const cols = new Set(state.selectedColumns);
+    if (!cols.size && state.selectedNucs) state.selectedNucs.forEach(set => set.forEach(c => cols.add(c)));
+    return [...cols].sort((a, b) => a - b);
+}
+function _foldRunsOf(cols) {
+    const runs = [];
+    for (const c of cols) { const last = runs[runs.length - 1]; if (last && c === last[1] + 1) last[1] = c; else runs.push([c, c]); }
+    return runs;
+}
+async function hideSelectedColumns() {
+    const cols = _foldSelectedColumns();
+    if (!cols.length) { showMessage('Select columns first (Ctrl+Alt+click or drag on the ruler), or a block of residues.', 3500); return; }
+    if (!await _foldEnsureCanvas()) return;
+    if (_foldApply([...(state.hiddenCols || []), ..._foldRunsOf(cols)]) === false) return;
+    state.selectedColumns.clear(); updateColumnSelections();
+    if (state.selectedNucs.size) { state.selectedNucs.clear(); state.pendingNucStart = null; scheduleNucSelectionRefresh(); }   // it is hidden now
+}
+async function hideUnselectedColumns() {
+    const cols = _foldSelectedColumns();
+    if (!cols.length) { showMessage('Select the columns to keep first (Ctrl+Alt+click or drag on the ruler), or a block of residues.', 3500); return; }
+    if (!await _foldEnsureCanvas()) return;
+    const len = _foldLen(), keep = new Set(cols), hide = [];
+    for (let c = 0; c < len; c++) if (!keep.has(c)) hide.push(c);
+    _foldApply([...(state.hiddenCols || []), ..._foldRunsOf(hide)]);
+}
+// Columns with at least pct % gaps ('-' or '.') among all rows
+async function hideGappyColumns() {
+    const pct = Math.min(100, Math.max(1, parseFloat(el('hideGappyPct')?.value) || 100));
+    const len = _foldLen(), seqs = state.seqs, n = seqs.length;
+    if (!len) return;
+    const need = Math.ceil(pct / 100 * n - 1e-9), hide = [];
+    // gaps per column, row by row (a row shorter than the alignment counts as gaps at its end), in slices of
+    // ~30 ms so a large alignment does not freeze the page
+    const gaps = new Uint32Array(len);
+    let t0 = performance.now(), told = false;
+    for (let i = 0; i < n; i++) {
+        const q = seqs[i].seq, m = Math.min(q.length, len);
+        for (let c = 0; c < m; c++) { const k = q.charCodeAt(c); if (k === 45 || k === 46) gaps[c]++; }
+        for (let c = m; c < len; c++) gaps[c]++;
+        if (performance.now() - t0 > 30) {
+            if (!told) { told = true; showMessage('Looking for gappy columns...', 0); }
+            await new Promise(r => setTimeout(r, 0));
+            if (state.seqs !== seqs) return;   // another file came in meanwhile
+            t0 = performance.now();
+        }
+    }
+    for (let c = 0; c < len; c++) if (gaps[c] >= need) hide.push(c);
+    if (!hide.length) { showMessage(`No column has ${pct} % or more gaps.`, 3000); return; }
+    if (!await _foldEnsureCanvas()) return;
+    if (_foldApply([...(state.hiddenCols || []), ..._foldRunsOf(hide)]) === false) return;
+    showMessage(`${hide.length} column${hide.length > 1 ? 's' : ''} with ${pct} % or more gaps hidden.`, 3000);
+}
+function revealAllColumns() { if (state.hiddenCols && state.hiddenCols.length) _foldApply([]); }
+// Show the given folds again (a click on a marker)
+function _foldReveal(ranges) {
+    if (!ranges || !ranges.length) return;
+    const drop = new Set(ranges.map(r => r[0]));
+    _foldApply((state.hiddenCols || []).filter(r => !drop.has(r[0])));
+}
+// Going to a hidden column shows its run again first; true when it did
+function _foldRevealCol(col) {
+    const r = _foldAt(col);
+    if (!r) return false;
+    _foldReveal([r]);
+    showMessage(`Column ${col + 1} was hidden: ${_foldRangeText(r).replace(' hidden', '')} shown again.`, 3000);
+    return true;
+}
+
+function _computeVarSites(len) {
+    const highlightDiffs = document.getElementById('highlightDiffs')?.checked;
+    const varSites = document.getElementById('varSitesOnly')?.checked;
+    updateVarThresholdBounds();
+    const varThresholdMode = document.getElementById('varThresholdMode')?.value || 'pct';
+    const varThresholdRaw = parseInt(document.getElementById('varSitesThreshold')?.value) || 0;
+    const nSeq = state.seqs.length;
+    // At most nSeq - 1 sequences can differ from a column's consensus (the consensus is one of
+    // them), so a threshold of nSeq (the old count maximum, or 100%) could never be met and
+    // "Variable sites only" blanked the whole alignment
+    const varThreshold = Math.min(Math.max(nSeq - 1, 1), varThresholdMode === 'count'
+        ? varThresholdRaw
+        : (varThresholdRaw === 0 ? 0 : Math.ceil((varThresholdRaw / 100) * nSeq)));
+    const showBreakpoints = document.getElementById('varSitesBreakpoints')?.checked !== false;
+    if ((highlightDiffs || varSites) && state.seqs.length > 1) {
+        const diffCols = new Set();
+        const spans = state.seqs.map(s => {
+            const seq = s.seq;
+            let first = -1, last = -1;
+            for (let i = 0; i < seq.length; i++) {
+                const c = seq[i];
+                if (c !== '-' && c !== '.') { if (first === -1) first = i; last = i; }
+            }
+            return { first, last };
+        });
+        // An unknown residue (?, X, and N unless the alignment is protein, where N is asparagine) is not
+        // a difference: a column of A and N used to be flagged as variable (audit M19)
+        const nIsUnknown = !isProteinAlignment();
+        for (let pos = 0; pos < len; pos++) {
+            const counts = {};
+            let covered = 0;
+            for (let i = 0; i < state.seqs.length; i++) {
+                const { first, last } = spans[i];
+                if (first === -1 || pos < first || pos > last) continue;
+                const base = (state.seqs[i].seq[pos] || '-').toUpperCase();
+                if (base === '?' || base === 'X' || (base === 'N' && nIsUnknown)) continue;
+                const ch = (base === '-' || base === '.') ? '-' : base;
+                counts[ch] = (counts[ch] || 0) + 1;
+                covered++;
+            }
+            const diffCount = covered > 0 ? covered - Math.max(...Object.values(counts)) : 0;
+            if (varThreshold === 0 || diffCount >= varThreshold) diffCols.add(pos);
+        }
+        state._diffColumns = diffCols;
+        if (varThreshold > 0 && diffCols.size === 0 && typeof showMessage === 'function') {
+            showMessage(`No column has ${varThreshold} or more sequences differing from its consensus; lower the threshold to see columns.`, 4000);
+        }
+        if (varSites) {
+            const hiddenRanges = [];
+            let hiddenStart = -1;
+            for (let pos = 0; pos < len; pos++) {
+                if (!diffCols.has(pos)) {
+                    if (hiddenStart === -1) hiddenStart = pos;
+                } else {
+                    if (hiddenStart !== -1) {
+                        hiddenRanges.push({ start: hiddenStart, end: pos - 1, count: pos - hiddenStart });
+                        hiddenStart = -1;
+                    }
+                }
+            }
+            if (hiddenStart !== -1) hiddenRanges.push({ start: hiddenStart, end: len - 1, count: len - hiddenStart });
+            state._varSiteHiddenRanges = hiddenRanges;
+            document.body.classList.toggle('hide-breakpoints', !showBreakpoints);
+        } else {
+            state._varSiteHiddenRanges = null;
+        }
+        if (highlightDiffs) {
+            document.body.classList.add('highlight-diffs');
+            document.body.classList.remove('var-sites-only');
+        }
+        if (varSites) {
+            document.body.classList.add('var-sites-only');
+            document.body.classList.remove('highlight-diffs');
+        }
+    } else {
+        state._diffColumns = null;
+        state._varSiteHiddenRanges = null;
+        document.body.classList.remove('highlight-diffs');
+        document.body.classList.remove('var-sites-only');
+        document.body.classList.remove('hide-breakpoints');
+    }
+
+    const _varSitesActive = document.body.classList.contains('var-sites-only');
+    const _showBrk = _varSitesActive && !document.body.classList.contains('hide-breakpoints');
+    state._brkBeforePos = new Set();
+    state._brkInfo = {};
+    if (_showBrk && state._varSiteHiddenRanges && state._diffColumns) {
+        for (const r of state._varSiteHiddenRanges) {
+            const afterPos = r.end + 1;
+            if (state._diffColumns.has(afterPos)) {
+                state._brkBeforePos.add(afterPos);
+                state._brkInfo[afterPos] = r;
+            }
+        }
+    }
+}
+

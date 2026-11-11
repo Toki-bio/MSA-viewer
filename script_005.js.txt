@@ -1,0 +1,496 @@
+[script.js lines 1769-2263 of ViewAlign fd8b8e4]
+const SNAPSHOT_SCHEMA_VERSION = 1;
+
+let _dragPreviewEl = null;
+let _dragPreviewClass = '';
+let _draggedSeqIndex = -1;
+let _dragPreviewInsertAbove = true;
+let _dragImageEl = null;
+let _rowReorderDrag = null;
+
+function _getDragImageEl() {
+    if (_dragImageEl && _dragImageEl.isConnected) return _dragImageEl;
+    const el = document.createElement('div');
+    el.style.cssText = 'position:fixed;left:-1000px;top:-1000px;width:1px;height:1px;opacity:0;pointer-events:none;background:transparent;';
+    document.body.appendChild(el);
+    _dragImageEl = el;
+    return el;
+}
+
+function _getDragIndicatorEl() {
+    let indicator = document.getElementById('drag-name-indicator');
+    if (indicator) return indicator;
+    indicator = document.createElement('div');
+    indicator.id = 'drag-name-indicator';
+    indicator.style.cssText = 'position:absolute;height:2px;background:#1976D2;border-radius:2px;pointer-events:none;z-index:200;';
+    return indicator;
+}
+
+// The optional server (server.js) is looked for once, with /api/viewer-info;
+// the other /api calls made on load wait for that answer. On the static site
+// (GitHub Pages) and from file:// there is no server, so nothing is requested
+// (each probe used to log a 404 in the console on every page load).
+let _optionalServerProbe = null;
+function optionalServerInfo() {
+    if (!_optionalServerProbe) {
+        const staticHost = location.protocol === 'file:' || /\.github\.io$/i.test(location.hostname);
+        _optionalServerProbe = staticHost ? Promise.resolve(null)
+            : fetch('/api/viewer-info', { signal: AbortSignal.timeout(3000) })
+                .then(r => r.ok ? r.json() : null)
+                .catch(() => null);
+    }
+    return _optionalServerProbe;
+}
+
+// The local server gives file, SSH, database and MAFFT/BLAST access only to a browser that has opened the
+// link it prints at start (the link carries the access key; audit H10). A browser without it, for example
+// the bookmark http://localhost:3000 on first use, gets one note saying so; a click removes the note.
+function _noteServerKeyMissing(info) {
+    if (!info || info.authorized !== false || document.getElementById('serverKeyNote')) return;
+    const note = document.createElement('div');
+    note.id = 'serverKeyNote';
+    note.setAttribute('role', 'status');
+    note.title = 'Click to hide';
+    note.style.cssText = 'position:fixed;left:8px;bottom:8px;max-width:420px;z-index:10004;background:#fff8e1;color:#333;border:1px solid #e0b000;'
+        + 'border-radius:4px;padding:6px 8px;font:12px Arial,sans-serif;box-shadow:0 2px 8px rgba(0,0,0,0.2);cursor:pointer;';
+    note.textContent = 'The local server does not know this browser yet. Open the link the server printed when it started '
+        + '(it carries your access key), once. Until then, loading files by path or SSH, databases and server MAFFT/BLAST are off; '
+        + 'everything else works.';
+    note.addEventListener('click', () => note.remove());
+    document.body.appendChild(note);
+}
+
+function updateVersionIndicator() {
+    const elVersion = document.getElementById('versionIndicator');
+    if (!elVersion) return;
+    elVersion.textContent = `ViewAlign ${RELEASE_VERSION} (build ${BUILD_TAG})`;
+    // Local script cache-bust tag (always available when served from our server)
+    optionalServerInfo()
+        .then(info => {
+            if (!info) return;
+            _noteServerKeyMissing(info);
+            const local = info.buildTag || info.scriptVersion;
+            if (local && local !== BUILD_TAG) {
+                elVersion.textContent = `ViewAlign ${RELEASE_VERSION} (build ${BUILD_TAG}, served js v${local})`;
+            }
+        })
+        .catch(() => {});
+    // Commit hash for deployed builds, read from a same-origin static file
+    // (version.json) rather than the GitHub REST API. The API approach was
+    // silently unreliable: unauthenticated requests are capped at 60/hour
+    // PER IP, shared across everyone behind the same NAT/proxy - trivially
+    // exhausted by unrelated traffic, and the failure was invisible (a bare
+    // .catch(() => {})), so the commit hash just never appeared with no
+    // error anywhere. A same-origin fetch has no such limit.
+    fetch('version.json?_=' + Date.now())
+        .then(r => r.ok ? r.json() : null)
+        .then(info => {
+            if (!info || !info.commit) return;
+            const sha = info.commit.substring(0, 7);
+            const url = `https://github.com/Toki-bio/MSA-viewer/commit/${info.commit}`;
+            elVersion.innerHTML = `ViewAlign ${RELEASE_VERSION} (build ${BUILD_TAG}, <a href="${url}" target="_blank" style="color:#666;" title="Commit as of the last version.json update">${sha}</a>)`;
+        })
+        .catch(() => {});
+}
+
+function updateControlsOffset() {
+    const controls = document.getElementById('controls');
+    const rootStyle = document.documentElement.style;
+    if (!controls) {
+        rootStyle.setProperty('--controls-offset', '0px');
+        return;
+    }
+    const height = Math.ceil(controls.getBoundingClientRect().height);
+    rootStyle.setProperty('--controls-offset', `${Math.max(0, height)}px`);
+    // Canvas mode sizes its container from its position: follow the controls' new height
+    if (typeof isCanvasMode === 'function' && isCanvasMode()) _canvasState.resizeHandler?.();
+    // a windowed Full/Block view is its own scrolling viewport of fixed height: refit it (the controls
+    // lose or gain a row on a mode switch: Canvas -> Full kept the Canvas height, 25 px short) and
+    // rebuild its row window for the new height
+    else if (state._needsWindowedDom && _unifiedWindowRenderParams && alignmentContainer.style.height && alignmentContainer.style.height !== 'auto') {
+        const before = alignmentContainer.style.height;
+        if (_fitAlignmentViewport() + 'px' !== before) _refreshUnifiedWindowOnScroll(alignmentContainer);
+    }
+}
+
+// ============ SSH FILE FETCH ============
+let _sshServerAvailable = false;
+let _sshPollRunning = false;
+let _pollableServers = [];  // Only servers with direct SSH (no jump host)
+
+// --- Server selector helpers (toggle button group) ---
+function getSelectedServer() {
+    const active = document.querySelector('#sshServerBtnGroup .srv-active');
+    return active ? active.dataset.server : (_pollableServers[0] || 'default');
+}
+function setSelectedServer(key) {
+    const btns = document.querySelectorAll('#sshServerBtnGroup .srv-btn');
+    btns.forEach(b => {
+        if (b.dataset.server === key) {
+            b.classList.add('srv-active');
+            b.style.background = '#4a90d9'; b.style.color = '#fff';
+        } else {
+            b.classList.remove('srv-active');
+            b.style.background = '#f0f0f0'; b.style.color = '#333';
+        }
+    });
+}
+function _buildServerButtons(servers) {
+    const group = document.getElementById('sshServerBtnGroup');
+    if (!group) return;
+    group.innerHTML = '';
+    const keys = Object.keys(servers);
+    keys.forEach((key, i) => {
+        const srv = servers[key];
+        const btn = document.createElement('button');
+        btn.className = 'srv-btn' + (i === 0 ? ' srv-active' : '');
+        btn.dataset.server = key;
+        btn.title = srv.label;
+        btn.textContent = srv.label.split(/[( ]/)[0]; // short name
+        btn.style.cssText = 'font-size:10px;padding:0 6px;height:17px;line-height:15px;border:1px solid #999;cursor:pointer;white-space:nowrap;'
+            + (i === 0 ? 'background:#4a90d9;color:#fff;border-radius:3px 3px 0 0;'
+            : (i === keys.length - 1 ? 'background:#f0f0f0;color:#333;border-top:none;border-radius:0 0 3px 3px;'
+            : 'background:#f0f0f0;color:#333;border-top:none;'));
+        if (keys.length === 1) btn.style.borderRadius = '3px';
+        btn.addEventListener('click', () => setSelectedServer(key));
+        group.appendChild(btn);
+    });
+}
+
+async function checkSshServer() {
+    try {
+        const info = await optionalServerInfo();
+        if (!info) return; // static site: no SSH
+        if (info.authorized === false) return;   // no access key in this browser: the server would refuse (audit H10)
+        const resp = await fetch('/api/ssh-servers', { signal: AbortSignal.timeout(2000) });
+        if (resp.ok) {
+            _sshServerAvailable = true;
+            const servers = await resp.json();
+            _pollableServers = Object.keys(servers).filter(k => servers[k].pollable);
+            if (Object.keys(servers).length === 0) return; // no servers configured
+            debugLog(`[POLL] Pollable servers: ${_pollableServers.join(', ')}`);
+            _buildServerButtons(servers);
+            const row = document.getElementById('sshLoadRow');
+            if (row) row.style.display = '';
+            // MANUAL CHECKING ONLY: User clicks "Check Queue" button to poll
+            // Auto-polling disabled to prevent IDS triggers from continuous SSH connections
+        }
+    } catch (_) {
+        // Server not running - hide SSH row (already hidden by default)
+    }
+}
+
+async function _pollLoop() {
+    while (_sshPollRunning) {
+        try {
+            await _pollQueuedFile();
+        } catch (e) {
+            debugLog(`[POLL] Loop error: ${e.message}`);
+        }
+        await new Promise(r => setTimeout(r, 3000));
+    }
+}
+
+let _pollBusy = false;
+async function _pollQueuedFile() {
+    if (_pollBusy) return;
+    _pollBusy = true;
+    try {
+        // First check local queue
+        const resp = await fetch('/api/poll-file', { signal: AbortSignal.timeout(8000) });
+        if (resp.ok) {
+            const data = await resp.json();
+            if (data.queued) {
+                debugLog(`[POLL] Local queue detected: ${data.file}`);
+                if (data.server) setSelectedServer(data.server);
+                await fetchFileFromServer(data.file, data.server);
+                return;
+            }
+        }
+
+        // Check remote server queue (MC writes to ~/.msa_viewer_queue)
+        // Only poll servers without jump host (direct SSH) to avoid timeouts
+        const srvGroup = document.getElementById('sshServerBtnGroup');
+        if (!srvGroup) return;
+        for (const serverKey of _pollableServers) {
+            try {
+                const r = await fetch(`/api/ssh-poll-file?server=${encodeURIComponent(serverKey)}`,
+                    { signal: AbortSignal.timeout(8000) });
+                if (!r.ok) {
+                    let detail = `HTTP ${r.status}`;
+                    try {
+                        const err = await r.json();
+                        if (err?.error) detail = err.error;
+                    } catch {}
+                    debugLog(`[POLL] ${serverKey}: ${detail}`);
+                    continue;
+                }
+                const data = await r.json();
+                if (data.queued) {
+                    debugLog(`[POLL] ${serverKey}: Queue detected: ${data.file}`);
+                    setSelectedServer(serverKey);
+                    await fetchFileFromServer(data.file, serverKey);
+                    return;
+                }
+            } catch (e) {
+                debugLog(`[POLL] ${serverKey}: ${e.message}`);
+            }
+        }
+    } catch (e) {
+        debugLog(`[POLL] Error: ${e.message}`);
+    } finally {
+        _pollBusy = false;
+    }
+}
+
+// Manual queue checking (user clicks button) with debounce to prevent hammering
+let _lastManualCheckTime = 0;
+async function checkMCQueueOnce() {
+    const now = Date.now();
+    if (now - _lastManualCheckTime < 2000) {
+        showMessage('Please wait 2 seconds before checking again', 2000);
+        return;
+    }
+    _lastManualCheckTime = now;
+
+    const btn = document.getElementById('checkQueueButton');
+    if (btn) btn.disabled = true;
+    const serverKey = getSelectedServer();
+    _sshOpen('SSH - Queue Check');
+    _sshLog(`Checking ${serverKey}...`);
+
+    try {
+        // Check selected server's queue directly (not via _pollQueuedFile which checks ALL)
+        const r = await fetch(`/api/ssh-poll-file?server=${encodeURIComponent(serverKey)}`,
+            { signal: AbortSignal.timeout(12000) });
+        if (!r.ok) {
+            let detail = `HTTP ${r.status}`;
+            try {
+                const err = await r.json();
+                if (err?.error) detail = err.error;
+            } catch {}
+            _sshError(detail);
+            return;
+        }
+        const data = await r.json();
+        if (data.queued) {
+            debugLog(`[POLL] ${serverKey}: Queue detected: ${data.file}`);
+            _sshLog(`Found: ${data.file.split('/').pop()} - fetching...`, 'info');
+            await fetchFileFromServer(data.file, serverKey);
+        } else {
+            _sshLog(`No file queued on ${serverKey}`);
+            _sshConsoleCloseTimer = setTimeout(() => {
+                const c = document.getElementById('sshConsole');
+                if (c) c.style.display = 'none';
+            }, 2000);
+        }
+    } catch (e) {
+        _sshError(`Queue check error: ${e.message}`);
+    } finally {
+        if (btn) btn.disabled = false;
+    }
+}
+
+async function fetchFileFromServer(filePath, serverKey) {
+    if (!filePath || !filePath.trim()) {
+        showMessage('Enter a file path', 2000);
+        return;
+    }
+    filePath = filePath.trim();
+    serverKey = serverKey || getSelectedServer();
+    const btn = document.getElementById('sshLoadButton');
+    const input = document.getElementById('sshPathInput');
+    if (btn) btn.disabled = true;
+    if (input) input.disabled = true;
+    _sshLog(`Fetching ${filePath.split('/').pop()} from ${serverKey}...`);
+    try {
+        const url = `/api/ssh-cat?file=${encodeURIComponent(filePath)}&server=${encodeURIComponent(serverKey)}`;
+        const resp = await fetch(url);
+        if (!resp.ok) {
+            let msg = `HTTP ${resp.status}: SSH fetch failed`;
+            try {
+                const err = await resp.json();
+                if (err?.error) msg = err.error;
+            } catch { /* body not JSON */ }
+            throw new Error(msg);
+        }
+        const data = await resp.json();
+        if (!data.content) {
+            throw new Error(data.error || 'SSH fetch returned no content');
+        }
+        const fastaInputEl = document.getElementById('fastaInput');
+        _setInputText(data.content);
+        const fname = filePath.split('/').pop() || filePath;
+        state.currentFilename = fname;
+        state.currentFilePath = filePath;
+        // the count is known once the load has run (parseAndRender stops at its first await before
+        // parsing: the message used to give the previous file's count)
+        await parseAndRender(true);
+        if (state.currentFilePath !== filePath) { _sshLog(`${fname}: load cancelled`); return; }
+        _sshSuccess(`${fname} | ${state.seqs.length} seq${state.seqs.length !== 1 ? 's' : ''} | ${serverKey}`);
+        // Auto-focus browser window and bring to front
+        window.focus();
+        // Flash title bar to attract attention
+        // a second load while the first still flashes takes over its timer and keeps the real title
+        if (_titleFlash) clearInterval(_titleFlash.timer);
+        const origTitle = _titleFlash ? _titleFlash.orig : document.title;
+        let flashCount = 0;
+        const flashInterval = setInterval(() => {
+            document.title = (flashCount % 2 === 0) ? `* LOADED: ${fname}` : origTitle;
+            flashCount++;
+            if (flashCount > 8 || document.hasFocus()) {
+                document.title = origTitle;
+                clearInterval(flashInterval);
+                _titleFlash = null;
+            }
+        }, 500);
+        _titleFlash = { timer: flashInterval, orig: origTitle };
+        // iOS Safari has no Notification API at all
+        const canNotify = typeof Notification !== 'undefined';
+        if (canNotify && Notification.permission === 'default') {
+            Notification.requestPermission();
+        }
+        if (canNotify && document.hidden && Notification.permission === 'granted') {
+            new Notification('ViewAlign', { body: `Loaded ${fname}` });
+        }
+    } catch (err) {
+        _sshError(err.message);
+    } finally {
+        if (btn) btn.disabled = false;
+        if (input) input.disabled = false;
+    }
+}
+
+function _isPointInsideAlignmentContainer(clientX, clientY) {
+    const container = document.getElementById('alignmentContainer');
+    if (!container) return false;
+    const rect = container.getBoundingClientRect();
+    return clientX >= rect.left && clientX <= rect.right && clientY >= rect.top && clientY <= rect.bottom;
+}
+
+function _handleInternalDragEnterOver(e) {
+    if (_draggedSeqIndex < 0) return;
+    if (!_isPointInsideAlignmentContainer(e.clientX, e.clientY)) return;
+    e.preventDefault();
+    if (e.dataTransfer) e.dataTransfer.dropEffect = 'move';
+}
+
+function _getDraggedIndices(draggedIndex) {
+    if (state.selectedRows.size > 1 && state.selectedRows.has(draggedIndex)) {
+        return Array.from(state.selectedRows).sort((a, b) => a - b);
+    }
+    return [draggedIndex];
+}
+
+function _findNearestSequenceLine(clientY) {
+    const container = document.getElementById('alignmentContainer');
+    if (!container) return null;
+    const lines = container.querySelectorAll('.seq-line[data-seq-index]:not(.consensus-line)');
+    if (!lines.length) return null;
+    let bestLine = null;
+    let bestDist = Infinity;
+    let insertAbove = true;
+    for (const line of lines) {
+        const rect = line.getBoundingClientRect();
+        const midY = rect.top + rect.height / 2;
+        const dist = Math.abs(clientY - midY);
+        if (dist < bestDist) {
+            bestDist = dist;
+            bestLine = line;
+            insertAbove = clientY < midY;
+        }
+    }
+    if (!bestLine) return null;
+    return { line: bestLine, insertAbove };
+}
+
+function _moveDraggedSequences(draggedIndex, targetIndex, insertAbove) {
+    let draggedIndices = _getDraggedIndices(draggedIndex);
+    if (draggedIndices.includes(targetIndex)) return false;
+
+    pushUndo('reorder');
+
+    const seqsToMove = [];
+    for (let i = draggedIndices.length - 1; i >= 0; i--) {
+        seqsToMove.unshift(state.seqs.splice(draggedIndices[i], 1)[0]);
+    }
+
+    let removedBefore = 0;
+    for (const di of draggedIndices) {
+        if (di < targetIndex) removedBefore++;
+    }
+    targetIndex -= removedBefore;
+
+    const insertAt = insertAbove ? targetIndex : targetIndex + 1;
+    state.seqs.splice(insertAt, 0, ...seqsToMove);
+
+    state.selectedRows.clear();
+    for (let i = 0; i < seqsToMove.length; i++) {
+        state.selectedRows.add(insertAt + i);
+    }
+
+    renderAlignment();
+    updateRowSelections();
+    if (seqsToMove.length === 1) {
+        showMessage(`"${seqsToMove[0].header}" moved to position ${insertAt + 1}`, 2000);
+    } else {
+        showMessage(`${seqsToMove.length} sequences moved to position ${insertAt + 1}`, 2000);
+    }
+    return true;
+}
+
+// A press on a name that did not become a drag: select that row alone, or unselect it when it is the only one
+// selected (the manual's "Click sequence name: Select row"). Since the drag-to-reorder (March) such a press was
+// dropped and a plain click selected nothing. The second click of a double-click (rename) changes nothing.
+function _plainNameClick(index, e) {
+    if (!Number.isInteger(index) || index < 0 || (e && e.detail > 1)) return;
+    if (state.selectedRows.size === 1 && state.selectedRows.has(index)) state.selectedRows.clear();
+    else { state.selectedRows.clear(); state.selectedRows.add(index); }
+    state.lastSelectedIndex = index;
+    if (state.pendingNucStart) { state.pendingNucStart = null; state.selectedNucs.clear(); scheduleNucSelectionRefresh(); }
+    updateRowSelections();
+}
+
+function _startRowReorderDrag(e, index) {
+    _rowReorderDrag = {
+        startX: e.clientX,
+        startY: e.clientY,
+        draggedIndex: index,
+        started: false
+    };
+}
+
+function _handleRowReorderMove(e) {
+    if (!_rowReorderDrag) return;
+    const dx = e.clientX - _rowReorderDrag.startX;
+    const dy = e.clientY - _rowReorderDrag.startY;
+    if (!_rowReorderDrag.started) {
+        if ((dx * dx + dy * dy) < 16) return;
+        _rowReorderDrag.started = true;
+        _draggedSeqIndex = _rowReorderDrag.draggedIndex;
+        document.body.classList.add('no-select');
+        _highlightDragSources();
+        document.body.classList.add('row-reorder-active');
+    }
+    const nearest = _findNearestSequenceLine(e.clientY);
+    if (nearest) {
+        const nameEl = nearest.line.querySelector('.seq-name');
+        if (nameEl) {
+            const cls = nearest.insertAbove ? 'drag-insert-above' : 'drag-insert-below';
+            if (_dragPreviewEl !== nameEl || _dragPreviewClass !== cls) {
+                _clearDragInsertPreview();
+                const indicator = _getDragIndicatorEl();
+                indicator.style.left = `${nameEl.offsetLeft + 6}px`;
+                indicator.style.width = `${Math.max(8, nameEl.offsetWidth - 12)}px`;
+                indicator.style.top = nearest.insertAbove ? '-1px' : 'auto';
+                indicator.style.bottom = nearest.insertAbove ? 'auto' : '-1px';
+                nearest.line.appendChild(indicator);
+                _dragPreviewEl = nameEl;
+                _dragPreviewClass = cls;
+                _dragPreviewInsertAbove = nearest.insertAbove;
+            }
+        }
+    }
+    e.preventDefault();
+}
+

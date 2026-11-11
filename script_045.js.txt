@@ -1,0 +1,385 @@
+[script.js lines 18959-19342 of ViewAlign fd8b8e4]
+// opts.panes: also the pane layout (a saved snapshot; not Clone Tab or a pane's own copy)
+function _buildSnapshotPayload(opts = {}) {
+    const fasta = state.seqs.map(s => `>${_fastaDefline(s)}\n${s.seq}`).join('\n');
+    const consensusTypeEl = document.querySelector('input[name="consensusType"]:checked');
+    const shadeModeEl = document.querySelector('input[name="shadeMode"]:checked');
+    const consensusPosEl = document.querySelector('input[name="consensusPosition"]:checked');
+    // Serialize colour state (Map -> array of pairs)
+    const colourMappings = [];
+    colourState?.mappings?.forEach((color, name) => colourMappings.push([name, color]));
+    return {
+        schema: SNAPSHOT_SCHEMA_VERSION,
+        appVersion: `${RELEASE_VERSION} (${BUILD_TAG})`,
+        createdAt: new Date().toISOString(),
+        sourceTitle: state.currentFilename || 'Alignment snapshot',
+        fasta,
+        view: {
+            black: el('blackSlider')?.value,
+            dark: el('darkSlider')?.value,
+            light: el('lightSlider')?.value,
+            blackColor: el('blackColorPicker')?.value,
+            darkColor: el('darkColorPicker')?.value,
+            lightColor: el('lightColorPicker')?.value,
+            zoom: el('zoomSlider')?.value,
+            zoomFormat: 'logSlider',
+            mode: (el('modeCanvas')?.checked || el('modeReads')?.checked) ? 'canvas' : (el('modeBlocks')?.checked ? 'blocks' : 'single'),
+            residueCase: state.residueCase || 'asis',
+            blockSize: String(blockSizeRequested()),   // the width asked for (the slider shows the one drawn)
+            nameLen: el('nameLengthSlider')?.value,
+            consensusThreshold: el('consensusThreshold')?.value,
+            groupConsensusThreshold: el('groupConsensusThreshold')?.value,
+            consensusMinCoverage: el('consensusMinCoverage')?.value,
+            consensusType: consensusTypeEl ? consensusTypeEl.value : 'normal',
+            showConsensus: !!el('showConsensus')?.checked,
+            consensusFallback: el('consensusFallback')?.value,
+            consensusPosition: consensusPosEl ? consensusPosEl.value : 'top',
+            shadeMode: shadeModeEl ? shadeModeEl.value : 'all',
+            colorScheme: getAlignmentColorScheme(),
+            enableBlack: !!el('enableBlack')?.checked,
+            enableDark: !!el('enableDark')?.checked,
+            enableLight: !!el('enableLight')?.checked,
+            stickyNames: !!el('stickyNames')?.checked,
+            nameLenNoLimit: !!el('nameLengthNoLimit')?.checked,
+            selectedRows: Array.from(state.selectedRows).sort((a, b) => a - b),
+            selectedColumns: Array.from(state.selectedColumns).sort((a, b) => a - b),
+            scrollLeft: alignmentContainer?.scrollLeft || 0,
+            scrollTop: alignmentContainer?.scrollTop || 0,
+            maxMismatches: el('maxMismatches')?.value,
+            // the Display toggles and the Canvas position (Clone Tab: the new tab shows exactly this view)
+            highlightDiffs: !!el('highlightDiffs')?.checked,
+            varSitesOnly: !!el('varSitesOnly')?.checked,
+            varSitesThreshold: el('varSitesThreshold')?.value,
+            varThresholdMode: el('varThresholdMode')?.value,
+            varSitesBreakpoints: !!el('varSitesBreakpoints')?.checked,
+            codonAnalysis: !!el('codonAnalysis')?.checked,
+            aaOnly: !!el('aaOnly')?.checked,
+            codonFrame: el('codonFrame')?.value,
+            codonCode: el('codonCode')?.value,
+            canvasOffsetX: _canvasState.offsetX || 0,
+            canvasOffsetY: _canvasState.offsetY || 0,
+            // the place by row and column (any view: the Block view's offsets are its bands', which
+            // another window width or view lays out differently); old snapshots have only the offsets
+            // (block: taken in the Block view, whose raw offsets fit only its own bands)
+            anchor: (() => { try { const a = state.seqs.length ? _captureViewAnchor() : null; return a && { ...a, block: isBlockLayout() }; } catch (e) { return null; } })(),
+            diffsPausedByVarSites: !!state._diffsPausedByVarSites,
+            hiddenCols: state.hiddenCols && state.hiddenCols.length ? state.hiddenCols.map(r => [r[0], r[1]]) : null
+        },
+        trim: state.trimBoundaries ? { ...state.trimBoundaries, manualLeft: !!state.trimManualLeft, manualRight: !!state.trimManualRight } : null,
+        colourState: colourMappings.length > 0 ? { mappings: colourMappings } : null,
+        searchHistory: state.searchHistory.length > 0 ? state.searchHistory.map(h => ({
+            motif: h.motif, color: h.color, label: h.label, strand: h.strand,
+            searchValue: h.searchValue, useRegex: !!h.useRegex, maxMismatches: h.maxMismatches || 0,
+            enabled: h.enabled !== false, matchCount: h.matchCount || 0, sequencesWithMatches: h.sequencesWithMatches || 0
+        })) : null,
+        selections: _snapshotSelections(),
+        annotation: state.annot ? { text: state.annot.text, sourceName: state.annot.sourceName, shown: el('showAnnotation')?.checked !== false } : null,
+        dotBookmarks: state.dotBookmarks?.length ? state.dotBookmarks : null,   // the dot-plot collection
+        panes: opts.panes ? _paneLayoutPayload() : undefined
+    };
+}
+
+// The radio of a group with this value. A snapshot's value went into a CSS selector as text: one
+// with a quote made the selector invalid and stopped the whole snapshot from loading (audit M9).
+function _radioByValue(name, value) {
+    return Array.from(document.querySelectorAll('input[type="radio"]')).find(r => r.name === name && r.value === String(value)) || null;
+}
+// A regex that can take time doubling with the length of the text: a group that holds a repeat and is
+// itself repeated, as in (A+)+$ or (A*)*C. Found by folding the innermost groups one at a time.
+function _regexMayExplode(src) {
+    let t = String(src || '').replace(/\\./g, 'x').replace(/\[[^\]]*\]/g, 'x');
+    const rep = /[+*]|\{\d+,\d*\}/;
+    for (let guard = 0; guard < 200; guard++) {
+        const m = /\((?:\?[:=!]|\?<[=!]|\?<[^>]*>)?([^()]*)\)([+*]|\{\d+,\d*\})?/.exec(t);
+        if (!m) return false;
+        if (m[2] && rep.test(m[1])) return true;
+        t = t.slice(0, m.index) + (rep.test(m[1]) || m[2] ? 'x+' : 'x') + t.slice(m.index + m[0].length);
+    }
+    return true;
+}
+function _applySnapshotView(view) {
+    if (!view || typeof view !== 'object') return;
+    if (view.residueCase === 'upper' || view.residueCase === 'lower' || view.residueCase === 'asis') setResidueCase(view.residueCase);
+
+    const applySliderPair = (key, sliderId, inputId, onSet = null) => {
+        if (view[key] === undefined || view[key] === null) return;
+        if (onSet) {
+            onSet(view[key]);
+            return;
+        }
+        const sliderEl = el(sliderId);
+        const inputEl = el(inputId);
+        if (sliderEl) {
+            sliderEl.value = view[key];
+            updateSliderBackground(sliderEl);
+        }
+        if (inputEl) inputEl.value = view[key];
+    };
+
+    applySliderPair('black', 'blackSlider', 'blackInput');
+    applySliderPair('dark', 'darkSlider', 'darkInput');
+    applySliderPair('light', 'lightSlider', 'lightInput');
+    applySliderPair('zoom', 'zoomSlider', null, (v) => {
+        const n = _normalizeStoredZoomSlider(v, view.zoomFormat !== 'logSlider');
+        const sliderEl = el('zoomSlider');
+        if (sliderEl) {
+            sliderEl.min = '0';
+            sliderEl.max = '100';
+            sliderEl.value = n;
+            updateSliderBackground(sliderEl);
+        }
+        setZoom(_sliderToZoom(n));
+    });
+    applySliderPair('blockSize', 'blockSizeSlider', 'blockSizeInput', (v) => setBlockSizeRequested(v));
+    applySliderPair('nameLen', 'nameLengthSlider', 'nameLengthInput', (v) => setNameLengthUI(v));
+    applySliderPair('consensusThreshold', 'consensusThreshold', 'consensusThresholdInput', (v) => setConsensusThresholdUI(v));
+    applySliderPair('groupConsensusThreshold', 'groupConsensusThreshold', 'groupConsensusThresholdInput', (v) => setGroupConsensusThresholdUI(v));
+    applySliderPair('consensusMinCoverage', 'consensusMinCoverage', 'consensusMinCoverageInput', (v) => {
+        const clamped = clampMinCoverage(v ?? DEFAULTS.minCoverage);
+        const sliderEl = el('consensusMinCoverage');
+        const inputEl = el('consensusMinCoverageInput');
+        if (sliderEl) {
+            sliderEl.value = clamped;
+            updateSliderBackground(sliderEl);
+        }
+        if (inputEl) inputEl.value = clamped;
+    });
+
+    if (view.mode === 'single' || view.mode === 'blocks' || view.mode === 'canvas') {
+        // owner 2026-11-01: legacy 'single' -> Canvas (unless the page itself was opened in Full by ?view=full)
+        const vm = view.mode === 'single' && !_pageOpenedInFull() ? 'canvas' : view.mode;
+        el('modeBlocks').checked = vm === 'blocks';
+        el('modeSingle').checked = vm === 'single';
+        if (el('modeCanvas')) el('modeCanvas').checked = vm === 'canvas';
+        onModeChange();
+    }
+
+    if (view.nameLenNoLimit !== undefined) _applyNameLenNoLimit(!!view.nameLenNoLimit);
+    if (view.stickyNames !== undefined) {
+        el('stickyNames').checked = !!view.stickyNames;
+        toggleStickyNames();
+    }
+
+    if (view.consensusType) {
+        const consensusTypeRadio = _radioByValue('consensusType', view.consensusType);
+        if (consensusTypeRadio) consensusTypeRadio.checked = true;
+    }
+    if (view.consensusPosition) {
+        const consensusPosRadio = _radioByValue('consensusPosition', view.consensusPosition);
+        if (consensusPosRadio && !consensusPosRadio.disabled) consensusPosRadio.checked = true;
+    }
+    if (view.showConsensus !== undefined) {
+        el('showConsensus').checked = !!view.showConsensus;
+    }
+    if (view.consensusFallback && el('consensusFallback')) {
+        el('consensusFallback').value = view.consensusFallback;
+    }
+    if (view.shadeMode) {
+        const shadeModeRadio = _radioByValue('shadeMode', view.shadeMode);
+        if (shadeModeRadio) shadeModeRadio.checked = true;
+    }
+    if (view.colorScheme && el('colorSchemeSelect')) {
+        el('colorSchemeSelect').value = ALIGNMENT_COLOR_SCHEMES.has(view.colorScheme) ? view.colorScheme : DEFAULTS.colorScheme;
+    }
+
+    if (view.enableBlack !== undefined) el('enableBlack').checked = !!view.enableBlack;
+    if (view.enableDark !== undefined) el('enableDark').checked = !!view.enableDark;
+    if (view.enableLight !== undefined) el('enableLight').checked = !!view.enableLight;
+
+    state.selectedRows.clear();
+    if (Array.isArray(view.selectedRows)) {
+        view.selectedRows.forEach(index => {
+            if (Number.isInteger(index) && index >= 0 && index < state.seqs.length) {
+                state.selectedRows.add(index);
+            }
+        });
+    }
+
+    state.selectedColumns.clear();
+    const _snapWidth = state.seqs.reduce((m, q) => Math.max(m, q.seq.length), 0);
+    if (Array.isArray(view.selectedColumns)) {
+        view.selectedColumns.forEach(col => {
+            if (Number.isInteger(col) && col >= 0 && col < _snapWidth) {
+                state.selectedColumns.add(col);
+            }
+        });
+    }
+
+    // Restore custom shading colours
+    if (view.blackColor) { const el = document.getElementById('blackColorPicker'); if (el) el.value = view.blackColor; }
+    if (view.darkColor) { const el = document.getElementById('darkColorPicker'); if (el) el.value = view.darkColor; }
+    if (view.lightColor) { const el = document.getElementById('lightColorPicker'); if (el) el.value = view.lightColor; }
+    if (view.maxMismatches) { const el = document.getElementById('maxMismatches'); if (el) el.value = view.maxMismatches; }
+
+    // Display toggles, through their own change handlers (which keep Highlight diffs and Variable sites
+    // only exclusive, start the codon analysis, and so on); a snapshot without them leaves the defaults
+    const setBox = (id, on) => { const b = el(id); if (b && typeof on === 'boolean' && b.checked !== on) { b.checked = on; b.dispatchEvent(new Event('change', { bubbles: true })); } };
+    const setVal = (id, v, ev) => { const e = el(id); if (e && v !== undefined && v !== null && String(e.value) !== String(v)) { e.value = v; e.dispatchEvent(new Event(ev || 'change', { bubbles: true })); } };
+    setVal('varThresholdMode', view.varThresholdMode);
+    setVal('varSitesThreshold', view.varSitesThreshold, 'input');
+    setBox('varSitesBreakpoints', view.varSitesBreakpoints);
+    // diffs first, then variable sites (which pauses diffs): a snapshot with both ends as the origin did
+    setBox('highlightDiffs', view.highlightDiffs);
+    setBox('varSitesOnly', view.varSitesOnly);
+    if (Array.isArray(view.hiddenCols)) { const L = _foldLen(); state.hiddenCols = _foldNormalize(view.hiddenCols, L); state._hiddenColsLen = L; _foldRefreshUi(); }
+    if (typeof view.diffsPausedByVarSites === 'boolean') state._diffsPausedByVarSites = view.diffsPausedByVarSites;
+    setVal('codonFrame', view.codonFrame);
+    setVal('codonCode', view.codonCode);
+    setBox('codonAnalysis', view.codonAnalysis);
+    setBox('aaOnly', view.aaOnly);
+
+    // A snapshot saved in Block: its render puts the saved place in view (it drew its first frames at the top,
+    // then jumped there in the frame after next; GLM audit cb34 #8). The re-apply below stays for other views.
+    if (!view.keepPlace && view.anchor && view.anchor.block && Number.isInteger(view.anchor.row) && Number.isInteger(view.anchor.col) && isCanvasMode()) _canvasState.pendingAnchor = { row: view.anchor.row, col: view.anchor.col };
+    renderAlignment();
+
+    if (view.keepPlace) return;   // a mirror pane reloading keeps its own place (it restores it itself)
+    const scrollLeft = Number(view.scrollLeft || 0);
+    const scrollTop = Number(view.scrollTop || 0);
+    const ox = Number(view.canvasOffsetX || 0), oy = Number(view.canvasOffsetY || 0);
+    const anchor = view.anchor && Number.isInteger(view.anchor.row) && Number.isInteger(view.anchor.col) ? { row: view.anchor.row, col: view.anchor.col } : null;
+    const blockSaved = !!(view.anchor && view.anchor.block);
+    if (alignmentContainer) {
+        requestAnimationFrame(() => {
+            alignmentContainer.scrollLeft = scrollLeft;
+            alignmentContainer.scrollTop = scrollTop;
+            // Block, or a snapshot saved in Block: the saved row and column (a snapshot saved in Block at
+            // band 5 opened at band 5's raw offset only while the bands were the same). The Canvas strip
+            // keeps its exact raw offsets (Clone Tab), Full its scroll offsets; a Full view without them
+            // goes to the anchor
+            if (anchor && ((typeof isBlockLayout === 'function' && isBlockLayout()) || blockSaved || (!isCanvasMode() && !scrollLeft && !scrollTop))) {
+                requestAnimationFrame(() => _applyViewAnchor(anchor));
+                return;
+            }
+            // the Canvas pans instead of scrolling: its position comes back after its first draw
+            if ((ox || oy) && typeof isCanvasMode === 'function' && isCanvasMode()) {
+                requestAnimationFrame(() => {
+                    const cv = _canvasState.canvas;
+                    if (!cv) return;
+                    const w = parseFloat(cv.style.width) || cv.clientWidth, h = parseFloat(cv.style.height) || cv.clientHeight;
+                    _canvasState.offsetX = Math.max(0, Math.min(ox, (_canvasState.totalContentW || 0) - w));   // not past the content
+                    _canvasState.offsetY = Math.max(0, Math.min(oy, (_canvasState.totalContentH || 0) - h));
+                    _canvasState.scheduleDraw?.(); _canvasState.onOffsetChange?.();
+                });
+            }
+        });
+    }
+}
+
+function _loadSnapshotPayload(payload) {
+    if (!payload || typeof payload !== 'object') {
+        throw new Error('Invalid snapshot payload');
+    }
+    if (!payload.fasta || typeof payload.fasta !== 'string') {
+        throw new Error('Snapshot has no alignment data');
+    }
+
+    const fastaInputEl = el('fastaInput');
+    if (fastaInputEl) _setInputText(payload.fasta);
+
+    state.currentFilename = payload.sourceTitle || payload.title || 'Snapshot';
+    state.currentFilePath = '';
+
+    // Parse and render first, THEN apply view settings
+
+    return parseAndRender(true).then(() => {
+        if (!state.seqs.length) return;   // the alignment text could not be read: the error is on screen, nothing to apply the view to (audit M6)
+        // the trim first: _applySnapshotView renders, and the consensus, the ruler and the Canvas read the trim then
+        if (payload.trim && Number.isInteger(payload.trim.leftTrimEnd) && Number.isInteger(payload.trim.rightTrimStart)) {
+            _setTrimBounds(payload.trim.leftTrimEnd, payload.trim.rightTrimStart, false);
+            state.trimManualLeft = !!payload.trim.manualLeft; state.trimManualRight = !!payload.trim.manualRight;
+        }
+        _applySnapshotView(payload.view || {});
+        // A snapshot gives back exactly what was saved: no colours saved means none shown
+        _applySnapshotColourState(payload.colourState || { mappings: [] });
+        if (payload.searchHistory) {
+            _applySnapshotSearchHistory(payload.searchHistory, payload.view?.maxMismatches);
+        }
+        // Older snapshots have no selections: still clear what the previous session showed
+        _applySnapshotSelections(payload.selections || {});
+        // The dot-plot collection of the snapshot joins the user's own (by id)
+        if (Array.isArray(payload.dotBookmarks)) {
+            if (!Array.isArray(state.dotBookmarks)) state.dotBookmarks = [];
+            const have = new Set(state.dotBookmarks.map(b => b.id));
+            _dotSanitizeBookmarks(payload.dotBookmarks).forEach(b => { if (!have.has(b.id)) { state.dotBookmarks.push(b); have.add(b.id); } });
+            _dotSaveBookmarks(); _dotRenderBookmarks();
+        }
+        // The annotation track is part of what was saved (none saved: none shown)
+        if (payload.annotation && typeof payload.annotation.text === 'string') {
+            const cb = el('showAnnotation');
+            if (cb) cb.checked = payload.annotation.shown !== false;
+            setAnnotation(payload.annotation.text, payload.annotation.sourceName || 'snapshot');
+        } else {
+            clearAnnotation();
+        }
+        // a saved pane layout opens its panes again (in the main page only)
+        if (payload.panes) _paneRestoreLayout(payload.panes);
+    });
+}
+
+// Colours read from a snapshot (a shared link or file) end up in CSS rules:
+// accept only a plain colour, never text that could close the rule.
+function _safeCssColor(c) {
+    const v = String(c == null ? '' : c).trim();
+    if (/^#[0-9a-f]{3,8}$/i.test(v) || /^[a-z]{3,30}$/i.test(v)
+        || /^(rgb|hsl)a?\([\d\s.,%/+-]+\)$/i.test(v)) return v;
+    return null;
+}
+
+function _applySnapshotColourState(cs) {
+    if (!cs || !Array.isArray(cs.mappings)) return;
+    // Replace, not merge - like selectedRows/selectedColumns above, loading a snapshot
+    // should give back exactly what was saved, not saved-plus-whatever-was-already-there.
+    colourState.mappings.clear();
+    cs.mappings.forEach(([name, color]) => {
+        const safe = _safeCssColor(color);
+        if (safe) colourState.mappings.set(name, safe);
+    });
+    if (typeof applyColourToSeqNames === 'function') {
+        applyColourToSeqNames(colourState.mappings);
+    }
+}
+
+// legacyMismatches: the snapshot's view.maxMismatches, the only record old snapshots kept
+function _applySnapshotSearchHistory(sh, legacyMismatches) {
+    if (!Array.isArray(sh)) return;
+    state.searchHistory.forEach(_removeSearchStyle);
+    state.searchHistory = [];
+    sh.forEach(entry => {
+        const strand = entry.strand || 'fwd';
+        const rawMotif = (entry.motif || '').replace(/:(fwd|rev comp|rev)$/i, '');
+        const motifKey = entry.motif && entry.motif.includes(':') ? entry.motif : `${rawMotif}:${strand}`;
+        const className = 'search-hit-' + Math.random().toString(36).substring(2, 12);
+        // Older snapshots have no searchValue; their motif key is "<motif>:<strand>", with
+        // a trailing ":rev" on the reverse-complement key (the label is display text only).
+        const legacyValue = rawMotif.replace(/:rev$/i, '');
+        // Old entries had no useRegex: a motif is plain letters, anything else was a regex
+        const legacyIsRegex = !entry.searchValue && /[^A-Za-z]/.test(legacyValue);
+        let legacyRegex = null;
+        const re = !entry.searchValue && /^restriction:[^:]*:([^:]+):(fwd|rev)/i.exec(motifKey);
+        if (re) legacyRegex = restrictionSiteToRegex(re[2] === 'rev' ? reverseComplement(re[1]).replace(/U/g, 'T') : re[1]);
+        state.searchHistory.push({
+            id: className,
+            motif: motifKey,
+            color: _safeCssColor(entry.color) || '#ffcc00',
+            className,
+            label: entry.label || rawMotif,
+            strand,
+            searchValue: entry.searchValue || legacyRegex || (/rev comp/i.test(strand) ? reverseComplement(legacyValue) : legacyValue),
+            useRegex: !!entry.useRegex || !!legacyRegex || legacyIsRegex,
+            maxMismatches: Number.isInteger(entry.maxMismatches) ? entry.maxMismatches
+                : (legacyRegex || legacyIsRegex ? 0 : (parseInt(legacyMismatches, 10) || 0)),
+            enabled: entry.enabled !== false,
+            matchCount: entry.matchCount || 0,
+            sequencesWithMatches: entry.sequencesWithMatches || 0
+        });
+    });
+    // A saved pattern that can freeze the tab is loaded switched off (audit M7); the user can switch it on
+    const risky = state.searchHistory.filter(h => h.useRegex && h.enabled && _regexMayExplode(h.searchValue));
+    risky.forEach(h => { h.enabled = false; });
+    bumpSearchLayer();
+    reapplySearchHighlights();
+    updateActiveSearchesPanel();
+    if (risky.length) setTimeout(() => showMessage(`A saved search was switched off because its pattern can take very long: ${risky.map(h => h.searchValue).join(', ').slice(0, 80)}`, 7000), 50);
+}
+

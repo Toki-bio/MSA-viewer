@@ -1,0 +1,465 @@
+[script.js lines 20331-20794 of ViewAlign fd8b8e4]
+function _safeExportBaseName() {
+    return (state.currentFilename || 'alignment').replace(/[^a-z0-9._-]+/gi, '_').replace(/^_+|_+$/g, '') || 'alignment';
+}
+
+function _downloadBlob(blob, filename) {
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 2000);
+}
+
+function exportVisibleViewportAsSvg() {
+    _exportAlignmentAsSvg('viewport');
+}
+
+async function exportFullAlignmentAsSvg() {
+    // A whole-alignment SVG carries one element per residue, so it is slow and very large.
+    return runWithProgress('Building SVG...', () => _exportAlignmentAsSvg('full'),
+        'one element per residue - large alignments make large files');
+}
+
+// Escape text for RTF: \ { } and characters outside ASCII (as \uN?)
+function _rtfEscape(text) {
+    let out = '';
+    for (const ch of String(text)) {
+        const code = ch.codePointAt(0);
+        if (ch === '\\' || ch === '{' || ch === '}') out += '\\' + ch;
+        else if (code < 0x80) out += ch;
+        else if (code <= 0xffff) out += `\\u${code > 0x7fff ? code - 0x10000 : code}?`;
+        else {
+            const hi = Math.floor((code - 0x10000) / 0x400) + 0xd800, lo = ((code - 0x10000) % 0x400) + 0xdc00;
+            out += `\\u${hi - 0x10000}?\\u${lo - 0x10000}?`;
+        }
+    }
+    return out;
+}
+
+// GeneDoc-style RTF export: blocks of the Block-mode width, a ruler and the
+// consensus row aligned with the sequences, and each cell in the colours the
+// screen gives it (shading or residue colour scheme, text colour included).
+// Character shading (\chcbpat) is used rather than \highlight, which Word
+// limits to 16 fixed colours.
+function exportAlignmentAsRtf() {
+    if (!state.seqs || state.seqs.length === 0) {
+        showMessage('Load an alignment first.', 3000);
+        return;
+    }
+    const L = _exportLayout({ wrapAlways: true });
+    const probe = _makeCellStyleProbe();
+    const colours = new Map(); // hex -> colour table index (1-based; 0 = auto)
+    const ci = hex => { if (!colours.has(hex)) colours.set(hex, colours.size + 1); return colours.get(hex); };
+    const body = [];
+    const pad = (text, n) => text.length >= n ? text.substring(0, n) : text + ' '.repeat(n - text.length);
+    const cells = (text, start, end, styleAt, consensusRow) => {
+        let line = '';
+        for (const run of _exportRuns(text, start, end, styleAt)) {
+            const st = probe.style(run.st, consensusRow);
+            const bg = ci(st.bg), fg = ci(st.fg);
+            line += `{\\chshdng0\\chcbpat${bg}\\cb${bg}\\cf${fg}${st.bold ? '\\b' : ''} ${_rtfEscape(run.text)}}`;
+        }
+        return line;
+    };
+    try {
+        for (const [start, end] of L.blocks) {
+            const scale = generateScale(end - start, 10, start);
+            body.push(`{\\cf${ci('#666666')} ${' '.repeat(L.nameLen + 1)}${_rtfEscape(scale)}}\\line`);
+            const consensusLine = () => {
+                const shown = Array.from({ length: L.len }, (_, p) => (p >= start && p < end) ? consensusDisplayBase(L.consensus[p] || '-', p, L.threshold) : '-').join('');
+                body.push(`{\\b\\cf${ci('#555555')} ${_rtfEscape(pad('Consensus', L.nameLen))} }` +
+                    cells(shown, start, end, p => getResidueAnnotationClasses(L.consensus[p] || '-'), true) + '\\line');
+            };
+            if (L.consensus && L.consensusPosition === 'top') consensusLine();
+            for (let i = 0; i < state.seqs.length; i++) {
+                const q = state.seqs[i];
+                const name = pad(q.header || `Seq${i + 1}`, L.nameLen);
+                body.push(`{\\b ${_rtfEscape(name)} }` +
+                    cells(_exportCaseText(q.seq), start, end, p => _exportCellClass(q.seq[p] || '-', L.conservation[p], L.config), false) + '\\line');
+            }
+            if (L.consensus && L.consensusPosition === 'bottom') consensusLine();
+            body.push('\\line');
+        }
+    } finally {
+        probe.dispose();
+    }
+    const table = [...colours.entries()].sort((x, y) => x[1] - y[1]).map(([hex]) =>
+        `\\red${parseInt(hex.slice(1, 3), 16)}\\green${parseInt(hex.slice(3, 5), 16)}\\blue${parseInt(hex.slice(5, 7), 16)};`).join('');
+    const rtf = [
+        '{\\rtf1\\ansi\\deff0',
+        '{\\fonttbl{\\f0\\fmodern\\fprq1 Courier New;}}',
+        `{\\colortbl;${table}}`,
+        '\\f0\\fs18',
+        ...body,
+        '}'
+    ].join('\n');
+    _downloadBlob(new Blob([rtf], { type: 'application/rtf' }), `${_safeExportBaseName()}.rtf`);
+    showMessage('Alignment exported as RTF (open in Word)!', 2500);
+}
+
+var _menuMinimized = false;
+var _lastMenuHeight = 0;
+
+function minimizeMenu() {
+    if (_menuMinimized) {
+        expandMenu();
+        return;
+    }
+    _menuMinimized = true;
+    const controls = el('controls');
+    _lastMenuHeight = controls.offsetHeight;
+    // Reset overlay positioning
+    controls.style.position = '';
+    controls.style.top = '';
+    controls.style.left = '';
+    controls.style.right = '';
+    controls.style.zIndex = '';
+    controls.style.boxShadow = '';
+    // Batch all visual changes in one animation frame - no intermediate paint
+    requestAnimationFrame(() => {
+        controls.style.display = 'none';
+        minimizeBar.style.display = 'block';
+        alignmentContainer.style.top = '20px';
+        window.scrollTo(0, 0);
+    });
+}
+function expandMenu() {
+    _menuMinimized = false;
+    // Batch all visual changes in one animation frame
+    requestAnimationFrame(() => {
+        minimizeBar.style.display = 'none';
+        const controls = el('controls');
+        // back to the stylesheet's own layout, and the height as it is now: 'grid' with the height noted
+        // before hiding left an empty band above the alignment that grew with each round (audit U8)
+        controls.style.display = '';
+        alignmentContainer.style.top = (controls.offsetHeight || _lastMenuHeight || 80) + 'px';
+        controls.style.position = '';
+        controls.style.top = '';
+        controls.style.left = '';
+        controls.style.right = '';
+        controls.style.zIndex = '';
+        controls.style.boxShadow = '';
+    });
+}
+function findFuzzyPositions(degapped, motif, maxMismatches) {
+    return findFuzzyMatches(degapped, motif, maxMismatches).map(m => m.idx);
+}
+
+function findFuzzyMatches(degapped, motif, maxMismatches, iupac = false) {
+    const matches = [];
+    const motifLen = motif.length;
+    if (!motifLen || degapped.length < motifLen) return matches;
+    // With iupac, a motif code matches any base it stands for (N: A, C, G or T)
+    const allowed = iupac ? Array.from(motif, c => new Set(iupacToBases(c).concat(c))) : null;
+    for (let i = 0; i <= degapped.length - motifLen; i++) {
+        let mismatches = 0;
+        const matchingPositions = [];
+        for (let j = 0; j < motifLen; j++) {
+            if (degapped[i + j] === motif[j] || (allowed && allowed[j].has(degapped[i + j]))) {
+                matchingPositions.push(i + j);
+            } else {
+                mismatches++;
+                if (mismatches > maxMismatches) break;
+            }
+        }
+        // at least one letter must match: with as many mismatches allowed as the motif is long, every
+        // window used to count as a hit
+        if (mismatches <= maxMismatches && matchingPositions.length > 0) {
+            matches.push({ idx: i, len: motifLen, matchingPositions });
+        }
+    }
+    return matches;
+}
+
+function findMatchesWithMismatches(degapped, motif, maxMismatches) {
+    return findFuzzyPositions(degapped, motif, maxMismatches);
+}
+
+function withRcPrefix(name) {
+    const text = String(name || '');
+    if (!text) return 'rc_';
+    return /^rc_/i.test(text) ? text : `rc_${text}`;
+}
+
+function reverseComplementSequences(indices) {
+    const targets = Array.from(indices || []).filter(i => Number.isInteger(i) && i >= 0 && i < state.seqs.length);
+    if (!targets.length) {
+        showMessage('Select sequences to RevComp.', 3000);
+        return;
+    }
+    // A protein has no complement: this used to rewrite every row as IUPAC nonsense
+    if (isProteinAlignment()) {
+        showMessage('Reverse complement needs nucleotide sequences; this alignment is protein.', 3500);
+        return;
+    }
+    pushUndo('revcomp');
+    const rnaAln = alignmentIsRna();
+    for (const i of targets) {
+        const seqObj = state.seqs[i];
+        const newHeader = withRcPrefix(seqObj.header);
+        const newFullHeader = seqObj.fullHeader && seqObj.fullHeader !== seqObj.header
+            ? withRcPrefix(seqObj.fullHeader)
+            : newHeader;
+        if (colourState?.mappings?.has(seqObj.header)) {
+            const colour = colourState.mappings.get(seqObj.header);
+            colourState.mappings.delete(seqObj.header);
+            colourState.mappings.set(newHeader, colour);
+        }
+        state.seqs[i] = {
+            ...seqObj,
+            header: newHeader,
+            fullHeader: newFullHeader,
+            seq: reverseComplement(seqObj.seq, rnaAln)
+        };
+        state.seqs[i].gaplessPositions = calculateGaplessPositions(state.seqs[i].seq);
+    }
+    state.lastAction = 'revcomp';
+    if (colourState?.mappings?.size && typeof applyColourToSeqNames === 'function') {
+        applyColourToSeqNames(colourState.mappings);
+    }
+    renderAlignment();
+    showMessage(`Reverse complement applied to ${targets.length} sequence${targets.length !== 1 ? 's' : ''}!`, 2000);
+}
+
+const RESTRICTION_ENZYMES = [
+    { name: 'EcoRI', site: 'GAATTC' },
+    { name: 'BamHI', site: 'GGATCC' },
+    { name: 'HindIII', site: 'AAGCTT' },
+    { name: 'NotI', site: 'GCGGCCGC' },
+    { name: 'XhoI', site: 'CTCGAG' },
+    { name: 'KpnI', site: 'GGTACC' },
+    { name: 'SacI', site: 'GAGCTC' },
+    { name: 'PstI', site: 'CTGCAG' },
+    { name: 'SalI', site: 'GTCGAC' },
+    { name: 'SmaI', site: 'CCCGGG' },
+    { name: 'XbaI', site: 'TCTAGA' },
+    { name: 'SpeI', site: 'ACTAGT' },
+    { name: 'NheI', site: 'GCTAGC' },
+    { name: 'AvrII', site: 'CCTAGG' },
+    { name: 'BglII', site: 'AGATCT' },
+    { name: 'NcoI', site: 'CCATGG' },
+    { name: 'NdeI', site: 'CATATG' },
+    { name: 'ApaI', site: 'GGGCCC' },
+    { name: 'AgeI', site: 'ACCGGT' },
+    { name: 'AscI', site: 'GGCGCGCC' },
+    { name: 'BstBI', site: 'TTCGAA' },
+    { name: 'ClaI', site: 'ATCGAT' },
+    { name: 'DraI', site: 'TTTAAA' },
+    { name: 'EagI', site: 'CGGCCG' },
+    { name: 'EcoRV', site: 'GATATC' },
+    { name: 'HaeIII', site: 'GGCC' },
+    { name: 'HhaI', site: 'GCGC' },
+    { name: 'HinfI', site: 'GANTC' },
+    { name: 'HpaI', site: 'GTTAAC' },
+    { name: 'MluI', site: 'ACGCGT' },
+    { name: 'MfeI', site: 'CAATTG' },
+    { name: 'MseI', site: 'TTAA' },
+    { name: 'MspI', site: 'CCGG' },
+    { name: 'NsiI', site: 'ATGCAT' },
+    { name: 'PacI', site: 'TTAATTAA' },
+    { name: 'PvuI', site: 'CGATCG' },
+    { name: 'PvuII', site: 'CAGCTG' },
+    { name: 'ScaI', site: 'AGTACT' },
+    { name: 'SphI', site: 'GCATGC' },
+    { name: 'SspI', site: 'AATATT' },
+    { name: 'StuI', site: 'AGGCCT' },
+    { name: 'TaqI', site: 'TCGA' },
+    { name: 'XmaI', site: 'CCCGGG' },
+    { name: 'BsaI', site: 'GGTCTC' },
+    { name: 'BsmBI', site: 'CGTCTC' },
+    { name: 'BbsI', site: 'GAAGAC' },
+    { name: 'BtgZI', site: 'GCGATG' },
+    { name: 'SapI', site: 'GCTCTTC' },
+    { name: 'AarI', site: 'CACCTGC' },
+    { name: 'DpnI', site: 'GATC' }
+];
+
+const IUPAC_REGEX = {
+    A: 'A', C: 'C', G: 'G', T: 'T', U: 'T',
+    R: '[AG]', Y: '[CT]', S: '[GC]', W: '[AT]',
+    K: '[GT]', M: '[AC]', B: '[CGT]', D: '[AGT]',
+    H: '[ACT]', V: '[ACG]', N: '[ACGT]'
+};
+
+function restrictionSiteToRegex(site) {
+    return String(site || '').toUpperCase().replace(/[^ACGTURYSWKMBDHVN]/g, '').split('')
+        .map(ch => IUPAC_REGEX[ch] || '')
+        .join('');
+}
+
+function parseManualRestrictionSites(text) {
+    return String(text || '').split(',').map(token => token.trim()).filter(Boolean).map((token, index) => {
+        const parts = token.split(':');
+        const name = parts.length > 1 ? parts.shift().trim() : `Custom${index + 1}`;
+        const site = parts.join(':').trim() || token;
+        return { name, site: site.toUpperCase().replace(/[^ACGTURYSWKMBDHVN]/g, '') };
+    }).filter(entry => entry.site);
+}
+
+function renderRestrictionEnzymeList() {
+    const list = el('reSiteList');
+    if (!list || list.children.length > 0) return;
+    RESTRICTION_ENZYMES.sort((a, b) => a.name.localeCompare(b.name)).forEach(({ name, site }) => {
+        const label = document.createElement('label');
+        label.style.cssText = 'display:flex;align-items:center;gap:3px;white-space:nowrap;font-size:10px;';
+        label.title = `${name}: ${site}`;
+        const cb = document.createElement('input');
+        cb.type = 'checkbox';
+        cb.className = 're-cb';
+        cb.value = site;
+        cb.dataset.name = name;
+        cb.style.margin = '0';
+        label.appendChild(cb);
+        label.appendChild(document.createTextNode(`${name} (${site})`));
+        list.appendChild(label);
+    });
+}
+
+function searchResEnzyme() {
+    const cbs = document.querySelectorAll('.re-cb:checked');
+    const selected = Array.from(cbs).map(cb => ({ name: cb.dataset.name || cb.value, site: cb.value }));
+    const manual = parseManualRestrictionSites(el('reSiteManualInput')?.value);
+    const enzymes = [...selected, ...manual];
+    if (!enzymes.length) { showMessage('Select one or more restriction enzymes or enter a site.', 2000); return; }
+    const palette = ['#FFD700','#FF6B6B','#00CED1','#FF8C00','#9370DB','#3CB371','#FF69B4','#20B2AA',
+                     '#FFB347','#87CEEB','#FF6347','#98FB98','#DDA0DD','#F0E68C','#00BFFF','#FFA07A'];
+    let colorIdx = state._searchColorOffset || 0;
+    // An enzyme cuts double-stranded DNA, so a site on the minus strand is a site: always both strands,
+    // not only when the Search panel's box is ticked (minus-strand BsaI, BsmBI, SapI sites were missed; audit M20)
+    const bothStrands = true;
+    const currentResults = [];
+    enzymes.forEach(({ name, site }) => {
+        const regex = restrictionSiteToRegex(site);
+        if (!regex) return;
+        const color = palette[colorIdx % palette.length];
+        const forwardResult = searchMotif({
+            motif: regex,
+            label: `${name} ${site}`,
+            color,
+            useRegex: true,
+            bothStrands: false,
+            strand: 'restriction',
+            key: `restriction:${name}:${site}:fwd`,
+            countMode: 'alignmentSites',
+            overlapping: true,
+            suppressMessage: true
+        });
+        if (forwardResult) currentResults.push(...forwardResult.results);
+        if (bothStrands) {
+            const rcSite = reverseComplement(site).replace(/U/g, 'T');
+            if (rcSite && rcSite !== site.replace(/U/g, 'T')) {
+                const reverseResult = searchMotif({
+                    motif: restrictionSiteToRegex(rcSite),
+                    label: `${name} ${site} (rev comp ${rcSite})`,
+                    color: getComplementaryColor(color),
+                    useRegex: true,
+                    bothStrands: false,
+                    strand: 'restriction rev comp',
+                    key: `restriction:${name}:${site}:rev`,
+                    countMode: 'alignmentSites',
+                    overlapping: true,
+                    suppressMessage: true
+                });
+                if (reverseResult) currentResults.push(...reverseResult.results);
+            }
+        }
+        colorIdx++;
+    });
+    state._searchColorOffset = colorIdx;
+    // the same site found by two entries (two enzymes with one recognition sequence) counts once
+    const unionSize = (field, countField) => currentResults.every(item => Array.isArray(item[field]))
+        ? new Set(currentResults.flatMap(item => item[field])).size
+        : currentResults.reduce((sum, item) => sum + (item[countField] || 0), 0);
+    const totalSites = unionSize('alignmentSites', 'matchCount');
+    const totalRowMatches = unionSize('rowSites', 'rawMatchCount');
+    const sequenceSet = new Set();
+    currentResults.forEach(item => (item.sequenceIndices || []).forEach(index => sequenceSet.add(index)));
+    const totalSeqs = sequenceSet.size;
+    const label = el('reSiteLabel');
+    if (label) label.textContent = `${enzymes.length} enzyme/site${enzymes.length !== 1 ? 's' : ''} searched`;
+    const popup = el('reSitePopup');
+    if (popup) popup.style.display = 'none';
+    showMessage(`Found ${totalSites} unique restriction site${totalSites !== 1 ? 's' : ''} in ${totalSeqs} sequence${totalSeqs !== 1 ? 's' : ''} (${totalRowMatches} row match${totalRowMatches !== 1 ? 'es' : ''}).`, 3500);
+}
+
+function initResEnzymeSearch() {
+    const popup = document.getElementById('reSitePopup');
+    const btn = document.getElementById('reSitePopupBtn');
+    const runBtn = document.getElementById('reSiteRunBtn');
+    const clearBtn = document.getElementById('reSiteClearBtn');
+    if (!popup || !btn) return;
+    renderRestrictionEnzymeList();
+    if (popup.parentElement !== document.body) {
+        document.body.appendChild(popup);
+    }
+    btn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        popup.style.display = popup.style.display === 'none' ? 'block' : 'none';
+    });
+    runBtn?.addEventListener('click', searchResEnzyme);
+    clearBtn?.addEventListener('click', () => {
+        document.querySelectorAll('.re-cb').forEach(cb => cb.checked = false);
+        const manual = el('reSiteManualInput');
+        if (manual) manual.value = '';
+    });
+    const selectAllBtn = document.getElementById('reSiteSelectAllBtn');
+    if (selectAllBtn) selectAllBtn.addEventListener('click', () => {
+        document.querySelectorAll('.re-cb').forEach(cb => cb.checked = true);
+    });
+    const unselectAllBtn = document.getElementById('reSiteUnselectAllBtn');
+    if (unselectAllBtn) unselectAllBtn.addEventListener('click', () => {
+        document.querySelectorAll('.re-cb').forEach(cb => cb.checked = false);
+    });
+    // Close popup on Esc
+    document.addEventListener('keydown', (e) => {
+        if (e.key === 'Escape' && popup.style.display === 'block') {
+            popup.style.display = 'none';
+        }
+    });
+    // Close popup on outside click
+    document.addEventListener('click', (e) => {
+        if (!popup.contains(e.target) && e.target !== btn) {
+            popup.style.display = 'none';
+        }
+    });
+}
+
+// Every view but Reads: matches are found in the sequences, and Full, Block and Canvas
+// draw them through the residue overlay (Canvas is the default view from 40,000 residues,
+// so excluding it greyed the Search menu out on most real alignments).
+function isMotifSearchSupported() {
+    return !document.getElementById('modeReads')?.checked;
+}
+
+/**
+ * Show the difference-threshold slider whenever either variation overlay is on.
+ * The threshold gates the shared conserved-column computation used by BOTH
+ * Highlight-diffs and Variable-sites-only, so hiding the control in diffs mode
+ * left that mode silently threshold-dependent with no way to see or set it.
+ * Breakpoint markers are only drawn where columns are actually hidden, so that
+ * sub-control stays specific to Variable-sites-only.
+ */
+function syncVariationControls() {
+    const diffs = document.getElementById('highlightDiffs')?.checked;
+    const varSites = document.getElementById('varSitesOnly')?.checked;
+    const ctrls = document.getElementById('varSitesControls');
+    if (ctrls) ctrls.style.display = (diffs || varSites) ? 'inline-flex' : 'none';
+    const brkLabel = document.getElementById('varSitesBreakpointsLabel');
+    if (brkLabel) brkLabel.style.display = varSites ? '' : 'none';
+    updateVarThresholdBounds();
+}
+
+/**
+ * Percentage mode rounds up to a whole sequence count (Math.ceil), which on
+ * small alignments can jump by more than 1 sequence between adjacent
+ * percentages. Count mode reinterprets the same slider/number box as an
+ * exact sequence count instead, so every value from 1 to nSeq is reachable
+ * without rounding - including 1, which shows a column the instant even a
+ * single sequence differs. Switching modes changes what the control's upper
+ * bound (100 vs nSeq) and label mean, so both need refreshing whenever the
+ * mode changes or the loaded alignment's sequence count changes.
+ */

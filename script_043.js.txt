@@ -1,0 +1,355 @@
+[script.js lines 18217-18570 of ViewAlign fd8b8e4]
+// Opens the selected sequences in a new ViewAlign tab (it used to open a bare text box with
+// the FASTA). The FASTA goes over postMessage, not the URL: ?data= is too small for a big
+// selection. The new tab (?handoff=<id>) asks its opener for <id>; the opener answers once.
+const _newTabHandoffs = new Map();
+window.addEventListener('message', (e) => {
+    const m = e.data;
+    if (e.origin !== location.origin || !m || m.type !== 'viewalign-handoff-request') return;
+    const h = _newTabHandoffs.get(m.id);
+    if (!h || !e.source) return;
+    _newTabHandoffs.delete(m.id);
+    e.source.postMessage({ type: 'viewalign-handoff', id: m.id, fasta: h.fasta, name: h.name, payload: h.payload || null }, location.origin);
+});
+// ============ LINKED VIEWS (split-view plan, step B1, 2026-10-25) ============
+// Two or more tabs or windows of ViewAlign follow each other's scrolling (Actions > Linked views). Positions,
+// not pixels, go over a BroadcastChannel (same origin, same browser profile): the row at the top, as a sequence
+// name (by index where the peer lacks the name), and the column at the left edge, as a column number or as the
+// residue index of an anchor sequence both alignments contain. The anchor keeps two alignments of the same
+// sequences lined up when their gaps differ: column c here -> residue k of the anchor -> the column holding
+// residue k there. A position applied from a peer is remembered and not sent back (no echo, no ping-pong).
+// The column method and the anchor are one setting for the whole group; rows / columns on or off are per tab.
+const _link = {
+    id: Math.random().toString(36).slice(2, 10), ch: null, on: false, rows: true, cols: true, by: 'column', anchor: '',
+    peers: new Map(),            // id -> { name, names: Set of that tab's sequence names, seen: time of its last message }
+    aliveMs: 5000, pruneMs: 90000, aliveTimer: 0,   // a peer that dies without 'bye' (crash) is dropped after pruneMs of silence
+    muteUntil: 0, lastSent: null, lastApplied: null, raf: 0, hooked: false, seqsRef: null,
+    stats: { sent: 0, applied: 0 },
+};
+function _linkNames() { return state.seqs.map(s => String(s.header || '').trim()); }
+// A row drag or a rename changes state.seqs in place (same array, same length), so a cached index is checked
+// against the row it names, and a miss rebuilds the map once
+function _linkSeqIndexByName(name) {
+    const seqs = state.seqs;
+    const nameOf = i => String(seqs[i]?.header || '').trim();
+    const build = () => {
+        const m = new Map();
+        seqs.forEach((s, i) => { const k = String(s.header || '').trim(); if (!m.has(k)) m.set(k, i); });
+        _link._nameMap = { seqs, n: seqs.length, m };
+    };
+    let fresh = false;
+    if (!_link._nameMap || _link._nameMap.seqs !== seqs || _link._nameMap.n !== seqs.length) { build(); fresh = true; }
+    let i = _link._nameMap.m.get(name);
+    if (i != null && nameOf(i) === name) return i;
+    if (fresh) return -1;
+    build();
+    i = _link._nameMap.m.get(name);
+    return i == null ? -1 : i;
+}
+// residues up to and including a column (a gap column carries the count before it), and back
+// (recomputed when the row's text changed, not only its length: a residue typed over a gap keeps the length)
+function _linkGapless(sq) {
+    if (!sq.gaplessPositions || sq.gaplessPositions.length !== sq.seq.length || sq._linkGapFor !== sq.seq) {
+        sq.gaplessPositions = calculateGaplessPositions(sq.seq);
+        sq._linkGapFor = sq.seq;
+    }
+    return sq.gaplessPositions;
+}
+function _linkColToRes(seqIdx, col) {
+    const g = _linkGapless(state.seqs[seqIdx]);
+    return g.length ? g[Math.max(0, Math.min(col, g.length - 1))] || 0 : 0;
+}
+function _linkResToCol(seqIdx, res) {
+    const g = _linkGapless(state.seqs[seqIdx]);
+    if (res <= 0 || !g.length) return 0;
+    res = Math.min(res, g[g.length - 1] || 0);   // past the anchor's end: its last residue (not the alignment's last column)
+    if (res <= 0) return 0;
+    let lo = 0, hi = g.length - 1;             // the first column whose count reaches res is the residue's own column
+    while (lo < hi) { const mid = (lo + hi) >> 1; if (g[mid] >= res) hi = mid; else lo = mid + 1; }
+    return lo;
+}
+function _linkPost(msg) { try { _link.ch?.postMessage({ ...msg, id: _link.id }); } catch (e) { /* channel closed */ } }
+function _linkHello(reply) { _linkPost({ type: reply ? 'peer' : 'hello', name: state.currentFilename || '', names: _linkNames() }); }
+function _linkEmit() {
+    if (!_link.on || !_link.ch || !state.seqs.length || _link.raf) return;
+    _link.raf = requestAnimationFrame(() => {
+        _link.raf = 0;
+        if (_link.seqsRef !== state.seqs) { _link.seqsRef = state.seqs; _linkHello(false); _linkRefreshUi(); }   // a new file: tell the peers our names
+        if (performance.now() < _link.muteUntil) return;
+        const a = _captureViewAnchor();
+        if (!a) return;
+        const key = a.row + ':' + a.col;
+        if (key === _link.lastSent || key === _link.lastApplied) return;
+        _link.lastSent = key;
+        const msg = { type: 'pos', row: a.row, rowName: String(state.seqs[a.row]?.header || '').trim(), col: a.col };
+        if (_link.by === 'anchor' && _link.anchor) {
+            const ai = _linkSeqIndexByName(_link.anchor);
+            if (ai >= 0) msg.anchor = { name: _link.anchor, res: _linkColToRes(ai, a.col) };
+        }
+        _link.stats.sent++;
+        _linkPost(msg);
+    });
+}
+function _linkApply(m) {
+    if (!_link.on || !state.seqs.length || (!_link.rows && !_link.cols)) return;
+    const cur = _captureViewAnchor() || { row: 0, col: 0 };
+    let row = cur.row, col = cur.col;
+    if (_link.rows) {
+        const byName = m.rowName ? _linkSeqIndexByName(m.rowName) : -1;
+        row = byName >= 0 ? byName : Math.max(0, Math.min(m.row | 0, state.seqs.length - 1));
+    }
+    if (_link.cols) {
+        const len = state.seqs[0]?.seq.length || 1;
+        let c = m.col | 0;
+        if (_link.by === 'anchor' && m.anchor) {
+            const ai = _linkSeqIndexByName(m.anchor.name);
+            if (ai >= 0) c = _linkResToCol(ai, m.anchor.res);
+        }
+        col = Math.max(0, Math.min(c, len - 1));
+    }
+    if (row === cur.row && col === cur.col) return;
+    _link.muteUntil = performance.now() + 250;
+    _link.stats.applied++;
+    _applyViewAnchor({ row, col });
+    // where we landed is not sent back (it can differ from the request by a column: clamping, Canvas slots)
+    requestAnimationFrame(() => { const a = _captureViewAnchor(); if (a) _link.lastApplied = a.row + ':' + a.col; });
+}
+function _linkOnMessage(e) {
+    const m = e.data;
+    if (!m || typeof m !== 'object' || m.id === _link.id) return;
+    const known = _link.peers.get(m.id);
+    if (known) known.seen = performance.now();
+    if (m.type === 'alive') {
+        if (!known) _linkHello(false);   // a peer we had dropped (or never heard): ask for its names again
+    } else if (m.type === 'hello' || m.type === 'peer') {
+        _link.peers.set(m.id, { name: m.name || '', names: new Set(Array.isArray(m.names) ? m.names.map(String) : []), seen: performance.now() });
+        if (m.type === 'hello') { _linkHello(true); _linkPost({ type: 'settings', by: _link.by, anchor: _link.anchor }); }
+        _linkRefreshUi();
+    } else if (m.type === 'bye') {
+        _link.peers.delete(m.id); _linkRefreshUi();
+    } else if (m.type === 'settings') {
+        if (m.by === 'column' || m.by === 'anchor') _link.by = m.by;
+        if (typeof m.anchor === 'string') _link.anchor = m.anchor;
+        _linkRefreshUi();
+    } else if (m.type === 'pos') {
+        _linkApply(m);
+    }
+}
+function _linkHook() {
+    _link.hooked = true;
+    alignmentContainer.addEventListener('scroll', _linkEmit, { passive: true });   // Full / Block / windowed
+    window.addEventListener('scroll', _linkEmit, { passive: true });               // small alignments scroll the page
+    // Canvas: the persistent bars follow its offsets (and are re-synced after every repaint)
+    document.querySelectorAll('#viewer-container .horizontal-scrollbar, #viewer-container .vertical-scrollbar').forEach(b => b.addEventListener('scroll', _linkEmit, { passive: true }));
+    const prev = _canvasState.onOffsetChange;
+    _canvasState.onOffsetChange = () => { prev?.(); _linkEmit(); };
+    window.addEventListener('pagehide', () => { if (_link.on) _linkPost({ type: 'bye' }); });
+}
+function _linkSet(on) {
+    on = !!on;
+    if (on && typeof BroadcastChannel === 'undefined') { showMessage('Linked views need BroadcastChannel, which this browser does not have.', 4000); on = false; }
+    if (on !== _link.on) {
+        _link.on = on;
+        if (on) {
+            if (!_link.ch) { _link.ch = new BroadcastChannel('viewalign-link'); _link.ch.onmessage = _linkOnMessage; }
+            if (!_link.hooked) _linkHook();
+            _link.seqsRef = state.seqs;
+            _linkHello(false);
+            clearInterval(_link.aliveTimer);
+            _link.aliveTimer = setInterval(_linkAlive, _link.aliveMs);
+        } else {
+            clearInterval(_link.aliveTimer); _link.aliveTimer = 0;
+            _linkPost({ type: 'bye' });
+            try { _link.ch?.close(); } catch (e) { /* already closed */ }
+            _link.ch = null; _link.peers.clear();
+        }
+    }
+    _linkRefreshUi();
+}
+// Heartbeat: say we are here, and drop peers silent for longer than pruneMs (a hidden tab's timers can be
+// throttled to once a minute, hence the generous limit)
+function _linkAlive() {
+    if (!_link.on || !_link.ch) return;
+    _linkPost({ type: 'alive' });
+    const now = performance.now();
+    let dropped = false;
+    for (const [id, p] of _link.peers) if (now - (p.seen || 0) > _link.pruneMs) { _link.peers.delete(id); dropped = true; }
+    if (dropped) _linkRefreshUi();
+}
+function _linkRefreshUi() {
+    const on = el('linkViewsOn');
+    if (!on) return;
+    on.checked = _link.on;
+    el('linkRows').checked = _link.rows;
+    el('linkCols').checked = _link.cols;
+    el('linkColsBy').value = _link.by;
+    const sel = el('linkAnchor');
+    // anchor choices: our names that a peer has too; all our names while no peer is known
+    const own = _linkNames();
+    const peers = [..._link.peers.values()];
+    const shared = peers.length ? own.filter(nm => peers.some(pr => pr.names.has(nm))) : own;
+    const base = shared.length ? shared : own;
+    const list = base.slice(0, 2000);
+    // a chosen anchor beyond the first 2000 names stays chosen (and listed)
+    if (_link.anchor && !list.includes(_link.anchor) && base.includes(_link.anchor)) list.unshift(_link.anchor);
+    if (!list.includes(_link.anchor) && own.length) _link.anchor = list[0] || '';
+    sel.innerHTML = list.map(nm => `<option value="${_escapeHtml(nm)}"${nm === _link.anchor ? ' selected' : ''}>${_escapeHtml(nm)}</option>`).join('');
+    sel.hidden = _link.by !== 'anchor';
+    sel.title = peers.length && !shared.length ? 'No sequence name is shared with the other linked views: columns link by number' : 'The sequence whose residues line the views up';
+    const st = el('linkViewsStatus');
+    st.textContent = !_link.on ? '' : _link.peers.size ? `linked with ${_link.peers.size} other view${_link.peers.size === 1 ? '' : 's'}` : 'no other linked view yet: turn Link on there too';
+}
+// Clone Tab carries the link settings in the URL (?link=rows|cols|by|anchor), so the new tab starts linked
+function _linkUrlParam() {
+    return _link.on ? '&link=' + encodeURIComponent([_link.rows ? 1 : 0, _link.cols ? 1 : 0, _link.by, _link.anchor].join('|')) : '';
+}
+function _linkFromUrlParam(v) {
+    const [rows, cols, by, anchor] = String(v || '').split('|');
+    _link.rows = rows !== '0'; _link.cols = cols !== '0';
+    if (by === 'anchor' || by === 'column') _link.by = by;
+    if (anchor) _link.anchor = anchor;
+    _linkSet(true);
+}
+function _linkInit() {
+    const on = el('linkViewsOn');
+    if (!on) return;
+    on.addEventListener('change', () => _linkSet(on.checked));
+    el('linkRows').addEventListener('change', e => { _link.rows = e.target.checked; });
+    el('linkCols').addEventListener('change', e => { _link.cols = e.target.checked; });
+    const settings = () => { _linkPost({ type: 'settings', by: _link.by, anchor: _link.anchor }); _linkRefreshUi(); };
+    el('linkColsBy').addEventListener('change', e => { _link.by = e.target.value === 'anchor' ? 'anchor' : 'column'; settings(); });
+    el('linkAnchor').addEventListener('change', e => { _link.anchor = e.target.value; settings(); });
+    // the anchor list follows the loaded file when the menu is opened
+    document.querySelector('.section-header[data-section="actions"]')?.addEventListener('click', () => setTimeout(_linkRefreshUi, 0));
+}
+
+// ============ PANES IN ONE PAGE (split-view plan, step B2, 2026-10-25) ============
+// Actions > Linked views > Split right / Split below: this whole view opens again in an iframe pane docked at the
+// right or bottom of the page. A pane is a complete ViewAlign (same script, same origin) that receives the view
+// through the Clone Tab hand-off, so it starts as an exact copy; the link of step B1 ties its rows to this page
+// (columns stay free, so two areas of one alignment can be read at once). A pane is a read-only mirror: after an
+// edit here the panes are reloaded from this view (debounced), each keeping its own position. Panes carry no
+// toolbar (it is minimised) and a slim header with the file name, a refresh and a close button.
+const _paneMax = 3;                       // extra panes (four views in all): measured 2026-10-25 on 1500 x 4000, about 30 to 45 MB of JS heap per pane, link latency 70 to 90 ms with three panes
+const _panes = { dock: null, side: 'right', frac: 0.42, list: [], timer: 0 };
+const _paneIsChild = (() => { try { return window.parent !== window && new URLSearchParams(location.search).get('pane') === '1'; } catch (e) { return false; } })();
+function _paneSizePx() {
+    const right = _panes.side === 'right';
+    return Math.round((right ? window.innerWidth : window.innerHeight) * _panes.frac);
+}
+function _paneLayout() {
+    const d = _panes.dock;
+    const body = document.body;
+    if (!d || !_panes.list.length) {
+        body.style.marginRight = body.style.marginBottom = '';
+        document.documentElement.style.removeProperty('--pane-right');
+        if (d) d.style.display = 'none';
+        window.dispatchEvent(new Event('resize'));
+        return;
+    }
+    const right = _panes.side === 'right';
+    const px = _paneSizePx();
+    d.style.display = 'flex';
+    d.className = 'pane-dock pane-dock-' + _panes.side + (d.classList.contains('pane-dragging') ? ' pane-dragging' : '');
+    d.style.width = right ? px + 'px' : '';
+    d.style.height = right ? '' : px + 'px';
+    body.style.marginRight = right ? px + 'px' : '';
+    body.style.marginBottom = right ? '' : px + 'px';
+    if (right) document.documentElement.style.setProperty('--pane-right', px + 'px'); else document.documentElement.style.removeProperty('--pane-right');
+    window.dispatchEvent(new Event('resize'));
+}
+function _paneEnsureDock() {
+    if (_panes.dock) return _panes.dock;
+    const d = document.createElement('div');
+    d.id = 'paneDock';
+    const split = document.createElement('div');
+    split.className = 'pane-splitter';
+    split.title = 'Drag to resize the panes';
+    split.addEventListener('pointerdown', ev => {
+        ev.preventDefault();
+        split.setPointerCapture(ev.pointerId);
+        d.classList.add('pane-dragging');                     // iframes would swallow the pointer
+        const move = e2 => {
+            const right = _panes.side === 'right';
+            const total = right ? window.innerWidth : window.innerHeight;
+            const pos = right ? e2.clientX : e2.clientY;
+            _panes.frac = Math.max(0.15, Math.min(0.8, (total - pos) / total));
+            _paneLayout();
+        };
+        const up = () => { d.classList.remove('pane-dragging'); split.removeEventListener('pointermove', move); split.removeEventListener('pointerup', up); };
+        split.addEventListener('pointermove', move);
+        split.addEventListener('pointerup', up);
+    });
+    d.appendChild(split);
+    const holder = document.createElement('div');
+    holder.className = 'pane-holder';
+    d.appendChild(holder);
+    document.body.appendChild(d);
+    _panes.dock = d;
+    return d;
+}
+function _paneUrl(file) {
+    if (file && file.payload) {   // an own copy from a saved snapshot: its alignment and its view
+        const id = Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
+        _newTabHandoffs.set(id, { fasta: file.payload.fasta, name: file.name, payload: file.payload });
+        return { id, name: file.name, url: location.pathname + '?handoff=' + id + '&pane=1&link=' + encodeURIComponent(['1', '0', _link.by, _link.anchor].join('|')) };
+    }
+    if (file) {   // another alignment: only its text goes over, the pane parses it; columns link by anchor sequence
+        const id = Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
+        _newTabHandoffs.set(id, { fasta: file.text, name: file.name });
+        return { id, name: file.name, url: location.pathname + '?handoff=' + id + '&pane=1&link=' + encodeURIComponent(['1', '1', 'anchor', _link.anchor].join('|')) };
+    }
+    const payload = _buildSnapshotPayload();
+    const name = state.currentFilename || payload.sourceTitle || 'alignment';
+    payload.sourceTitle = name;
+    const id = Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
+    _newTabHandoffs.set(id, { fasta: payload.fasta, name, payload });
+    // Block is the Canvas Block in every link: the test-only DOM Block (?view=domblock) was handed on to panes and
+    // new tabs, so one such link spread the old renderer through every tab opened from it (GLM audit cblk #30/#32)
+    const view = { modeSingle: 'full', modeBlocks: 'block', modeCanvas: 'canvas' }[document.querySelector('input[name="mode"]:checked')?.id] || '';
+    return { id, name, url: location.pathname + '?handoff=' + id + (view ? '&view=' + view : '') + '&pane=1&link=' + encodeURIComponent(['1', '0', _link.by, _link.anchor].join('|')) };
+}
+function paneOpen(side, file) {
+    if (_paneIsChild) return;
+    if (!state.seqs.length) { showMessage('Load an alignment first.', 2500); return; }
+    if (_panes.list.length >= _paneMax) { showMessage(`At most ${_paneMax} extra panes for now.`, 3000); return; }
+    if (_panes.list.length && _panes.side !== side) _panes.list.slice().forEach(paneClose);   // one direction at a time
+    _panes.side = side;
+    const dock = _paneEnsureDock();
+    const { id: handoffId, name, url } = _paneUrl(file);
+    const wrap = document.createElement('div');
+    wrap.className = 'pane';
+    const head = document.createElement('div');
+    head.className = 'pane-head';
+    const title = document.createElement('span');
+    title.className = 'pane-title';
+    const modeBtn = document.createElement('button');
+    modeBtn.className = 'pane-mode';
+    const swap = document.createElement('button');
+    swap.className = 'pane-swap';
+    swap.textContent = '\u21c4'; swap.title = 'Swap: this pane\'s alignment and place go to the main view, and the main view\'s come here';
+    const refresh = document.createElement('button');
+    refresh.className = 'pane-refresh';
+    refresh.textContent = '↻'; refresh.title = 'Reload this pane from the main view';
+    const close = document.createElement('button');
+    close.textContent = '×'; close.title = 'Close this pane';
+    head.append(title, modeBtn, swap, refresh, close);
+    const frame = document.createElement('iframe');
+    frame.title = 'Pane: ' + name;
+    wrap.append(head, frame);
+    dock.querySelector('.pane-holder').appendChild(wrap);
+    // mode: 'mirror' (follows the main view's edits, the default), 'own' (an own copy: edited here, or swapped),
+    // 'file' (another alignment)
+    const rec = { wrap, frame, title, modeBtn, name, handoffId, file: !!file, mode: file ? (file.mode || 'file') : 'mirror', armed: 0 };
+    _panes.list.push(rec);
+    _paneShowMode(rec);
+    modeBtn.addEventListener('click', () => _paneToggleMode(rec));
+    swap.addEventListener('click', () => paneSwap(rec));
+    refresh.addEventListener('click', () => _paneRefreshOne(rec));
+    close.addEventListener('click', () => paneClose(rec));
+    if (!_link.on) { _link.rows = true; _link.cols = !!file; if (file) _link.by = 'anchor'; _linkSet(true); }
+    else if (file) { _link.cols = true; _link.by = 'anchor'; _linkPost({ type: 'settings', by: _link.by, anchor: _link.anchor }); _linkRefreshUi(); }
+    _paneLayout();
+    frame.src = url;
+    return rec;
+}

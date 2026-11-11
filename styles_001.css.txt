@@ -1,0 +1,798 @@
+[styles.css lines 1-797 of ViewAlign fd8b8e4]
+:root {
+    --name-gap: 1ch;   /* space between the name column and the sequence */
+    --controls-offset: 0px;
+    --nameLen: 25;
+    --slider-value: 0%;
+    --slider-fill: #888;
+    --selected-bg: #90ee90;
+    --column-selected-bg: #a5d6a7;
+    --nuc-selected-bg: #ffff00;
+    --tooltip-bg: white;
+    --tooltip-border: #ccc;
+    --modal-bg: #fefefe;
+    --modal-border: #888;
+    --dropzone-bg: #f0f8ff;
+    --dropzone-hover-bg: #e0f0ff;
+    --dropzone-border: #1a2129;
+    --dropzone-hover-border: #004c99;
+    --control-bg: white;
+    --button-bg: white;
+    --button-hover-bg: #e6f3ff;
+    --button-border: #ccc;
+    --block-sep-bg: #f0f0f0;
+    --error-bg: #ffe6e6;
+    --error-border: #ff8080;
+    --search-hit-bg: yellow;
+    /* shading defaults (can be overridden by JS color-pickers) */
+    --blackShading: #000;
+    --darkShading: #555;
+    --lightShading: #ccc;
+    --blackText: white;
+}
+#dropZone {
+    border: 2px dashed var(--dropzone-border);
+    border-radius: 4px;
+    padding: 12px;
+    text-align: center;
+    color: #555;
+    font-size: 14px;
+    background: var(--dropzone-bg);
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    min-height: 80px;
+    width: 100%;
+    box-sizing: border-box;
+    cursor: pointer;
+    transition: all 0.2s;
+}
+#dropZone small {
+    font-size: 11px;
+    color: #777;
+    margin-top: 4px;
+}
+#dropZone:hover {
+    border-color: var(--dropzone-hover-border);
+    background: var(--dropzone-hover-bg);
+}
+
+/* Cross-browser: prevent iOS Safari text zoom on focus */
+html {
+    -webkit-text-size-adjust: 100%;
+    -ms-text-size-adjust: 100%;
+    text-size-adjust: 100%;
+}
+
+#controls {
+    position: fixed;
+    top: 0;
+    left: 0;
+    right: var(--pane-right, 0px);   /* a docked pane (B2) takes the right edge */
+    background: var(--control-bg);
+    padding: 1px 4px;
+    display: flex;
+    flex-direction: column;
+    gap: 1px;
+    font-size: 12px;
+    /* Without a font the headers fell back to the browser serif (Times New Roman on
+       Windows) beside the Arial buttons */
+    font-family: Arial, sans-serif;
+    border-bottom: 0;
+    z-index: 100;
+}
+.status-row {
+    background: var(--control-bg);
+    padding: 2px 4px;
+    border-bottom: 1px solid #ddd;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    z-index: 99;
+    position: relative;
+    width: 100%;
+    box-sizing: border-box;
+    min-height: 18px;
+}
+
+.header-info-row {
+    justify-content: flex-end;
+    padding-top: 1px;
+    padding-bottom: 2px;
+}
+
+.control-row {
+    display: flex;
+    gap: 3px;
+    align-items: center;
+    width: 100%;
+    flex-wrap: nowrap;
+    position: relative;
+    padding-top: 5px;
+}
+
+.control-row.justify-center {
+    justify-content: center;
+}
+
+.wide-section {
+    width: 100%;
+}
+.menu-section {
+    position: relative;
+    display: inline-block;
+    z-index: 10;
+    /* Ensure this contains the absolutely positioned dropdown */
+    isolation: isolate;
+}
+
+/* Input section needs higher z-index to appear above seq-names */
+#input-section {
+    z-index: 200;
+}
+
+.side-section {
+    display: inline-block;
+    vertical-align: middle;
+    flex: 0 0 auto;
+    max-width: none;
+    min-width: 0;
+    box-sizing: border-box;
+    overflow: visible; /* allow dropdowns to overflow outside the side section */
+}
+
+.standard-menu-group {
+    flex: 1 0 auto;               /* never narrower than its menus: they would be drawn over each other */
+    display: flex;
+    justify-content: flex-start;
+    gap: 4px;                     /* with Arial headers (wider than the serif) 10 px pushed the view switch to a second line at 1280-1366 px */
+    align-items: center;
+    min-width: 220px;
+}
+
+/* Menu row: wraps (rather than overlapping) on a window too narrow for it */
+#menuRow {
+    flex-wrap: wrap;
+    row-gap: 2px;
+}
+
+/* The controls of the current mode (view switch, Canvas notice, codon frame, reads),
+   shown by script.js only while one of them is visible. On the menu line when the
+   whole line still fits (file line included), else on a line of their own (placeModeRow). */
+.mode-row {
+    display: flex;
+    align-items: center;
+    flex-wrap: nowrap;
+    gap: 6px;
+    flex: 0 0 auto;
+    padding: 0 4px;
+}
+.mode-row.own-line {
+    flex: 0 0 100%;
+    order: 99;
+    flex-wrap: wrap;
+    overflow: visible;
+    padding: 2px 0 1px;
+}
+#menuRow:has(> #modeRow:not([hidden]):not(.own-line)) > .standard-menu-group {
+    flex-grow: 0;
+}
+.mode-row[hidden] {
+    display: none;
+}
+
+/* Prevent side-section headers from stretching full width */
+.side-section .section-header {
+    display: inline-flex;
+    width: auto;
+}
+/* Input's "+" sits 2px down the 18px header, both from the line's top: vertical-align:
+   middle centred it on the x-height, a fractional offset that a 1x screen rounds */
+#input-section > .section-header { vertical-align: top; }
+
+/* Ensure all menu headers are inline so they don't stretch full width */
+.menu-section .section-header {
+    display: inline-flex;
+    width: auto;
+    padding: 1px 3px;             /* Arial headers: the toolbar keeps the width it had with the serif */
+}
+
+/* Make sure control-group absolute positioning lines up under its header only */
+.side-section .control-group {
+    left: 0;
+    min-width: 0;
+}
+
+/* For side sections (Input/Actions) allow dropdowns to be wider than the small header
+   and align them so they don't get clipped: input dropdown aligns left, actions aligns right. */
+/* Fix Input menu z-index to appear above sticky sequence names */
+.menu-section.side-section#input-section .control-group {
+    left: 0;
+    right: auto;
+    min-width: 260px;
+    padding: 15px; /* Increase padding for better hover area */
+    z-index: 99999; /* Very high to ensure it's above seq-names (z-index: 100) */
+}
+
+/* Increase hover area for Input section to prevent gaps */
+.menu-section.side-section#input-section::after {
+    content: '';
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: -5px; /* Extend below to cover gap */
+    z-index: 9997;
+    pointer-events: none;
+}
+
+/* Actions section: align dropdown to the right so it stays on-screen */
+#actions-section .control-group,
+.menu-section.menu-align-right .control-group,
+.menu-section.menu-flip-right .control-group {
+    left: auto;
+    right: 0;
+    border-radius: 4px 0 4px 4px;
+}
+
+#actions-section .control-group {
+    min-width: 300px;
+    max-width: min(380px, calc(100vw - 12px));
+    padding: 0;
+    overflow-x: hidden;
+    overflow-y: auto;
+    box-sizing: border-box;
+}
+
+#controls #actions-section.menu-open .control-group {
+    display: flex !important;
+    flex-direction: column;
+}
+
+#actions-controls .actions-menu-body {
+    padding: 10px 10px 6px;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+
+#actions-controls .action-section {
+    margin: 0;
+    padding: 8px 10px 10px;
+    border: 1px solid #e4e8ed;
+    border-radius: 6px;
+    background: linear-gradient(180deg, #fcfdfe 0%, #f6f8fa 100%);
+    box-sizing: border-box;
+}
+
+#actions-controls .action-section-label {
+    display: block;
+    width: 100%;
+    box-sizing: border-box;
+    margin: 0 0 8px;
+    padding: 2px 0 2px 8px;
+    font-size: 10px;
+    font-weight: 700;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    color: #455a64;
+    background: transparent;
+    border: none;
+    border-left: 3px solid #90a4ae;
+    border-radius: 0;
+}
+
+#actions-controls .action-section-selection .action-section-label { border-left-color: #1976d2; color: #1565c0; }
+#actions-controls .action-section-order .action-section-label { border-left-color: #7b1fa2; color: #6a1b9a; }
+#actions-controls .action-section-editing .action-section-label { border-left-color: #ef6c00; color: #e65100; }
+#actions-controls .action-section-columns .action-section-label { border-left-color: #00897b; color: #00695c; }
+#actions-controls .action-section-analysis .action-section-label { border-left-color: #5c6bc0; color: #3949ab; }
+#actions-controls .action-section-settings .action-section-label { border-left-color: #546e7a; color: #37474f; }
+#actions-controls .action-section-link .action-section-label { border-left-color: #c2185b; color: #ad1457; }
+/* Linked views (split-view plan B1): one compact row of switches */
+#actions-controls .link-views-row { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 10px; font-size: 11px; }
+#actions-controls .link-views-row label { display: inline-flex; align-items: center; gap: 3px; white-space: nowrap; cursor: pointer; }
+#actions-controls .link-views-row select { font-size: 11px; max-width: 180px; }
+#actions-controls .link-views-status { color: #555; font-style: italic; }
+
+#actions-controls .button-group {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 5px;
+    width: 100%;
+    align-items: stretch;
+}
+
+#actions-controls .button-group button {
+    width: 100%;
+    min-width: 0;
+    margin: 0;
+    padding: 4px 6px;
+    font-size: 11px;
+    line-height: 1.2;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    box-sizing: border-box;
+}
+
+#actions-controls .action-section-columns .button-group {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+#actions-controls .action-section-columns .fold-gappy { grid-column: span 2; }
+#actions-controls .action-section-columns .fold-gappy button { width: auto; flex: 1 1 auto; }
+#actions-controls .action-section-columns .fold-status { grid-column: 1 / -1; }
+
+.actions-menu-footer {
+    flex-shrink: 0;
+    padding: 8px 10px 10px;
+    border-top: 1px solid #d8dee4;
+    background: #eef1f4;
+    box-sizing: border-box;
+}
+
+.actions-hide-menu-btn {
+    display: block;
+    width: 100%;
+    margin: 0 !important;
+    padding: 6px 10px !important;
+    font-size: 11px !important;
+    font-weight: 600;
+    color: #37474f;
+    background: #fff !important;
+    border: 1px solid #b0bec5 !important;
+    border-radius: 4px;
+    box-sizing: border-box;
+}
+
+.actions-hide-menu-btn:hover {
+    background: #eceff1 !important;
+    border-color: #78909c !important;
+}
+
+/* Ensure control-groups inside side-sections are visible outside the parent */
+.side-section .control-group {
+    overflow: visible;
+}
+
+.section-header:hover {
+    background: #e0e0e0;
+}
+
+.control-group {
+    position: absolute;
+    top: calc(100% - 1px);
+    left: 0;
+    width: auto;
+    min-width: 200px; /* Ensure minimum width for content */
+    max-width: 400px;
+    background: #ffffff;
+    border: 1px solid #ccc;
+    box-shadow: 0 4px 8px rgba(0,0,0,0.2);
+    padding: 15px; /* Increased padding for better hover area */
+    display: none;
+    z-index: 9999;
+    border-radius: 0 4px 4px 4px;
+    margin: 0;
+    /* The window height below the menu bar (85vh left a scrollbar for a few
+       pixels on 720-768px screens) */
+    max-height: calc(100vh - 44px);
+    overflow-y: auto; /* Only vertical scrolling when truly needed */
+    overflow-x: visible; /* Allow horizontal content to be visible */
+    will-change: display;
+    -webkit-backface-visibility: hidden;
+    backface-visibility: hidden;
+    -webkit-font-smoothing: antialiased;
+}
+
+/* Reduce padding for shade controls to fit without scrollbar */
+#shade-controls {
+    padding: 0 6px 6px; /* top 0: the sticky detach handle sits flush */
+    overflow-y: visible;
+    max-height: none;
+}
+
+/* Top menu dropdowns are JS-controlled to avoid overlap when switching sections */
+#controls .menu-section.menu-open .control-group {
+    display: block !important;
+}
+
+/* Prevent menu from closing when interacting with inputs inside */
+.control-group input,
+.control-group button,
+.control-group textarea {
+    pointer-events: auto;
+}
+
+/* Detachable panel: a dedicated drag handle (grip + title) at the top of a
+   control-group. Deliberately its own element with no other function, so
+   pressing and dragging anywhere on it can never collide with a real
+   control. See makeControlGroupDetachable() in script.js. */
+.panel-detach-handle {
+    cursor: grab;
+    user-select: none;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 11px;
+    font-weight: bold;
+    color: #555;
+    padding: 5px 10px;
+    margin: 0 -15px 8px -15px;
+    background: #f2f4f6;
+    border-bottom: 1px solid #ddd;
+    border-radius: 3px 3px 0 0;
+    position: sticky;
+    top: 0;
+    z-index: 3;
+}
+.panel-detach-handle:active {
+    cursor: grabbing;
+}
+.panel-detach-grip {
+    letter-spacing: -2px;
+    color: #999;
+}
+.panel-dock-btn {
+    display: none;
+    margin-left: auto;
+    font-size: 10px;
+    font-weight: normal;
+    color: #2a6fb0;
+    cursor: pointer;
+    padding: 1px 6px;
+    border: 1px solid #bcd4ec;
+    border-radius: 3px;
+    background: #eaf2fb;
+}
+.panel-dock-btn:hover {
+    background: #dcebfa;
+}
+#geDockBtn.panel-dock-btn,
+.group-explorer .ge-dock-btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    margin-left: 0;
+    height: 22px;
+    min-width: 22px;
+    padding: 0 6px;
+    font-size: 13px;
+    line-height: 1;
+}
+/* While detached, ignore the hover-driven open/close machinery entirely -
+   fixed positioning + explicit display, independent of .menu-open. */
+.control-group.detached {
+    position: fixed !important;
+    display: block !important;
+    z-index: 100000 !important;
+    max-height: 85vh;
+    /* A floating window, not a drop-down: the drop-down's 1px #ccc border, soft shadow and
+       square top-left corner almost vanished against the white page while dragging */
+    border: 1px solid #aeb6bf;
+    border-radius: 8px;
+    box-shadow: 0 10px 28px rgba(0,0,0,0.22), 0 2px 6px rgba(0,0,0,0.12);
+}
+.control-group.detached > .panel-detach-handle {
+    border-radius: 8px 8px 0 0;
+    background: #eef1f4;
+}
+.control-group.detached .panel-dock-btn {
+    display: inline-block;
+}
+
+/* Detach handle is full-bleed at the top; padding-top: 0 so sticky top:0
+   does not slide the bar down onto the first control row (it did in Display,
+   the one menu that was sticky before, covering the Name Len slider). */
+.control-group:has(> .panel-detach-handle) {
+    padding-top: 0;
+    -webkit-backface-visibility: visible;
+    backface-visibility: visible;
+    will-change: auto;
+}
+/* Shade and Keys have 6px side padding, so their handles bleed by 6px, not 15px */
+#shade-controls > .panel-detach-handle,
+#shortcuts-controls > .panel-detach-handle {
+    margin-left: -6px;
+    margin-right: -6px;
+}
+
+/* Raise active menu above neighbours */
+#controls .menu-section.menu-open,
+.menu-section:has(.control-group:hover),
+.menu-section.hover-active {
+    z-index: 10001;
+}
+
+/* Invisible bridge between header and dropdown to prevent hover gaps */
+#controls .menu-section.menu-open::after {
+    content: '';
+    position: absolute;
+    top: 100%;
+    left: -20px;
+    right: -20px;
+    height: 80px; /* Cover entire autocomplete popup area */
+    z-index: 9998;
+    pointer-events: auto;
+    background: transparent;
+}
+
+.color-picker {
+    width: 30px;
+    height: 20px;
+    border: 1px solid #ccc;
+    cursor: pointer;
+    display: inline-block;
+    margin: 2px;
+}
+
+.control-group label {
+    display: inline-block;
+    margin-right: 8px;
+    font-size: 12px;
+    min-width: 60px;
+}
+
+.control-group select,
+.control-group input[type="number"],
+.control-group input[type="text"] {
+    font-size: 12px;
+    padding: 2px 4px;
+    border: 1px solid #ccc;
+    border-radius: 3px;
+    margin-right: 8px;
+}
+
+.control-group input[type="number"] {
+    width: 60px;
+    height: 24px;
+    box-sizing: border-box;
+    padding-top: 0;
+    padding-bottom: 0;
+}
+
+/* Action sections organization */
+.action-section {
+    margin: 0;
+    padding: 8px;
+    border: none;
+    border-radius: 0;
+    background: transparent;
+}
+
+.action-section:first-child {
+    margin-top: 0;
+}
+
+.action-section:last-child {
+    margin-bottom: 0;
+}
+
+.action-section-label {
+    font-size: 11px;
+    font-weight: bold;
+    color: #444;
+    margin-bottom: 6px;
+    padding: 3px 6px;
+    background: white;
+    border: 1px solid #e0e0e0;
+    border-radius: 3px;
+    display: inline-block;
+}
+
+.button-group {
+    display: flex;
+    flex-wrap: nowrap;
+    gap: 4px;
+    align-items: center;
+    font-size: 12px;
+    width: min-content;
+}
+
+.button-spacer {
+    width: 1px;
+    height: 16px;
+    background: #ccc;
+    margin: 0 4px;
+}
+
+button {
+    padding: 2px 6px;
+    margin: 1px;
+    font-size: 12px;
+    border: 1px solid var(--button-border);
+    border-radius: 3px;
+    background: var(--button-bg);
+    cursor: pointer;
+}
+
+button:hover {
+    background: var(--button-hover-bg);
+}
+
+.edit-toggle-button {
+    height: 14px;
+    line-height: 12px;
+    padding: 0 6px;
+    margin-left: 4px;
+    font-size: 9px;
+    font-weight: bold;
+    border: 1px solid #aaa;
+    border-radius: 3px;
+    background: #f7f7f7;
+    color: #333;
+    vertical-align: middle;
+}
+
+.edit-toggle-button.active {
+    background: #d8ecff;
+    border-color: #2f73b7;
+    color: #123f66;
+}
+
+.edit-tool-panel {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 3px;
+    padding: 2px 6px 3px 6px;
+    border-top: 1px solid #d8e4ef;
+    background: #f8fbfd;
+    min-height: 24px;
+    box-sizing: border-box;
+}
+
+.edit-tool-panel[hidden] {
+    display: none !important;
+}
+
+.edit-tool-button,
+.edit-command-button {
+    height: 20px;
+    padding: 1px 6px;
+    margin: 0;
+    font-size: 11px;
+    line-height: 16px;
+    white-space: nowrap;
+}
+
+.edit-tool-button.active {
+    background: #cce5ff;
+    border-color: #2f73b7;
+    color: #103f66;
+    box-shadow: inset 0 0 0 1px rgba(47, 115, 183, 0.25);
+}
+
+.edit-live-conservation {
+    display: inline-flex;
+    align-items: center;
+    gap: 3px;
+    height: 20px;
+    margin: 0 1px 0 3px;
+    font-size: 11px;
+    line-height: 16px;
+    color: #31485c;
+    white-space: nowrap;
+}
+
+.edit-live-conservation input {
+    width: 13px;
+    height: 13px;
+    margin: 0;
+}
+
+/* Tree modal toolbar */
+.tree-tool {
+    height: 18px;
+    min-width: 20px;
+    padding: 0 5px;
+    font-size: 11px;
+    line-height: 16px;
+    border: 1px solid #c5d2df;
+    border-radius: 3px;
+    background: #f7f9fb;
+    color: #31485c;
+    cursor: pointer;
+}
+
+.tree-tool:hover {
+    background: #e8f0fe;
+    color: #103f66;
+}
+
+.tree-mode {
+    display: inline-flex;
+    align-items: center;
+    gap: 3px;
+    white-space: nowrap;
+}
+
+.tree-mode input {
+    margin: 0;
+}
+
+/* Busy indicator for operations that hold the main thread. Deliberately covers the page:
+   the viewer genuinely cannot be used while these run, and a dimmed page says so more
+   honestly than a small spinner that invites clicking. */
+#busyOverlay {
+    position: fixed;
+    inset: 0;
+    z-index: 10060;
+    background: rgba(255, 255, 255, 0.55);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+#busyOverlay[hidden] {
+    display: none;
+}
+
+#busyPanel {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    max-width: 460px;
+    padding: 14px 18px;
+    background: #fff;
+    border: 1px solid #c5d2df;
+    border-radius: 6px;
+    box-shadow: 0 4px 18px rgba(0, 0, 0, 0.18);
+    font-size: 13px;
+    color: #22303c;
+}
+
+#busySpinner {
+    width: 18px;
+    height: 18px;
+    flex: 0 0 auto;
+    border: 2px solid #d7e2ee;
+    border-top-color: #2f73b7;
+    border-radius: 50%;
+    animation: busySpin 0.8s linear infinite;
+}
+
+@keyframes busySpin {
+    to { transform: rotate(360deg); }
+}
+
+#busyLabel {
+    font-weight: 600;
+}
+
+#busyDetail {
+    margin-top: 3px;
+    font-size: 11px;
+    color: #6b8299;
+}
+
+#busyDetail[hidden] {
+    display: none;
+}
+
+#treeSvgOutput {
+    margin: 0 0 8px;
+}
+
+/* Drag the bottom-right corner to make the tree box taller; it redraws to fit.
+   The browser's native resize grip there is small and easy to miss against a plain
+   white corner, so an explicit diagonal-stripe affordance marks the drag target. */
+#treeSvgCanvas {
+    border: 1px solid #ddd;
+    border-radius: 6px;
+    background: #fff;
+    padding: 6px;
+    height: 52vh;
+    min-height: 180px;
+    overflow: auto;
+    overscroll-behavior: contain;   /* two fingers at the end of the tree do not move the window behind it */
+    resize: vertical;
+    position: relative;
+    /* Click-drag panning shouldn't trigger native browser text selection
+       on the SVG leaf labels (was showing as blue selection highlight). */
+    user-select: none;
+    -moz-user-select: none;
+    -webkit-user-select: none;
+    -ms-user-select: none;
+}

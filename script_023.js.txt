@@ -1,0 +1,419 @@
+[script.js lines 9783-10200 of ViewAlign fd8b8e4]
+function _hiddenColRulerLabels(cols, lo, hi, interval) {
+    const out = [];
+    let prevEnd = -2;   // slot of the previous label's last character; one blank slot is kept between labels
+    for (let s = lo; s < hi; s++) {
+        const p = cols[s];
+        if (p < 0) continue;
+        const absPos = p + 1;
+        if (absPos % interval !== 0) continue;
+        const text = (absPos / interval) % 2 === 1 ? String(absPos) : '*';
+        const first = s - text.length + 1;
+        if (first < lo || first <= prevEnd + 1) continue;
+        out.push([s, text]);
+        prevEnd = s;
+    }
+    return out;
+}
+
+// Generate scale ruler as HTML spans with data-pos for var-sites compatibility
+function generateScaleHTML(maxLength, interval, startPos) {
+    const scaleText = generateScale(maxLength, interval, startPos);
+
+    // A multi-digit label (e.g. "10", "230") occupies several adjacent
+    // characters at fixed positions, and in Variable-sites-only mode those
+    // positions can be hidden independently of each other - hiding is a
+    // per-column decision from state._diffColumns, the same set the
+    // sequence rows and consensus row use.
+    //
+    // Two grouping schemes were tried here and both were wrong. v135 forced
+    // every character in a label to show whenever ANY of its columns was
+    // variable, to stop labels tearing - but that only patched the ruler's
+    // own rendering while the rows below still hid the untouched column, so
+    // the ruler ended up wider than the data at that point and drifted out
+    // of column alignment for the rest of the block; a breakpoint marker
+    // (computed from the real, unpatched set) could then land visually
+    // inside the "restored" label, tearing it apart differently ("5⋮0"). The
+    // opposite scheme - only show a label when EVERY column in it is
+    // variable - fixes that desync but creates a new one in the other
+    // direction: it can SUPPRESS a ruler cell for a column that genuinely is
+    // variable and IS shown in the data, just because it shares a label's
+    // character span with a conserved neighbour.
+    // There is no grouping rule that both preserves whole labels and keeps
+    // the ruler and data rows in lockstep, because the rows don't know or
+    // care about label boundaries - they hide and show one column at a time.
+    // So the ruler does the same: each character's visibility is decided
+    // independently, identically to how a sequence row decides it. A label
+    // can end up showing only one of its digits; that is a minor cosmetic
+    // artifact, not a correctness problem, and it is far preferable to a
+    // ruler whose visible column count disagrees with the alignment beneath
+    // it.
+    const diffColumns = state._diffColumns;
+    const fd = _foldDomInfo();
+
+    // Variable sites only hides columns: the numbers are then whole labels on their own column (see
+    // _hiddenColRulerLabels), not one digit per column; the label is a child of its column's cell and runs left over the hidden ones
+    let labAt = null;
+    if (diffColumns && document.body.classList.contains('var-sites-only')) {
+        const shown = [];
+        for (let i = 0; i < maxLength; i++) {
+            const p = startPos + i;
+            if (!diffColumns.has(p) || (fd && fd.hidden[p])) continue;
+            if (state._brkBeforePos && state._brkBeforePos.has(p)) shown.push(-1 - p);   // the marker's slot, as the rows (and Canvas) have it
+            shown.push(p);
+        }
+        labAt = new Map();
+        _hiddenColRulerLabels(shown, 0, shown.length, interval).forEach(([s, t]) => labAt.set(shown[s], t));
+    }
+
+    const parts = [];
+    for (let i = 0; i < maxLength; i++) {
+        const absPos = startPos + i;
+        // Unlike the consensus and sequence rows, the ruler does not draw its
+        // own copy of the breakpoint marker. Every row independently needing
+        // the marker makes sense for data rows - each is its own strip that
+        // needs its own "gap here" cue - but the ruler's only content is
+        // position numbers, and the identical fact (same count, same
+        // position range, read from the same state._brkInfo) is already
+        // shown one row down in Consensus. Drawing it here too gained
+        // nothing and cost a character slot in the one row whose entire
+        // purpose is spacing out those numbers - the same slot a torn label
+        // needed.
+        let ch = scaleText[i] || ' ';
+        let whole = null;
+        if (labAt) { const lt = labAt.get(startPos + i); ch = lt && lt.length === 1 ? lt : ' '; if (lt && lt.length > 1) whole = lt; }
+        // Variable columns must carry .diff-highlight here too, decided one
+        // column at a time so the ruler can never disagree with the rows
+        // beneath it. The var-sites CSS hides span[data-pos]:not(.diff-highlight),
+        // so without this the ruler is stripped to its breakpoint markers and
+        // reads as a stray row of glyphs.
+        const isVar = !!(diffColumns && diffColumns.has(absPos));
+        // (a fold, unlike a var-sites breakpoint, has its marker in the ruler too: a click there shows the run)
+        if (fd && fd.before.has(absPos)) parts.push(_foldMarkerHtml(fd.before.get(absPos)));
+        // Variable sites only: the rows have a breakpoint marker cell before this column; the ruler keeps the same (invisible) cell
+        // so its columns stay over the rows' (without it the ruler drifted left by one marker cell per hidden run)
+        if (labAt && state._brkBeforePos && state._brkBeforePos.has(absPos) && diffColumns.has(absPos)) parts.push(`<span class="col-breakpoint" style="visibility:hidden;pointer-events:none;">${_escapeHtml(brkStyle.symbol)}</span>`);
+        const cls = (isVar ? 'diff-highlight' : '') + (fd && fd.hidden[absPos] ? ' fold-hidden' : '') + (whole ? ' scale-lab' : '');
+        parts.push(`<span class="${cls.trim()}" data-pos="${absPos}">${ch}${whole ? '<i class="scale-num">' + whole + '</i>' : ''}</span>`);   // the blank keeps the cell one column wide: the label is out of the flow
+    }
+    if (fd && startPos + maxLength >= fd.len && fd.before.has(fd.len)) parts.push(_foldMarkerHtml(fd.before.get(fd.len)));
+    return parts.join('');
+}
+
+/** Scale tick spacing for Canvas mode: wider intervals when zoomed out so labels stay readable. */
+function _canvasScaleInterval(charW) {
+    if (charW >= 8) return 10;
+    if (charW >= 5) return 20;
+    if (charW >= 3) return 50;
+    return 100;
+}
+
+const CONSERVATION_MIN_COVERAGE = 0.3; // Require at least 30% non-gap sequences for coloring
+
+const _consCountBuf = new Int32Array(128);
+function _computeConservationForColumn(seqs, seqCount, pos, shadeMode, unknownN = !isProteinAlignment()) {
+    // PERF: typed-array counting; same counts/keys/order as _orig, non-ASCII falls back.
+    const buf = _consCountBuf; buf.fill(0);
+    const order = [];
+    let nonGapCount = 0;
+    for (let s = 0; s < seqCount; s++) {
+        let c = seqs[s].seq.charCodeAt(pos);
+        if (c !== c) continue;                       // past the end: gap
+        if (c >= 128) return _computeConservationForColumn_orig(seqs, seqCount, pos, shadeMode, unknownN);
+        if (c >= 97 && c <= 122) c -= 32;
+        if (c === 45 || c === 46) continue;          // - .
+        nonGapCount++;
+        if (c === 88 || c === 63 || (unknownN && c === 78)) continue;   // X ? (N)
+        if (buf[c]++ === 0) order.push(c);
+    }
+    if (nonGapCount === 0) return { hasData: false, hasValidCoverage: false };
+    let maxCount = 0;
+    for (const c of order) if (buf[c] > maxCount) maxCount = buf[c];
+    const consensusBases = new Set();
+    for (const c of order) if (buf[c] === maxCount) consensusBases.add(String.fromCharCode(c));
+    const denominator = shadeMode === 'all' ? seqCount : nonGapCount;
+    return {
+        consensusBases,
+        conservation: maxCount / denominator,
+        hasData: true,
+        hasValidCoverage: nonGapCount / seqCount >= CONSERVATION_MIN_COVERAGE
+    };
+}
+
+function _computeConservationForColumn_orig(seqs, seqCount, pos, shadeMode, unknownN = !isProteinAlignment()) {
+    // Count bases directly without creating intermediate arrays. Unknown
+    // residues (N/X/? in nucleotides, X/? in proteins) cover the column but are
+    // never "conserved": a masked run of N must not shade as identical.
+    // unknownN (N is unknown: a nucleotide alignment) is passed by loops so the
+    // alignment type is looked up once, not per column.
+    const counts = {};
+    let nonGapCount = 0;
+
+    for (let s = 0; s < seqCount; s++) {
+        const rawBase = seqs[s].seq[pos] || '-';
+        const base = rawBase.toUpperCase();
+        if (base !== '-' && base !== '.') {
+            nonGapCount++;
+            if (base === 'X' || base === '?' || (unknownN && base === 'N')) continue;
+            counts[base] = (counts[base] || 0) + 1;
+        }
+    }
+
+    if (nonGapCount === 0) return { hasData: false, hasValidCoverage: false };
+
+    let maxCount = 0;
+    for (const count of Object.values(counts)) {
+        if (count > maxCount) maxCount = count;
+    }
+
+    const consensusBases = new Set();
+    for (const [base, count] of Object.entries(counts)) {
+        if (count === maxCount) consensusBases.add(base);
+    }
+
+    const denominator = shadeMode === 'all' ? seqCount : nonGapCount;
+    const conservation = maxCount / denominator;
+    const coverage = nonGapCount / seqCount;
+
+    return {
+        consensusBases,
+        conservation,
+        hasData: true,
+        hasValidCoverage: coverage >= CONSERVATION_MIN_COVERAGE
+    };
+}
+
+function preCalculateConservation(seqs, len, shadeMode) {
+    const conservationData = new Array(len);
+    const seqCount = seqs.length;
+    const unknownN = !isProteinAlignment();
+    for (let pos = 0; pos < len; pos++) {
+        conservationData[pos] = _computeConservationForColumn(seqs, seqCount, pos, shadeMode, unknownN);
+    }
+    return conservationData;
+}
+
+// Same computation as preCalculateConservation, but spread across timeslices
+// (via setTimeout yields) so a very large alignment can never hold the main
+// thread for more than ~8ms at a stretch. Used by the Canvas mode deferred
+// shading pass, where the "freeze" reports came from.
+function preCalculateConservationChunked(seqs, len, shadeMode, onDone, token) {
+    const conservationData = new Array(len);
+    const seqCount = seqs.length;
+    const unknownN = !isProteinAlignment();
+    let pos = 0;
+    function step() {
+        if (token && token.cancelled) return;
+        const t0 = performance.now();
+        while (pos < len && (performance.now() - t0) < 8) {
+            conservationData[pos] = _computeConservationForColumn(seqs, seqCount, pos, shadeMode, unknownN);
+            pos++;
+        }
+        if (pos < len) {
+            setTimeout(step, 0);
+        } else {
+            onDone(conservationData);
+        }
+    }
+    step();
+}
+
+function getDeferredConservationData(len, shadeMode) {
+    const cached = state.conservationDataCache;
+    if (!cached || cached.shadeMode !== shadeMode || !cached.data) return null;
+    if (cached.len === len) return cached.data;
+    return Array.from({ length: len }, (_, pos) => cached.data[pos] || { hasData: false, hasValidCoverage: false });
+}
+
+function getDeferredConsensus(len) {
+    const cached = state.consensusCache;
+    if (!cached || !cached.values) return null;
+    if (cached.len === len) return cached.values.slice();
+    return Array.from({ length: len }, (_, pos) => cached.values[pos] || '-');
+}
+
+// -- BAM / Reads Display --
+
+// BAM state
+let bamState = {
+    reads: [],          // the reads drawn (downsampled: _downsampleReads)
+    allReads: [],       // every read that passed the flag filter: coverage and the sample row use these
+    downsampled: [],    // [{ start, end, dropped }] 100-bp windows that lost drawn reads
+    refName: null,      // the loaded row the reads are on
+    refSeq: null,       // reference sequence string
+    refStart: 0,        // leftmost visible ref coordinate
+    columns: [],        // expanded CIGAR columns per read: columns[row][col]
+    readOrder: [],      // sorted read indices (by pos, then name)
+};
+
+// Reads-mode display: 'diff' (mismatches only) or 'bases' (all bases colored)
+let _readsDisplayMode = 'diff';
+// The open genome view (genome-view.js), else null: every line that asks for it does nothing on a plain alignment
+let _genome = null;
+
+/**
+ * Show the BAM file picker when user clicks the BAM button.
+ */
+function handleOpenBamClick() {
+    const input = document.getElementById('bamFileInput');
+    if (input) input.click();
+}
+
+/**
+ * What kind of reads file this is: 'bam', 'cram', 'sam' (by extension) or null.
+ * BAM and CRAM are also recognised by content, so a renamed file still routes.
+ */
+async function _sniffReadsKind(file) {
+    // The content decides, then the name: a BAM or CRAM saved as .sam went to the SAM text parser and failed
+    const name = file && file.name || '';
+    let head = null;
+    try {
+        head = new Uint8Array(await file.slice(0, 65536).arrayBuffer());
+    } catch (e) {
+        head = null;
+    }
+    if (head && head[0] === 0x43 && head[1] === 0x52 && head[2] === 0x41 && head[3] === 0x4d) return 'cram'; // "CRAM"
+    if (head && typeof BamParser !== 'undefined' && await BamParser.sniffBam(head)) return 'bam';
+    if (/\.bam$/i.test(name)) return 'bam';
+    if (/\.cram$/i.test(name)) return 'cram';
+    if (/\.sam$/i.test(name)) return 'sam';
+    return null;
+}
+
+/**
+ * Route a picked or dropped reads file. Resolves true when it was handled here.
+ * With an alignment loaded, BAM/CRAM/SAM reads are piled onto it. A BAM or CRAM
+ * with nothing loaded has no reference to map onto, so say how to load it
+ * instead of letting the text parser fail with "No valid sequences found". A SAM
+ * on its own still goes through the text parser, which builds a pileup
+ * reference from the reads.
+ */
+async function _routeReadsFile(file, indexFile = null) {
+    if (/\.vcf(\.gz)?$/i.test(file.name) && bamState.reads && bamState.reads.length) { await _readsLoadVcf(file); return true; }
+    const kind = await _sniffReadsKind(file);
+    if (!kind) return false;
+    const hasAlignment = !!(state.seqs && state.seqs.length > 0);
+    if (hasAlignment) {
+        handleBamFile({ target: { files: [file], value: '' }, readsKind: kind, indexFile });
+        return true;
+    }
+    if (kind === 'bam' || kind === 'cram') {
+        const k = kind.toUpperCase();
+        statusMessage.style.display = 'none';
+        showMessage(`A ${k} needs its reference first: open the reference sequence (FASTA or GenBank) ` +
+            `whose name matches the ${k}’s @SQ SN, then open the ${k} again to pile the reads onto it. ` +
+            'A SAM file can also be opened on its own.', 9000);
+        return true;
+    }
+    return false;
+}
+
+let _cramLibPromise = null;
+function _loadCramLib() {
+    if (window.gmodCRAM) return Promise.resolve(window.gmodCRAM);
+    if (!_cramLibPromise) {
+        _cramLibPromise = new Promise((resolve, reject) => {
+            const s = document.createElement('script');
+            s.src = 'vendor/gmod-cram/cram-bundle.js';
+            s.onload = () => window.gmodCRAM ? resolve(window.gmodCRAM) : reject(new Error('the CRAM reader did not initialise'));
+            s.onerror = () => { _cramLibPromise = null; reject(new Error('could not load the CRAM reader (vendor/gmod-cram)')); };
+            document.head.appendChild(s);
+        });
+    }
+    return _cramLibPromise;
+}
+
+/**
+ * Decode a whole CRAM file in the browser with @gmod/cram (JBrowse's CRAM
+ * reader, MIT, vendored in vendor/gmod-cram and loaded only when a CRAM is
+ * opened) into SAM text, for the same reads pipeline as SAM and BAM. CRAM
+ * stores reads as differences from the reference, so bases are rebuilt from
+ * the loaded sequence(s); reads on references that are not loaded are skipped.
+ */
+// A CRAM 3 file ends with this fixed end-of-file container; without it the
+// file was cut off (CRAM 2.1 files have a different marker and are not checked)
+const CRAM3_EOF = [0x0f, 0x00, 0x00, 0x00, 0xff, 0xff, 0xff, 0xff, 0x0f, 0xe0, 0x45, 0x4f, 0x46, 0x00, 0x00, 0x00,
+    0x00, 0x01, 0x00, 0x05, 0xbd, 0xd9, 0x4f, 0x00, 0x01, 0x00, 0x06, 0x06, 0x01, 0x00, 0x01, 0x00, 0x01, 0x00, 0xee,
+    0x63, 0x01, 0x4b];
+async function _cramIsTruncated(file) {
+    const head = new Uint8Array(await file.slice(0, 6).arrayBuffer());
+    if (head[4] !== 3 || file.size < CRAM3_EOF.length) return false;
+    const tail = new Uint8Array(await file.slice(file.size - CRAM3_EOF.length).arrayBuffer());
+    return CRAM3_EOF.some((b, i) => tail[i] !== b);
+}
+
+// A CRAM record's base qualities as SAM text (Phred+33); '*' when it has none. They were always written as '*',
+// so the sample row counted every CRAM base whatever its quality (the base-quality filter needs them)
+function _cramQualString(r) {
+    const q = r && r.qualityScores;
+    if (!q || !q.length || q[0] === 255) return '*';
+    let s = '';
+    for (let i = 0; i < q.length; i++) s += String.fromCharCode(Math.min(93, Math.max(0, q[i])) + 33);
+    return s;
+}
+
+async function cramToSamText(file) {
+    const { CramFile } = await _loadCramLib();
+    const loaded = new Map();
+    let refFor = new Map();      // filled once the file's reference names are known
+    for (const s of state.seqs || []) {
+        const name = String(s.fullHeader || s.header || '').trim().split(/\s+/)[0];
+        if (name && !loaded.has(name)) loaded.set(name, s.seq.replace(/[-.]/g, '').toUpperCase());
+    }
+    const filehandle = {
+        read: async (length, position) => new Uint8Array(await file.slice(position, position + length).arrayBuffer()),
+        readFile: async () => new Uint8Array(await file.arrayBuffer()),
+        stat: async () => ({ size: file.size }),
+        close: async () => {}
+    };
+    const cram = new CramFile({
+        filehandle,
+        checkSequenceMD5: false,
+        useSliceWorkerPool: false,
+        // 0-based half-open; an empty answer tells the reader the reference is unknown
+        fetchReferenceSequence: async (id, start, end, refName) => {
+            const r = refFor.get(refName);
+            return r ? r.seq.substring(Math.max(0, start - r.offset), Math.max(0, end - r.offset)) : '';
+        }
+    });
+    const refInfo = await cram.getReferenceInfo();
+    const refs = refInfo.map(r => r.name);
+    // The reference the reads decode against, matched as for BAM (BamParser.matchReference: chr/version
+    // aliases, a faidx region with its offset, one sequence of the same length); only exact names worked
+    refFor = new Map();
+    const m = BamParser.matchReference(refs, refInfo.map(r => r.length), [...loaded].map(([name, seq]) => ({ name, seq })), null);
+    if (m) refFor.set(refs[m.refID], { seq: [...loaded.values()][m.loadedIndex], offset: m.offset });
+    let header = ((await cram.getHeaderText()) || '').split('\n').filter(l => l.startsWith('@'));
+    if (!header.some(l => l.startsWith('@SQ'))) header = refInfo.map(r => `@SQ\tSN:${r.name}\tLN:${r.length}`);
+    const out = header.slice();
+    let truncated = await _cramIsTruncated(file);
+    let nContainers = 0;
+    try { nContainers = await cram.containerCount(); } catch (_) { truncated = true; }
+    for (let i = 0; i < nContainers; i++) {
+        let container, h;
+        try {
+            container = await cram.getContainerById(i);
+            if (!container) continue;
+            h = await container.getHeader();
+        } catch (_) { truncated = true; break; }
+        if (!h || !h.numRecords) continue;
+        for (const landmark of h.landmarks) {
+            let sliceRecords;
+            try {
+                sliceRecords = await container.getSlice(landmark).getAllRecords();
+            } catch (_) { truncated = true; break; }
+            for (const r of sliceRecords) {
+                const rname = refs[r.sequenceId];
+                if (!refFor.has(rname) || r.isSegmentUnmapped()) continue;
+                const mate = r.nextSequenceId < 0 ? '*' : (r.nextSequenceId === r.sequenceId ? '=' : (refs[r.nextSequenceId] || '*'));
+                out.push([r.readName || '*', r.flags, rname, r.start + 1, r.mappingQuality || 0,
+                    r.getCigarString() || '*', mate, r.nextStart >= 0 ? r.nextStart + 1 : 0,
+                    r.templateSize || 0, r.getReadBases() || '*', _cramQualString(r),
+                    ...Object.entries(r.tags || {}).filter(([, v]) => typeof v === 'number' || typeof v === 'string').map(([k, v]) => `${k}:${typeof v === 'number' ? 'i' : 'Z'}:${v}`)].join('\t'));
+            }
+        }
+    }
+    const text = out.join('\n');
+    return truncated ? Object.assign(new String(text), { truncated: true }) : text;
+}
+

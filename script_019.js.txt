@@ -1,0 +1,410 @@
+[script.js lines 8094-8502 of ViewAlign fd8b8e4]
+                state.selectedNucs.set(idx, new Set([pos]));
+            }
+            hideTooltip();
+            scheduleOverlay();
+            return;
+        }
+        // Plain press on a name: drag to reorder rows (the DOM view's _startRowReorderDrag;
+        // the drop calls the same _moveDraggedSequences, so multi-row selections move too)
+        if (e.button === 0 && !isCtrlModifier(e) && !isAltModifier(e) && !e.shiftKey) {
+            const nameHit = _canvasHitTestName(e.clientX, e.clientY);
+            if (nameHit) {
+                hideTooltip();
+                _canvasState.rowDrag = { from: nameHit.row, startX: e.clientX, startY: e.clientY, started: false, target: -1, above: true };
+                e.preventDefault();
+                return;
+            }
+        }
+        // Pan (existing behavior)
+        dragging = true;
+        dragStartX = e.clientX;
+        dragStartY = e.clientY;
+        dragOx = _canvasState.offsetX;
+        dragOy = _canvasState.offsetY;
+        canvas.style.cursor = 'grabbing';
+        // dirty with no draw scheduled made redrawCells skip (a letter typed after a click here was not drawn)
+        _markDirty(); scheduleDraw();
+    });
+    // Double-click on a name renames it in place (as in the DOM view)
+    canvas.addEventListener('dblclick', (e) => {
+        if (isCtrlModifier(e) || isAltModifier(e) || e.shiftKey) return;
+        const nameHit = _canvasHitTestName(e.clientX, e.clientY);
+        if (nameHit) { e.preventDefault(); _startSeqNameEditCanvas(nameHit.row, e.clientY); }
+    });
+    canvas.addEventListener('mouseleave', () => { if (_gapHoverKey) { _gapHoverKey = ''; _canvasState.gapHover = null; _canvasState.scheduleOverlay && _canvasState.scheduleOverlay(); } if (_gapCursorOn) { _gapCursorOn = false; canvas.style.cursor = 'default'; } });
+    window.addEventListener('mousemove', _canvasState.mousemoveHandler);
+    window.addEventListener('mouseup', _canvasState.mouseupHandler);
+
+    // Phase 0/4: hover tracking + tooltip display.
+    // Mirrors DOM mode's alignmentContainer mouseover handler: show
+    // "header: gaplessPos" for non-gap residues, hide on gaps or when
+    // a modifier-drag (column select) is in progress.
+    let _lastTooltipCell = null;
+    canvas.addEventListener('mousemove', (e) => {
+        // where the pointer rests, so a scroll under a still pointer can hover again (_canvasRehoverSoon)
+        _canvasHoverPt = { canvas, x: e.clientX, y: e.clientY, ctrlKey: e.ctrlKey, altKey: e.altKey, shiftKey: e.shiftKey, metaKey: e.metaKey };
+        if (e.__vaRehover) _lastTooltipCell = null;   // the view moved: the same cell is a new hover (its tooltip was hidden)
+        _canvasHoverCell = _canvasHitTest(e.clientX, e.clientY, { aaRows: true });
+
+        // Suppress tooltip during pan-drag, selection drag, a Move/Slide or row drag, or column-select mode
+        if (_pointerDragInProgress()) {
+            if (_lastTooltipCell) { _lastTooltipCell = null; hideTooltip(); }
+            return;
+        }
+        if (isCtrlModifier(e) && isAltModifier(e)) {
+            if (_lastTooltipCell) { _lastTooltipCell = null; hideTooltip(); }
+            return;
+        }
+
+        // Length badges and names: the Full/Block titles (sequence length; the full name)
+        const sideTip = _canvasHoverCell ? null : _canvasSideTooltip(e.clientX, e.clientY);
+        if (sideTip) {
+            // one key per row line (and band): the window's y in rowPitch steps was not a row in Block, where
+            // a band's rows can be closer (fewer translation lanes), so the next row's same text (the length
+            // badges) did not move the tooltip (GLM audit cblk #28)
+            const SP = _canvasLocal(e.clientX, e.clientY);
+            const sideKey = sideTip + '@' + SP.band + ':' + Math.floor((SP.y + SP.oy - (_canvasState.metrics.headerH || 0)) / (_canvasState.rowPitch || 1));
+            if (_lastTooltipCell && _lastTooltipCell.side === sideKey) return;
+            _lastTooltipCell = { row: -1, col: -1, side: sideKey };
+            const target = _getCanvasTooltipTarget();
+            target.style.left = e.clientX + 'px';
+            target.style.top = (e.clientY + 10) + 'px';
+            showTooltipAt(sideTip, target);
+            return;
+        }
+        if (_lastTooltipCell && _lastTooltipCell.side != null) { _lastTooltipCell = null; hideTooltip(); }
+        // Consensus row: the column's coverage and base percentages (as the Full/Block consensus spans)
+        const consCol = _canvasHoverCell ? -1 : _canvasHitTestConsensus(e.clientX, e.clientY);
+        if (consCol >= 0) {
+            if (_lastTooltipCell && _lastTooltipCell.cons === consCol) return;
+            _lastTooltipCell = { row: -1, col: -1, cons: consCol };
+            const m = _canvasState.metrics, b = _canvasState.consBand;
+            const target = _getCanvasTooltipTarget();
+            const cc = _canvasStripClient(_canvasColToSlot(consCol), b.y + b.textOff);   // Block: the band's consensus row (it took band 1's)
+            target.style.left = (cc.x + m.charW / 2) + 'px';
+            target.style.top = cc.y + 'px';
+            showTooltipAt(_consensusTooltipHtml(consCol, _canvasConsValues() || []) + _consensusTrimHint(consCol), target, { html: true, className: 'consensus-box' });
+            return;
+        }
+        if (_lastTooltipCell && _lastTooltipCell.cons != null) { _lastTooltipCell = null; hideTooltip(); }
+        // Annotation track: the feature under the pointer, once per feature
+        const annotHit = _canvasHitTestAnnot(e.clientX, e.clientY);
+        if (annotHit) {
+            if (_lastTooltipCell && _lastTooltipCell.annot === annotHit.d.id) return;
+            _lastTooltipCell = { row: -1, col: -1, annot: annotHit.d.id };
+            const target = _getCanvasTooltipTarget();
+            target.style.left = e.clientX + 'px';
+            target.style.top = (e.clientY + 10) + 'px';
+            showTooltipAt(_annotTooltipHtml(annotHit.d), target, { html: true, className: 'annot-tip' });
+            canvas.style.cursor = 'pointer';
+            return;
+        }
+        if (_lastTooltipCell && _lastTooltipCell.annot != null) { _lastTooltipCell = null; hideTooltip(); }
+        // Show 2D: a typed block's rectangle shows its title (DOM: the SVG rect's title)
+        const maskHit = _canvasBlockMaskHit(e.clientX, e.clientY);
+        if (maskHit) {
+            if (_lastTooltipCell && _lastTooltipCell.mask === maskHit) return;
+            _lastTooltipCell = { row: -1, col: -1, mask: maskHit };
+            const target = _getCanvasTooltipTarget();
+            target.style.left = e.clientX + 'px';
+            target.style.top = (e.clientY + 10) + 'px';
+            showTooltipAt(maskHit.title, target);
+            canvas.style.cursor = 'pointer';
+            return;
+        }
+        if (_lastTooltipCell && _lastTooltipCell.mask) { _lastTooltipCell = null; hideTooltip(); }
+        const rulerFold = !_canvasHoverCell && _canvasHitTestRuler(e.clientX, e.clientY);
+        if (rulerFold && rulerFold.fold) {
+            if (_lastTooltipCell && _lastTooltipCell.rulerSlot === rulerFold.slot) return;
+            _lastTooltipCell = { row: -1, col: -1, rulerSlot: rulerFold.slot };
+            const target = _getCanvasTooltipTarget();
+            target.style.left = e.clientX + 'px';
+            target.style.top = (e.clientY + 10) + 'px';
+            showTooltipAt(rulerFold.fold.map(_foldRangeText).join('; ') + ' \u00b7 click to show', target);
+            canvas.style.cursor = 'pointer';
+            return;
+        }
+        if (_lastTooltipCell && _lastTooltipCell.rulerSlot != null) { _lastTooltipCell = null; hideTooltip(); }
+        if (canvas.style.cursor === 'pointer') canvas.style.cursor = 'default';
+        // gap tools: the haloed crosshair over the cells, and the cell under the pointer outlined (overlay)
+        const gapTool = state.editModeActive && GENEDOC_GAP_TOOLS.has(state.editTool);
+        const gapCell = gapTool && _canvasHoverCell && _canvasHoverCell.row >= 0 && !_canvasHoverCell.aaLane && !_canvasHoverCell.brk ? _canvasHoverCell : null;
+        if (!!gapCell !== _gapCursorOn) { _gapCursorOn = !!gapCell; canvas.style.cursor = gapCell ? GAP_TOOL_CURSOR : 'default'; }
+        const gapKey = gapCell ? gapCell.row + ':' + gapCell.col : '';
+        if (gapKey !== _gapHoverKey) { _gapHoverKey = gapKey; _canvasState.gapHover = gapCell ? { row: gapCell.row, col: gapCell.col } : null; _canvasState.scheduleOverlay && _canvasState.scheduleOverlay(); }
+
+        if (_canvasHoverCell) {
+            const { row, col } = _canvasHoverCell;
+            // Only update tooltip when the cell changes (like DOM mouseover
+            // fires once per element, not per pixel).
+            const lane = _canvasHoverCell.aaLane;
+            if (_lastTooltipCell && _lastTooltipCell.row === row && _lastTooltipCell.col === col && _lastTooltipCell.lane === lane && _lastTooltipCell.slot === _canvasHoverCell.slot) return;
+            _lastTooltipCell = { row, col, lane, slot: _canvasHoverCell.slot };
+
+            // Translation track: the codon box's title or the frameshift mark's (as the DOM spans)
+            if (lane != null) {
+                const spec = _canvasCodonRows(row)[lane];
+                const entry = spec && spec.aaData ? spec.aaData.find(en => en.cols && en.cols.includes(col)) : null;
+                let tipText = null;
+                if (entry) {
+                    const num = entry.n ? `, codon ${entry.n}` : '';   // codon number in the reference (row 1), from the gene / frame start
+                    const what = entry.partial ? `Stop (${entry.codon})${num}, completed by polyadenylation of the mRNA` : `${entry.aa === '*' ? 'Stop' : entry.aa} (${entry.codon})${num}`;
+                    const where = entry.gene ? `${entry.gene}${entry.strand === '-' ? ' (minus strand)' : ''}, ` : '';
+                    tipText = `${what}, ${where}columns ${entry.cols[0] + 1}-${entry.cols[entry.cols.length - 1] + 1}`;
+                    const f = (spec.frameShifts || []).find(ff => ff.type === 'indel' && ff.runStart === col);
+                    if (f) tipText = `Frameshift: from here this sequence reads ${f.shift === 1 ? 'one base ahead of' : 'one base behind'} most sequences`;
+                } else {
+                    const f = (spec && spec.frameShifts || []).find(ff => ff.type === 'indel' && ff.runStart === col);
+                    if (f) tipText = `Frameshift: from column ${f.at + 1} on, this sequence reads ${f.shift === 1 ? 'one base ahead of' : 'one base behind'} most sequences (a gap or insertion here whose length is not a multiple of 3, columns ${f.runStart + 1}-${f.runStart + f.runLen})`;
+                }
+                if (tipText) {
+                    const m = _canvasState.metrics;
+                    const target = _getCanvasTooltipTarget();
+                    const cc = _canvasCellClient(row, _canvasHoverCell.slot);   // any layout (Block: the band's row; it took band 1's)
+                    target.style.left = (cc.x + m.charW / 2) + 'px';
+                    target.style.top = cc.y + 'px';
+                    showTooltipAt(tipText, target);
+                    return;
+                }
+                _lastTooltipCell = null;
+                hideTooltip();
+                return;
+            }
+
+            // Fold marker: what is hidden, and that a click shows it
+            if (_canvasHoverCell.fold) {
+                const m = _canvasState.metrics;
+                const target = _getCanvasTooltipTarget();
+                const cc = _canvasCellClient(row, _canvasHoverCell.slot);   // any layout (Block: the band's row; it took band 1's)
+                target.style.left = (cc.x + m.charW / 2) + 'px';
+                target.style.top = cc.y + 'px';
+                showTooltipAt(_canvasHoverCell.fold.map(_foldRangeText).join('; ') + ' \u00b7 click to show', target);
+                return;
+            }
+            // Breakpoint marker hover tooltip (mirrors DOM .col-breakpoint title)
+            if (_canvasHoverCell.brk && state._brkInfo && state._brkInfo[col]) {
+                const brkInfo = state._brkInfo[col];
+                if (brkInfo) {
+                    const tipText = `${brkInfo.count} column${brkInfo.count > 1 ? 's' : ''} hidden (positions ${brkInfo.start + 1}\u2013${brkInfo.end + 1})`;
+                    const m = _canvasState.metrics;
+                    const target = _getCanvasTooltipTarget();
+                    const cc = _canvasCellClient(row, _canvasHoverCell.slot);   // any layout (Block: the band's row; it took band 1's)
+                    target.style.left = (cc.x + m.charW / 2) + 'px';
+                    target.style.top = cc.y + 'px';
+                    showTooltipAt(tipText, target);
+                    return;
+                }
+            }
+
+            const seqObj = state.seqs[row];
+            if (seqObj) {
+                const base = seqObj.seq[col] || '-';
+                if (base !== '-' && base !== '.') {
+                    const gaplessPos = _linkGapless(seqObj)[col];
+                    // Position the 1×1 target at the cell's top-centre so
+                    // showTooltipAt places the tooltip directly above the
+                    // cell, matching DOM mode's span-anchored positioning.
+                    const m = _canvasState.metrics;
+                    const target = _getCanvasTooltipTarget();
+                    const cc = _canvasCellClient(row, _canvasColToSlot(col));   // any layout (strip or Block bands)
+                    target.style.left = (cc.x + m.charW / 2) + 'px';
+                    target.style.top = cc.y + 'px';   // rows are rowPitch apart (translation tracks)
+                    const ovT = residueOverlay(_overlayRowCtx(row), col, base);   // the span's title in Full/Block
+                    showTooltipAt(`${seqObj.header}: ${gaplessPos}` + (ovT && ovT.titles.length ? ' | ' + ovT.titles.join(' | ') : ''), target);
+                    return;
+                }
+            }
+        }
+        _lastTooltipCell = null;
+        hideTooltip();
+    });
+
+    // Phase 4: hide tooltip when the mouse leaves the canvas
+    canvas.addEventListener('mouseleave', () => {
+        _canvasHoverPt = null;
+        _lastTooltipCell = null;
+        hideTooltip();
+    });
+
+    // Phase 5: right-click context menu (mirrors DOM mode's alignmentContainer contextmenu handler)
+    canvas.addEventListener('contextmenu', (e) => {
+        // Right-click on name column → context menu for that sequence's row
+        const nameHit = _canvasHitTestName(e.clientX, e.clientY);
+        if (nameHit) {
+            e.preventDefault();
+            showContextMenu(e, nameHit.row);
+            return;
+        }
+        // Right-click on data area → context menu for that row, with the gap items at that column (as a
+        // residue's menu in Full / the DOM Block); in Block the row and column of the band under the pointer
+        const hit = _canvasHitTest(e.clientX, e.clientY);
+        if (hit) {
+            e.preventDefault();
+            showContextMenu(e, hit.row, hit.brk ? undefined : hit.col);
+            return;
+        }
+        // Right-click on ruler or outside data area: no context menu
+        // (matches DOM mode, which returns early for scale-ruler-line)
+    });
+
+    // Put back the anchor held for this render: a zoom's (the top-left residue before the cell size changed),
+    // a mode switch's or a snapshot's, or in the Block view mostly the keep-the-place anchor captured at the
+    // start of this render (the bands may have changed: Block size slider, Screen, codon lanes, hidden columns)
+    // or one _applyViewAnchor deferred because the bands were not laid out yet
+    if (_canvasState.pendingAnchor) {
+        const a = _canvasState.pendingAnchor;
+        _canvasState.pendingAnchor = null;
+        _applyViewAnchor(a);   // (the Block view's anchors are band-aware since batch 3)
+    }
+    scheduleDraw();
+}
+
+// Clustal (.aln) format parser. The first non-blank line is the program's
+// header (CLUSTAL W/O/2.x, MUSCLE, MSAPROBS, PROBCONS, Kalign all write one).
+// Conservation lines are indented, so any line starting with whitespace is
+// skipped; an optional trailing residue count after the sequence is dropped.
+function _isClustalInput(text) {
+    const first = (text.match(/^[^\S\n]*\S.*$/m) || [''])[0].trim();
+    return /^(CLUSTAL|MUSCLE|MSAPROBS|PROBCONS|Kalign)\b/i.test(first);
+}
+
+// Rows of an interleaved file (Clustal, Stockholm), joined over its blocks. A row is the n-th line with its name
+// within a block: keyed by name alone, two sequences with the same name (names cut short by the writer) became
+// one row of double length and a sequence was lost (audit 2026-11-10, H7).
+function _interleavedRows() {
+    const rows = new Map();      // name + "\u0000" + occurrence in the block -> { name, seq }
+    let seenInBlock = new Map();
+    return {
+        blockEnd() { seenInBlock = new Map(); },
+        add(name, piece) {
+            const n = seenInBlock.get(name) || 0;
+            seenInBlock.set(name, n + 1);
+            const key = name + '\u0000' + n;
+            if (!rows.has(key)) rows.set(key, { name, seq: '' });
+            rows.get(key).seq += piece;
+        },
+        seqs() {
+            return [...rows.values()].map(r => ({ header: r.name, fullHeader: r.name, seq: r.seq, gaplessPositions: calculateGaplessPositions(r.seq) }));
+        },
+        get size() { return rows.size; }
+    };
+}
+function parseClustal(text) {
+    const lines = text.split(/\r\n|\r|\n/);
+    const rows = _interleavedRows();
+    let started = false;
+    for (const line of lines) {
+        if (!started) {
+            if (line.trim()) started = true;
+            continue;
+        }
+        if (!line.trim()) { rows.blockEnd(); continue; }   // a blank line ends a block
+        if (/^\s/.test(line)) { rows.blockEnd(); continue; }   // so does the conservation line under a block
+        if (line.startsWith('//')) continue;
+        const m = line.match(/^(\S+)\s+(\S+)(?:\s+\d+)?\s*$/);
+        if (!m) continue;
+        rows.add(m[1], m[2]);
+    }
+    if (rows.size === 0) return null;
+    return rows.seqs();
+}
+
+// PHYLIP format parser. Strict PHYLIP gives names a fixed 10-character field
+// (names may contain spaces and may touch the sequence); relaxed PHYLIP (RAxML,
+// PhyML, IQ-TREE) separates a name of any length by whitespace. Either may be
+// sequential (one sequence after another, possibly over several lines) or
+// interleaved. Each combination is tried, and the first that gives every
+// sequence exactly the declared length is used; relaxed is tried first, since
+// a strict file only parses as relaxed by coincidence of its spacing.
+function parsePhylip(text) {
+    const lines = text.split(/\r\n|\r|\n/).filter(l => l.trim());
+    if (lines.length < 2) return null;
+    const hm = lines[0].trim().match(/^(\d+)\s+(\d+)/);
+    if (!hm) return null;
+    const nSeqs = parseInt(hm[1]), alignLen = parseInt(hm[2]);
+    if (nSeqs < 1 || alignLen < 1) return null;
+    const body = lines.slice(1);
+    // Whitespace and position numbers some writers put at line ends are not residues
+    let strip = s => s.replace(/[\s\d]/g, '');
+    const splitName = {
+        relaxed: l => { const m = l.trim().match(/^(\S+)\s+(.*)$/); return m ? [m[1], strip(m[2])] : null; },
+        strict: l => l.length > 10 ? [l.substring(0, 10).trim(), strip(l.substring(10))] : null
+    };
+    function sequential(split) {
+        const out = [];
+        let i = 0;
+        while (out.length < nSeqs && i < body.length) {
+            const first = split(body[i++]);
+            if (!first || !first[0]) return null;
+            let seq = first[1];
+            while (seq.length < alignLen && i < body.length) seq += strip(body[i++]);
+            out.push({ name: first[0], seq });
+        }
+        return i === body.length ? out : null;
+    }
+    function interleaved(split) {
+        if (body.length < nSeqs) return null;
+        const out = [];
+        for (let k = 0; k < nSeqs; k++) {
+            const first = split(body[k]);
+            if (!first || !first[0]) return null;
+            out.push({ name: first[0], seq: first[1] });
+        }
+        for (let i = nSeqs; i < body.length; i++) {
+            const e = out[(i - nSeqs) % nSeqs];
+            // Some writers repeat the name on continuation lines; drop it
+            const named = split(body[i]);
+            e.seq += named && named[0] === e.name ? named[1] : strip(body[i]);
+        }
+        return out;
+    }
+    const attempts = [
+        () => sequential(splitName.relaxed), () => interleaved(splitName.relaxed),
+        () => sequential(splitName.strict), () => interleaved(splitName.strict)
+    ];
+    let entries = null;
+    const results = attempts.map(a => a());
+    const fits = got => got && got.length === nSeqs && got.every(e => e.seq.length === alignLen);
+    entries = results.find(fits) || null;
+    if (!entries) {
+        // A matrix of states (binary 0/1, restriction sites): its digits are the data, not position
+        // numbers. Removing them left empty rows and the file was refused (audit L15). Read again keeping
+        // digits; taken only when every row is states and fits the header.
+        const stripLetters = strip;
+        strip = s => s.replace(/\s/g, '');
+        const asStates = attempts.map(a => a()).find(got => fits(got) && got.every(e => /\d/.test(e.seq) && /^[0-9?.\-]+$/.test(e.seq)));
+        if (asStates) return asStates.map(e => ({ header: e.name, fullHeader: e.name, seq: e.seq, gaplessPositions: calculateGaplessPositions(e.seq) }));
+        strip = stripLetters;
+    }
+    // A number inside the 10 name columns is part of the name ("Clone 1", "Clone 12"), not a position
+    // number: the relaxed reading dropped it and gave three rows named "Clone" (audit M2). Taken only
+    // when the strict reading gives the same sequences and its names are the relaxed ones plus digits.
+    const ri = results.indexOf(entries);
+    if (entries && ri < 2 && fits(results[ri + 2])) {
+        const st = results[ri + 2];
+        let differs = false;
+        const same = st.every((e, k) => {
+            const r = entries[k];
+            if (e.seq !== r.seq) return false;
+            if (e.name === r.name) return true;
+            differs = true;
+            return e.name.startsWith(r.name) && /^\s+\d[\d\s]*$/.test(e.name.slice(r.name.length));
+        });
+        if (same && differs) entries = st;
+    }
+    if (!entries) {
+        // Nothing fits the header's length. Prefer a reading that gives every
+        // sequence the same length (relaxed names first), and say so: a stale
+        // header must not silently move residues into the names.
+        entries = results.find(got => got && got.length === nSeqs && got.every(e => e.seq.length === got[0].seq.length && e.seq.length > 0))
+            || interleaved(splitName.strict);
+        if (!entries || entries.length < nSeqs) {
+            throw new Error(`PHYLIP header says ${nSeqs} sequences of ${alignLen} columns, but the file does not have ${nSeqs} sequences in either sequential or interleaved layout`);
+        }
+        const lens = Array.from(new Set(entries.map(e => e.seq.length)));
+        _parseNotice = `PHYLIP header says ${alignLen} columns, but the sequences have ${lens.join('/')} - check the header line.`;
+    }
+    return entries.map(e => ({ header: e.name, fullHeader: e.name, seq: e.seq, gaplessPositions: calculateGaplessPositions(e.seq) }));
+}
+

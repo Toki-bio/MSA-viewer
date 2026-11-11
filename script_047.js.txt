@@ -1,0 +1,380 @@
+[script.js lines 19952-20330 of ViewAlign fd8b8e4]
+        rectOut(Math.min(X(x), X(x + w)), Math.min(Y(y), Y(y + h)), Math.max(X(x), X(x + w)), Math.max(Y(y), Y(y + h)), paint(rec.fillStyle));
+    };
+    // the overlay layer is transparent: a clear removes nothing that was recorded
+    rec.clearRect = (x, y, w, h) => { flush(); if (!overlay) rectOut(X(x), Y(y), X(x + w), Y(y + h), WHITE); };
+    rec.strokeRect = (x, y, w, h) => {
+        flush();
+        const x0 = X(x), y0 = Y(y), x1 = X(x + w), y1 = Y(y + h), lw = rec.lineWidth;
+        const ca = clipAttr(x0 - lw, y0 - lw, x1 + lw, y1 + lw);
+        if (ca === null) return;
+        out.push(`<rect x="${n2(x0)}" y="${n2(y0)}" width="${n2(x1 - x0)}" height="${n2(y1 - y0)}"${strokeAttrs()}${ca}/>`);
+    };
+    rec.fillText = (text, x, y) => {
+        flush();
+        text = String(text);
+        if (!text) return;
+        const font = rec.font;
+        const size = parseFloat((String(font).match(/([\d.]+)px/) || [0, 10])[1]);
+        const tx = X(x), ty = Y(y) + baseOff(font, rec.textBaseline) * m[1];
+        const tw = rec.measureText(text).width * m[0];
+        const al = rec.textAlign;
+        const anchor = al === 'center' ? 'middle' : (al === 'right' || al === 'end') ? 'end' : 'start';
+        const bx0 = anchor === 'middle' ? tx - tw / 2 : anchor === 'end' ? tx - tw : tx;
+        const ca = clipAttr(bx0, ty - size * 0.8, bx0 + tw, ty + size * 0.25);
+        if (ca === null) return;
+        const c = paint(rec.fillStyle);
+        if (c[3] <= 0) return;
+        out.push(`<text x="${n2(tx)}" y="${n2(ty)}" fill="${hex(c)}"${c[3] < 1 ? ` fill-opacity="${n2(c[3])}"` : ''}${fontAttrs(font)}${anchor !== 'start' ? ` text-anchor="${anchor}"` : ''}${ca} xml:space="preserve">${_escapeXmlText(text)}</text>`);
+    };
+    rec.drawImage = (img, ...a) => {
+        if (rec.skipImages) return;
+        const g = img && img._svg;
+        if (!g) { flush(); rec.unknownImages++; return; }
+        let x, y, w, h;
+        if (a.length >= 8) [, , , , x, y, w, h] = a;
+        else if (a.length >= 4) [x, y, w, h] = a;
+        else { [x, y] = a; w = img.width / dpr; h = img.height / dpr; }
+        const x0 = X(x), y0 = Y(y), x1 = X(x + w), y1 = Y(y + h);
+        if (g.box) { flush(); boxEnd(g, x0, y0, x1, y1); }
+        else glyph(g, x0, y0, x1, y1);
+    };
+    rec.finish = () => {
+        flush();
+        const defs = [...clipDefs.values()].map(d => `<clipPath id="${d.id}"><rect x="${n2(d.r[0])}" y="${n2(d.r[1])}" width="${n2(Math.max(0, d.r[2] - d.r[0]))}" height="${n2(Math.max(0, d.r[3] - d.r[1]))}"/></clipPath>`);
+        return { body: out.join('\n'), defs: defs.join('\n') };
+    };
+    return rec;
+}
+
+// One SVG document from recorded parts ({ body, defs }, in paint order)
+function _svgDocument(parts, width, height, title, { xmlDecl = true } = {}) {
+    const W = String(Math.max(1, Math.ceil(width))), H = String(Math.max(1, Math.ceil(height)));
+    const defs = parts.map(p => p.defs).filter(Boolean).join('\n');
+    return [
+        xmlDecl ? '<?xml version="1.0" encoding="UTF-8"?>' : '',
+        `<svg xmlns="http://www.w3.org/2000/svg" width="${W}" height="${H}" viewBox="0 0 ${W} ${H}">`,
+        `<title>${_escapeXmlText(title)}</title>`,
+        defs ? `<defs>\n${defs}\n</defs>` : '',
+        `<rect x="0" y="0" width="${W}" height="${H}" fill="#ffffff"/>`,
+        ...parts.map(p => p.body).filter(Boolean),
+        '</svg>'
+    ].filter(Boolean).join('\n');
+}
+
+function _exportAlignmentAsSvg(mode = 'viewport') {
+    if (!alignmentContainer) {
+        showMessage('Alignment container not found.', 3000);
+        return;
+    }
+    if (!state.seqs || state.seqs.length === 0) {
+        showMessage('Load an alignment first.', 3000);
+        return;
+    }
+    // The whole alignment is drawn from the data: in windowed views most rows
+    // and columns are not in the DOM, so walking the cells exported a fraction
+    if (mode === 'full') { _exportFullAlignmentSvgFromData(); return; }
+    // Canvas and Block (Canvas Block) draw on a canvas: the frame is drawn again into an SVG recorder
+    // (_canvasState.drawToSvg). Before batch 5 this walked DOM spans only and refused there, which with
+    // Block drawn by the canvas would have taken the viewport SVG away from Block.
+    if (isCanvasMode() && _canvasState.drawToSvg && _canvasState.canvas && _canvasState.canvas.isConnected) {
+        _exportCanvasViewportSvg();
+        return;
+    }
+    // This walks the rendered residue spans, which Reads never creates. Without
+    // this guard the export silently produced an empty file.
+    if (!alignmentContainer.querySelector('.seq-data span[data-pos]')) {
+        showMessage('SVG export needs Full, Block or Canvas view - the current view draws no per-residue cells.', 4500);
+        return;
+    }
+
+    const containerRect = alignmentContainer.getBoundingClientRect();
+    const fullMode = mode === 'full';
+    const width = Math.max(1, Math.round(fullMode ? alignmentContainer.scrollWidth : alignmentContainer.clientWidth));
+    const height = Math.max(1, Math.round(fullMode ? alignmentContainer.scrollHeight : alignmentContainer.clientHeight));
+    const viewRight = containerRect.left + (fullMode ? alignmentContainer.scrollWidth : alignmentContainer.clientWidth);
+    const viewBottom = containerRect.top + (fullMode ? alignmentContainer.scrollHeight : alignmentContainer.clientHeight);
+
+    const spanNodes = Array.from(alignmentContainer.querySelectorAll('.seq-line span, .scale-ruler-line span'));
+    if (spanNodes.length === 0) {
+        showMessage('Nothing visible to export.', 2500);
+        return;
+    }
+
+    const bgRects = [];
+    const textNodes = [];
+
+    spanNodes.forEach(span => {
+        const rawText = span.textContent || '';
+        if (!rawText) return;
+
+        const r = span.getBoundingClientRect();
+        if (r.right <= containerRect.left || r.left >= viewRight || r.bottom <= containerRect.top || r.top >= viewBottom) return;
+
+        // true position (negative when the span is cut by the left or top edge): the text is drawn there and the
+        // SVG viewport clips it, so the export shows the visible slice, not the span's start moved to the edge
+        const x0 = r.left - containerRect.left + (fullMode ? alignmentContainer.scrollLeft : 0);
+        const y0 = r.top - containerRect.top + (fullMode ? alignmentContainer.scrollTop : 0);
+        const x = Math.max(0, x0), y = Math.max(0, y0);
+        const w = Math.min(width, x0 + r.width) - x;
+        const h = Math.min(height, y0 + r.height) - y;
+        if (w <= 0 || h <= 0) return;
+
+        const style = window.getComputedStyle(span);
+        const bg = style.backgroundColor;
+        const color = style.color || '#000';
+        const fontSize = parseFloat(style.fontSize || '12') || 12;
+        const fontFamily = style.fontFamily || 'monospace';
+        const fontWeight = style.fontWeight || '400';
+        const fontStyle = style.fontStyle || 'normal';
+        // The baseline from where the letters really are: a residue span has a top padding of 2 * --text-dy and a
+        // line box that much shorter, which moves its letters down by half the padding (--text-dy), and a bottom
+        // padding (--row-overlap) that is painted under the row below and holds no text. Using the whole box put
+        // the residues --text-dy above their names and above the screen where --text-dy is not 0 (1 px with
+        // Liberation Mono on Linux, 2026-11-09).
+        const padT = parseFloat(style.paddingTop) || 0, padB = parseFloat(style.paddingBottom) || 0;
+        const boxH = r.height - padB;
+        const textY = y0 + padT / 2 + boxH - Math.max(1, boxH * 0.18);
+
+        if (!_isTransparentCssColor(bg)) {
+            bgRects.push(`<rect x="${x.toFixed(2)}" y="${y.toFixed(2)}" width="${w.toFixed(2)}" height="${h.toFixed(2)}" fill="${_escapeXmlText(bg)}" />`);
+        }
+
+        const escaped = _escapeXmlText(rawText);
+        textNodes.push(`<text x="${x0.toFixed(2)}" y="${textY.toFixed(2)}" fill="${_escapeXmlText(color)}" font-family="${_escapeXmlText(fontFamily)}" font-size="${fontSize.toFixed(2)}px" font-weight="${_escapeXmlText(fontWeight)}" font-style="${_escapeXmlText(fontStyle)}" xml:space="preserve">${escaped}</text>`);
+    });
+
+    if (textNodes.length === 0) {
+        showMessage('Nothing visible to export.', 2500);
+        return;
+    }
+
+    const title = _escapeXmlText(state.currentFilename || 'alignment');
+    const label = fullMode ? 'full alignment export' : 'viewport export';
+    const svg = [
+        `<?xml version="1.0" encoding="UTF-8"?>`,
+        `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}" viewBox="0 0 ${width} ${height}">`,
+        `<title>${title} ${label}</title>`,
+        `<rect x="0" y="0" width="${width}" height="${height}" fill="#ffffff" />`,
+        ...bgRects,
+        ...textNodes,
+        `</svg>`
+    ].join('\n');
+
+    const blob = new Blob([svg], { type: 'image/svg+xml;charset=utf-8' });
+    const dlUrl = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    const safeBaseName = (state.currentFilename || 'alignment').replace(/[^a-z0-9._-]+/gi, '_').replace(/^_+|_+$/g, '');
+    a.href = dlUrl;
+    a.download = `${safeBaseName || 'alignment'}_${fullMode ? 'full' : 'viewport'}.svg`;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    setTimeout(() => URL.revokeObjectURL(dlUrl), 2000);
+    showMessage(fullMode ? 'Full alignment exported as SVG.' : 'Visible viewport exported as SVG.', 2500);
+}
+
+// ---- Printing Block ----
+// Block is drawn on a canvas that holds only the bands in view, so a print gave that one screen as a
+// bitmap (measured 2026-10-31: 1 page, the viewport). The old DOM Block printed its blocks as page text,
+// each cut at the page's right edge, and above ALIGN_WINDOWED_DOM_THRESHOLD only the rows and blocks in
+// its window. Now, before printing, every band is drawn as SVG (_canvasState.drawToSvg) into #printBlock,
+// which the print stylesheet shows in place of the page; it is scaled to the paper's width, so every
+// column of a band is on paper. A band taller than a page is cut between rows into page-sized pieces.
+// Above PRINT_BLOCK_MAX_CELLS the bands from the one in view on are printed, up to the limit, under a
+// note naming them (the full-alignment SVG export has the rest).
+const PRINT_BLOCK_MAX_CELLS = 400_000;
+// A failed preparation is not retried within the same print: beforeprint and the print media query both call it,
+// and the second call undid the "the print shows the screen only" fallback. Reset when the print ends.
+let _printBlockFailed = false;
+function _preparePrintBlock() {
+    if (_printBlockFailed) return;
+    _clearPrintBlock();
+    try {
+        _buildPrintBlock();
+    } catch (e) {
+        // nothing half-made goes to paper: the page prints as it is (the canvas), and the user is told. The whole
+        // band build is covered, not only drawToSvg (an error in _svgDocument or the insert escaped unreported)
+        _printBlockFailed = true;
+        document.getElementById('printBlock')?.remove();
+        document.body.classList.remove('print-block');
+        console.error('Printing Block failed:', e);
+        showMessage('Printing the blocks failed (' + (e && e.message ? e.message : e) + '): the print shows the screen only.', 6000);
+    }
+}
+function _buildPrintBlock() {
+    if (!isBlockLayout() || !_canvasState.drawToSvg || !_canvasState.svgBandRegions || !state.seqs?.length) return;
+    const bands = _canvasState.svgBandRegions();
+    if (!bands || !bands.length) return;
+    const t0 = performance.now();
+    const nSeqs = state.seqs.length;
+    const m = _canvasState.metrics || {};
+    const L = _canvasState.layout;
+    // the bands to print: all, or from the band in view while the cells stay under the limit
+    let b0 = 0, b1 = bands.length;
+    const cellsOf = b => nSeqs * (bands[b].c1 - bands[b].c0);
+    let total = 0;
+    for (let b = 0; b < bands.length; b++) total += cellsOf(b);
+    if (total > PRINT_BLOCK_MAX_CELLS) {
+        b0 = L && L.bandAt ? L.bandAt(_canvasState.offsetY) : 0;
+        let cells = 0;
+        for (b1 = b0; b1 < bands.length && (b1 === b0 || cells + cellsOf(b1) <= PRINT_BLOCK_MAX_CELLS); b1++) cells += cellsOf(b1);
+    }
+    const holder = document.createElement('div');
+    holder.id = 'printBlock';
+    const title = state.currentFilename || 'alignment';
+    if (b0 > 0 || b1 < bands.length) {
+        const note = document.createElement('p');
+        note.className = 'print-block-note';
+        note.textContent = `${title}: bands ${b0 + 1}-${b1} of ${bands.length} (columns ${bands[b0].c0 + 1}-${bands[b1 - 1].c1} of ${bands[bands.length - 1].c1}). `
+            + 'The whole alignment is too large to print from the page: use Full SVG in the Input menu.';
+        holder.appendChild(note);
+    }
+    const headerH = m.headerH || 0;
+    const parts = [];
+    let k = 0;
+    for (let b = b0; b < b1; b++) {
+        const r = bands[b];
+        // pieces of at most about a page (the SVG is scaled to the paper's width), cut between rows
+        const maxH = Math.max(r.w * 1.3, headerH + 3 * (L?.bandPitch?.[b] || 15));
+        const pitch = L?.bandPitch?.[b] || ((r.h - headerH) / Math.max(1, nSeqs));
+        let y = 0;
+        while (y < r.h - 0.5) {
+            let h = r.h - y;
+            if (h > maxH) {
+                const rowsFrom = Math.max(0, Math.ceil((y - headerH) / pitch - 1e-6));
+                const rowsTo = Math.floor((y + maxH - headerH) / pitch + 1e-6);
+                h = Math.max(pitch, headerH + Math.max(rowsFrom + 1, rowsTo) * pitch - y);
+            }
+            // an exception here (or below) is caught by _preparePrintBlock, which tells the user (GLM audit cb5 #7)
+            const s = _canvasState.drawToSvg({ ox: 0, oy: r.oy + y, w: r.w, h }, 'p' + (k++) + '_');
+            parts.push(_svgDocument(s.parts, s.width, s.height, `${title} band ${b + 1}`, { xmlDecl: false }));
+            y += h;
+        }
+    }
+    holder.insertAdjacentHTML('beforeend', parts.join('\n'));
+    document.body.appendChild(holder);
+    document.body.classList.add('print-block');
+    _printBlockWindowSize = window.innerWidth + 'x' + window.innerHeight;
+    _canvasState.printMs = performance.now() - t0;
+}
+let _printBlockWindowSize = null;   // the window's size when the print began (_clearPrintBlock)
+function _clearPrintBlock() {
+    document.getElementById('printBlock')?.remove();
+    if (!document.body.classList.contains('print-block')) return;
+    document.body.classList.remove('print-block');
+    // the viewer is shown again: lay it out for the window as it is now (a resize while printing was skipped,
+    // and the controls' height, which places the viewer, was measured for the old window; GLM audit cb5 #4/#5)
+    // A window resized meanwhile: the page's own resize listeners (the controls' rows among them) ran on a hidden
+    // page, so they are run again.
+    const size0 = _printBlockWindowSize;
+    _printBlockWindowSize = null;
+    requestAnimationFrame(() => {
+        if (document.body.classList.contains('print-block')) return;
+        if (!size0 || size0 !== window.innerWidth + 'x' + window.innerHeight) window.dispatchEvent(new Event('resize'));
+        updateControlsOffset();
+        if (isCanvasMode()) _canvasState.relayout?.();
+    });
+}
+if (typeof window !== 'undefined') {
+    window.addEventListener('beforeprint', _preparePrintBlock);
+    window.addEventListener('afterprint', () => { _printBlockFailed = false; _clearPrintBlock(); });
+    // print preview emulation (DevTools, tests) changes the media without the print events
+    try {
+        window.matchMedia('print').addEventListener('change', e => {
+            if (e.matches) { if (!document.getElementById('printBlock')) _preparePrintBlock(); }
+            else { _printBlockFailed = false; _clearPrintBlock(); }
+        });
+    } catch (_) { /* no matchMedia listeners: the print events alone */ }
+}
+
+// The viewport SVG of Canvas and Block: what the canvas shows now, drawn into an SVG recorder
+function _exportCanvasViewportSvg() {
+    // drawToSvg puts ctx / octx back itself (finally); an exception while drawing ended here unreported: no
+    // file, no message (GLM audit cb5 #7)
+    let r;
+    try { r = _canvasState.drawToSvg(); } catch (e) {
+        console.error('Viewport SVG export failed:', e);
+        showMessage('SVG export failed: ' + (e && e.message ? e.message : e), 5000);
+        return;
+    }
+    const title = (state.currentFilename || 'alignment') + ' viewport export';
+    const svg = _svgDocument(r.parts, r.width, r.height, title);
+    _downloadBlob(new Blob([svg], { type: 'image/svg+xml;charset=utf-8' }), `${_safeExportBaseName()}_viewport.svg`);
+    showMessage('Visible viewport exported as SVG.', 2500);
+}
+
+// Full-alignment SVG built from the data with the screen's colours (see
+// _makeCellStyleProbe); works in every view mode, including windowed views.
+// A row's letters as the Case setting shows them (aa | Aa | AA). The full SVG and the RTF export wrote the
+// stored letters, so the file did not look like the screen (audit L16). Colours are still judged on the
+// stored letter; the consensus row keeps its own case, as on screen.
+function _exportCaseText(seq) {
+    const mode = state.residueCase || 'asis';
+    return mode === 'upper' ? seq.toUpperCase() : mode === 'lower' ? seq.toLowerCase() : seq;
+}
+
+function _exportFullAlignmentSvgFromData() {
+    const L = _exportLayout();
+    const fontSize = parseFloat(getComputedStyle(alignmentContainer).fontSize) || 13;
+    const mctx = document.createElement('canvas').getContext('2d');
+    mctx.font = `${fontSize}px "Courier New", monospace`;
+    const charW = mctx.measureText('M').width || fontSize * 0.6;
+    const lineH = Math.ceil(fontSize * 1.35);
+    const nameW = (L.nameLen + 1) * charW;
+    const probe = _makeCellStyleProbe();
+    const out = [];
+    let y = 0;
+    const font = `font-family="'Courier New', Courier, monospace" font-size="${fontSize}px"`;
+    const xs = (start, from, n) => Array.from({ length: n }, (_, k) => (nameW + (from - start + k) * charW).toFixed(2)).join(' ');
+    const baseline = () => (y + lineH - Math.max(2, lineH * 0.22)).toFixed(2);
+    const drawCells = (text, start, end, styleAt, consensusRow) => {
+        for (const run of _exportRuns(text, start, end, styleAt)) {
+            const st = probe.style(run.st, consensusRow);
+            const x = nameW + (run.start - start) * charW;
+            if (st.bg !== '#ffffff') out.push(`<rect x="${x.toFixed(2)}" y="${y}" width="${(run.text.length * charW).toFixed(2)}" height="${lineH}" fill="${st.bg}"/>`);
+            out.push(`<text x="${xs(start, run.start, run.text.length)}" y="${baseline()}" fill="${st.fg}"${st.bold ? ' font-weight="bold"' : ''} ${font}>${_escapeXmlText(run.text)}</text>`);
+        }
+    };
+    const drawName = (name, colour = '#000000', bold = true) => {
+        out.push(`<text x="2" y="${baseline()}" fill="${colour}"${bold ? ' font-weight="bold"' : ''} ${font} xml:space="preserve">${_escapeXmlText(name)}</text>`);
+    };
+    const consensusLine = (start, end) => {
+        const shown = Array.from({ length: L.len }, (_, p) => (p >= start && p < end) ? consensusDisplayBase(L.consensus[p] || '-', p, L.threshold) : '-').join('');
+        drawName('Consensus', '#555555');
+        drawCells(shown, start, end, p => getResidueAnnotationClasses(L.consensus[p] || '-'), true);
+        y += lineH;
+    };
+    try {
+        for (const [start, end] of L.blocks) {
+            const scale = generateScale(end - start, 10, start);
+            out.push(`<text x="${xs(start, start, scale.length)}" y="${baseline()}" fill="#666666" ${font} xml:space="preserve">${_escapeXmlText(scale)}</text>`);
+            y += lineH;
+            if (L.consensus && L.consensusPosition === 'top') consensusLine(start, end);
+            for (const q of state.seqs) {
+                drawName((q.header || '').substring(0, L.nameLen));
+                drawCells(_exportCaseText(q.seq), start, end, p => _exportCellClass(q.seq[p] || '-', L.conservation[p], L.config), false);
+                y += lineH;
+            }
+            if (L.consensus && L.consensusPosition === 'bottom') consensusLine(start, end);
+            y += lineH; // blank line between blocks
+        }
+    } finally {
+        probe.dispose();
+    }
+    const width = Math.ceil(nameW + L.blockWidth * charW + charW);
+    const height = Math.max(lineH, y);
+    const title = _escapeXmlText(state.currentFilename || 'alignment');
+    const svg = [
+        `<?xml version="1.0" encoding="UTF-8"?>`,
+        `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}" viewBox="0 0 ${width} ${height}">`,
+        `<title>${title} full alignment export</title>`,
+        `<rect x="0" y="0" width="${width}" height="${height}" fill="#ffffff"/>`,
+        ...out,
+        `</svg>`
+    ].join('\n');
+    _downloadBlob(new Blob([svg], { type: 'image/svg+xml;charset=utf-8' }),
+        `${_safeExportBaseName()}_full.svg`);
+    showMessage(`Full alignment exported as SVG (${state.seqs.length} sequences x ${L.len} columns).`, 3000);
+}
+

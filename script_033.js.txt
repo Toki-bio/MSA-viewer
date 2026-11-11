@@ -1,0 +1,480 @@
+[script.js lines 13552-14030 of ViewAlign fd8b8e4]
+// Full-height ('all') blocks use the gray/amber/green coherence ladder.
+// Evidenced row-subset finds in one column range get distinct colors
+// (amber, purple, pink) so two motifs are not painted the same. Green
+// is reserved for conserved flanks. Null-coherence / undersized leaves
+// stay gray (single line cannot be a group).
+function _biclusterCoherenceToType(coherence) {
+    if (coherence == null) return 'DIVERGENT';
+    if (coherence >= 0.85) return 'CONSERVATIVE';
+    if (coherence >= 0.6) return 'MOSAIC';
+    return 'DIVERGENT';
+}
+
+const BICLUSTER_FIND_TYPES = ['MOSAIC', 'DECAY_SLOPE', 'SIMPLE_REPEAT'];
+
+function _rowContiguousRuns(rows) {
+    const s = [...rows].sort((a, b) => a - b);
+    const runs = [];
+    for (const r of s) {
+        const last = runs[runs.length - 1];
+        if (last && r === last[last.length - 1] + 1) last.push(r);
+        else runs.push([r]);
+    }
+    return runs;
+}
+
+function _longestRowRun(rows) {
+    const runs = _rowContiguousRuns(rows);
+    if (!runs.length) return [];
+    return runs.reduce((a, b) => a.length >= b.length ? a : b);
+}
+
+function _biclusterPaintMode() {
+    return el('biclusterPaintMode')?.value || 'local_one';
+}
+
+const BICLUSTER_PAINT_TIPS = {
+    local_one: 'All copies, one box: one rectangle covers every sequence that has this pattern, even if those rows are not next to each other. Does not change alignment order.',
+    local_two: 'Stack + copies: the contiguous stack is one rectangle; scattered copies get a second, paler layer. Does not change alignment order.',
+    strict: 'Stack only: paint only rows that sit in one contiguous block. Scattered copies of the same pattern are left unpainted. Does not change alignment order.'
+};
+
+function _syncBiclusterPaintModeTip() {
+    const paint = el('biclusterPaintMode');
+    if (!paint) return;
+    paint.title = BICLUSTER_PAINT_TIPS[paint.value] || BICLUSTER_PAINT_TIPS.local_one;
+}
+
+function _paintBiclusterBlocks(raw) {
+    if (!raw || !Array.isArray(raw.blocks)) return raw;
+    const mode = _biclusterPaintMode();
+    const painted = [];
+    for (const b of raw.blocks) {
+        const isFind = b.kind !== 'conserved' && b.rows !== 'all' && Array.isArray(b.rows) && b.rows.length >= 2;
+        const origRows = Array.isArray(b.rows) ? b.rows.slice() : null;
+        if (!isFind) {
+            painted.push({ ...b, localOnly: false });
+            continue;
+        }
+        const longest = _longestRowRun(b.rows);
+        const orphan = b.rows.filter(i => !longest.includes(i));
+        if (mode === 'strict') {
+            if (longest.length >= 2) painted.push({ ...b, rows: longest, localOnly: false, sourceRows: origRows });
+            continue;
+        }
+        if (mode === 'local_two' && orphan.length && longest.length >= 2) {
+            painted.push({ ...b, rows: longest, localOnly: false, sourceRows: origRows });
+            painted.push({ ...b, rows: orphan, localOnly: true, sourceRows: origRows });
+            continue;
+        }
+        painted.push({ ...b, localOnly: false, sourceRows: origRows });
+    }
+    const finds = painted.filter(b => b.kind !== 'conserved' && b.rows !== 'all' && Array.isArray(b.rows));
+    finds.sort((a, b) => {
+        if (a.col_start !== b.col_start) return a.col_start - b.col_start;
+        const ra = Math.min.apply(null, a.rows), rb = Math.min.apply(null, b.rows);
+        return ra - rb;
+    });
+    let fi = 0;
+    const typeOf = new Map();
+    finds.forEach((b) => {
+        if (b.localOnly) return;
+        const key = b.col_start + ':' + b.col_end + ':' + [...b.rows].sort((x,y)=>x-y).join(',');
+        if (!typeOf.has(key)) typeOf.set(key, BICLUSTER_FIND_TYPES[fi++ % BICLUSTER_FIND_TYPES.length]);
+        b.type = typeOf.get(key);
+    });
+    finds.forEach((b) => {
+        if (!b.localOnly) return;
+        const parent = painted.find(p => !p.localOnly && p.kind === b.kind && p.col_start === b.col_start && p.col_end === b.col_end && p.type);
+        b.type = parent ? parent.type : 'MOSAIC';
+    });
+    painted.forEach(b => {
+        if (b.type) return;
+        if (b.kind === 'conserved' || b.rows === 'all') {
+            b.type = 'CONSERVATIVE';
+            return;
+        }
+        b.type = 'DIVERGENT';
+    });
+    return { ...raw, blocks: painted, paint_mode: mode };
+}
+
+function _typeHeaderListsFromClusterMap() {
+    if (!state.clusterMap) return { lists: [], names: [] };
+    const byType = new Map();
+    Object.keys(state.clusterMap).forEach(id => {
+        const info = state.clusterMap[id];
+        if (!info || info.cluster < 0) return;
+        if (!byType.has(info.cluster)) byType.set(info.cluster, []);
+        byType.get(info.cluster).push(id);
+    });
+    const keys = Array.from(byType.keys()).sort((a, b) => a - b);
+    const lists = [];
+    const names = [];
+    keys.forEach(k => {
+        lists.push(byType.get(k));
+        const sample = byType.get(k)[0];
+        names.push((state.clusterMap[sample] && state.clusterMap[sample].name) || ('Group ' + (k + 1)));
+    });
+    return { lists, names };
+}
+
+function _tagBiclusterAgainstTypes(mask) {
+    if (!mask || !Array.isArray(mask.blocks) || typeof SINEClusterer === 'undefined') return mask;
+    const { lists, names } = _typeHeaderListsFromClusterMap();
+    if (!lists.length) {
+        mask.typeAgreementSummary = { supporting: 0, inside: 0, discordant: 0 };
+        return mask;
+    }
+    let supporting = 0, inside = 0, discordant = 0;
+    mask.blocks.forEach(b => {
+        if (b.kind === 'conserved' || b.rows === 'all' || !Array.isArray(b.rows)) {
+            b.typeAgreement = { kind: 'none', typeIdx: -1, jaccard: 0 };
+            return;
+        }
+        const ids = b.rows.map(k => mask.row_headers[k]).filter(Boolean);
+        const tag = SINEClusterer.tagRectangleAgainstTypes(ids, lists);
+        if (tag.typeIdx >= 0) tag.typeName = names[tag.typeIdx];
+        b.typeAgreement = tag;
+        if (tag.kind === 'supports') supporting++;
+        else if (tag.kind === 'inside') inside++;
+        else if (tag.kind === 'discordant') discordant++;
+    });
+    mask.typeAgreementSummary = { supporting, inside, discordant };
+    return mask;
+}
+
+function applyBiclusterLive() {
+    if (typeof BlockBicluster === 'undefined') { showMessage('block-bicluster.js not loaded', 3000); return null; }
+    if (!state.seqs || !state.seqs.length) { showMessage('Load an alignment first', 3000); return null; }
+    const fasta = state.seqs.map(s => '>' + s.header + '\n' + s.seq).join('\n') + '\n';
+    const knobs = (typeof getClusteringParameters === 'function') ? getClusteringParameters() : {};
+    const raw = BlockBicluster.computeBiclusterMask(fasta, knobs);
+    state._biclusterRaw = raw;
+    state.blockMask = _tagBiclusterAgainstTypes(_paintBiclusterBlocks(raw));
+    state._blockMaskPreset = null;
+    renderBlockMaskOverlay();
+    return state.blockMask;
+}
+
+function reapplyBiclusterPaintMode() {
+    if (!state._biclusterRaw) {
+        if (state.seqs && state.seqs.length) applyBiclusterLive();
+        return;
+    }
+    state.blockMask = _tagBiclusterAgainstTypes(_paintBiclusterBlocks(state._biclusterRaw));
+    renderBlockMaskOverlay();
+    _blockMaskStatusFrom(state.blockMask);
+    if (typeof _updateInstrumentStatus === 'function') _updateInstrumentStatus();
+}
+
+function computeAndShowBicluster() {
+    _blockMaskStatusFrom(applyBiclusterLive());
+    if (typeof _updateInstrumentStatus === 'function') _updateInstrumentStatus();
+}
+
+// Panel action: compute from the loaded alignment using the selected preset
+// and report a short summary (block count, split zones, any scattered groups).
+// The eight "squint" knobs, with the panel slider id for each. The sliders
+// are optional markup (see index.html #clustering-controls); everything here
+// no-ops gracefully when they are absent.
+const BLOCKMASK_KNOBS = [
+    ['WIN', 'bmKnobWIN'], ['MOSAIC_STD', 'bmKnobMOSAIC_STD'],
+    ['BG_MARGIN', 'bmKnobBG_MARGIN'], ['MIN_ZONE_W', 'bmKnobMIN_ZONE_W'],
+    ['ZONE_BRIDGE', 'bmKnobZONE_BRIDGE'], ['ROW_MIN_GROUP', 'bmKnobROW_MIN_GROUP'],
+    ['ROW_MIN_GAP_ABS', 'bmKnobROW_MIN_GAP_ABS'], ['MIN_BLOCK_W', 'bmKnobMIN_BLOCK_W']
+];
+
+function _blockMaskParamsFromSliders() {
+    const p = {};
+    let any = false;
+    for (const [key, id] of BLOCKMASK_KNOBS) {
+        const s = el(id);
+        if (s) { const v = parseFloat(s.value); if (!Number.isNaN(v)) { p[key] = v; any = true; } }
+    }
+    return any ? p : null;
+}
+
+function _blockMaskSyncSlidersToPreset(name) {
+    const preset = BLOCKMASK_PRESETS[name];
+    if (!preset) return;
+    for (const [key, id] of BLOCKMASK_KNOBS) {
+        const s = el(id);
+        if (!s || preset[key] == null) continue;
+        s.value = preset[key];
+        const out = el(id + 'Val');
+        if (out) out.textContent = preset[key];
+    }
+}
+
+function _blockMaskStatusFrom(mask) {
+    const status = el('blockMaskStatus');
+    if (!status) return;
+    if (!mask) { status.textContent = 'no mask (load an alignment first)'; return; }
+    const blocks = mask.blocks || [];
+    if (!blocks.length) {
+        status.textContent = '0 rectangles (thresholds too tight for this alignment)';
+        return;
+    }
+    const b = blocks[0];
+    const c1 = b.col_start + 1, c2 = b.col_end + 1;
+    const nRows = b.rows === 'all' ? mask.n_rows : (Array.isArray(b.rows) ? b.rows.length : 0);
+    const who = b.rows === 'all' ? 'all rows' : nRows + ' rows';
+    const names = (b.rows !== 'all' && Array.isArray(b.rows))
+        ? b.rows.map(k => mask.row_headers[k]).slice(0, 8).join(', ') + (b.rows.length > 8 ? '…' : '')
+        : '';
+    const bases = b.supporting_bases || '';
+    const more = blocks.length > 1 ? `; +${blocks.length - 1} more` : '';
+    const mode = mask.paint_mode;
+    const modeNote = mode === 'strict' ? ' [strict]' : mode === 'local_two' ? ' [local two-layer]' : mode === 'local_one' ? ' [local one-box]' : '';
+    status.textContent = `${blocks.length} rectangle${blocks.length === 1 ? '' : 's'}${modeNote}. First: cols ${c1}–${c2}, ${who}`
+        + (names ? ` (${names})` : '')
+        + (bases ? `, bases ${bases}` : '')
+        + more;
+    const agr = mask.typeAgreementSummary;
+    if (agr && (agr.supporting || agr.inside || agr.discordant)) {
+        status.textContent += `. Types: ${agr.supporting} supporting, ${agr.inside} inside, ${agr.discordant} discordant`;
+    }
+}
+
+function computeAndShowBlockMask() {
+    const sel = el('blockMaskPreset');
+    const preset = sel ? sel.value : 'V3_medium';
+    _blockMaskSyncSlidersToPreset(preset);
+    _blockMaskStatusFrom(applyBlockMaskLive(preset));
+}
+
+// Recompute from whatever the sliders currently say (used on slider release).
+function recomputeBlockMaskFromSliders() {
+    const params = _blockMaskParamsFromSliders();
+    if (!params) { computeAndShowBlockMask(); return; }
+    _blockMaskStatusFrom(applyBlockMaskLive(params));
+}
+
+function initBlockMaskPanel() {
+    const op = el('blockMaskOpacity');
+    if (op && !op._bmBound) {
+        op._bmBound = true;
+        op.addEventListener('input', () => setBlockMaskOpacity(op.value));
+    }
+    const sel = el('blockMaskPreset');
+    if (sel && !sel._bmBound) {
+        sel._bmBound = true;
+        sel.addEventListener('change', () => {
+            _blockMaskSyncSlidersToPreset(sel.value);
+            if (state.blockMask) computeAndShowBlockMask();
+        });
+    }
+    for (const [, id] of BLOCKMASK_KNOBS) {
+        const s = el(id);
+        if (!s || s._bmBound) continue;
+        s._bmBound = true;
+        s.addEventListener('input', () => {
+            const out = el(id + 'Val');
+            if (out) out.textContent = s.value;
+        });
+        s.addEventListener('change', () => { if (state.blockMask) recomputeBlockMaskFromSliders(); });
+    }
+    // seed slider readouts + values from the current preset selection
+    if (sel) _blockMaskSyncSlidersToPreset(sel.value);
+    const paint = el('biclusterPaintMode');
+    if (paint && !paint._bmBound) {
+        paint._bmBound = true;
+        paint.addEventListener('change', () => {
+            _syncBiclusterPaintModeTip();
+            if (state._biclusterRaw || state.blockMask) reapplyBiclusterPaintMode();
+        });
+        _syncBiclusterPaintModeTip();
+    }
+}
+
+function groupRowsByType(rowIdxs) {
+    if (!state.seqs || !state.seqs.length) {
+        showMessage('Load an alignment first', 3000);
+        return;
+    }
+    const mask = state.blockMask;
+    const headers = [];
+    const src = Array.isArray(rowIdxs) ? rowIdxs : [];
+    for (const k of src) {
+        const h = mask && Array.isArray(mask.row_headers) ? mask.row_headers[k] : state.seqs[k] && state.seqs[k].header;
+        if (h && !headers.includes(h)) headers.push(h);
+    }
+    if (headers.length < 2) {
+        showMessage('That type has fewer than 2 sequences', 3000);
+        return;
+    }
+    const want = new Set(headers);
+    const matched = [];
+    const rest = [];
+    for (const s of state.seqs) {
+        if (want.has(s.header)) matched.push(s);
+        else rest.push(s);
+    }
+    pushUndo('group-by-type');
+    state.seqs = [...matched, ...rest];
+    state.lastAction = 'sort';
+    renderAlignment();
+    showMessage('Stacked ' + matched.length + ' sequences of that type', 2500);
+}
+
+function groupRowsByBlockMask() {
+    if (!state.blockMask || !state.blockMask.blocks || state.blockMask.blocks.length === 0) {
+        showMessage('Show 2D analysis first, then click a colored rectangle to stack that type', 4000);
+        return;
+    }
+    showMessage('Click a colored rectangle on the alignment to stack that type (orphans included). Undoable.', 4000);
+}
+
+window.applyBlockMaskLive = applyBlockMaskLive;
+window.renderBlockMaskOverlay = renderBlockMaskOverlay;
+window.setBlockMaskOpacity = setBlockMaskOpacity;
+window.clearBlockMask = clearBlockMask;
+window.computeAndShowBlockMask = computeAndShowBlockMask;
+window.groupRowsByBlockMask = groupRowsByBlockMask;
+window.groupRowsByType = groupRowsByType;
+
+// The file line keeps its full width up to 300px, so a short one is never cut (the
+// panel moves to a second toolbar line instead when the menus leave no room); a
+// longer one (a long ?title=) shortens only the file name, with an ellipsis, so the
+// panel stays on the menu line and the counts stay readable.
+function _fitHeaderInfoPanel() {
+    const panel = el('headerInfoPanel'), infoEl = el('sourceInfo');
+    if (!panel || !infoEl) return;
+    panel.style.minWidth = '';
+    infoEl.classList.add('measure-natural');
+    const natural = Math.max(infoEl.scrollWidth, el('versionIndicator')?.scrollWidth || 0);
+    infoEl.classList.remove('measure-natural');
+    const pad = parseFloat(getComputedStyle(panel).paddingLeft) + parseFloat(getComputedStyle(panel).paddingRight);
+    panel.style.minWidth = Math.ceil(Math.min(natural, 300) + pad + 1) + 'px';
+    placeModeRow();
+}
+
+// Unified source info updater so counts stay accurate after deletions/insertions
+function updateSourceInfo() {
+    const infoEl = el('sourceInfo');
+    const pathLineEl = el('sourcePathLine');
+    const headerRowEl = pathLineEl?.closest('.header-info-row') || null;
+    if (!infoEl) return;
+    if (!state.seqs || state.seqs.length === 0) {
+        infoEl.innerHTML = 'No file loaded';
+        infoEl.title = '';
+        infoEl.dataset.fullFilename = '';
+        infoEl.dataset.fullPath = '';
+        if (pathLineEl) {
+            pathLineEl.innerHTML = '';
+            pathLineEl.title = '';
+            pathLineEl.dataset.fullPath = '';
+        }
+        if (headerRowEl) headerRowEl.style.display = 'none';
+        _fitHeaderInfoPanel();
+        return;
+    }
+
+    const escapeHtml = (text) => String(text || '')
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#39;');
+
+    const seqCount = state.seqs.length;
+    const aliLength = _maxOf(state.seqs, s => s.seq.length);
+    // (_linkGapless recounts a row whose text changed: a typed residue keeps the length and left the old counts)
+    const bigTable = seqCount * aliLength > GAPLESS_TABLE_MAX_RESIDUES;
+    if (bigTable) for (const seq of state.seqs) { seq.gaplessPositions = null; seq._linkGapFor = null; }
+    const gaplessLengths = state.seqs.map(seq => { if (bigTable) return _rowLen(seq); const g = _linkGapless(seq); return g[g.length - 1] || 0; });
+    const minLength = _minOf(gaplessLengths);
+    const maxLength = _maxOf(gaplessLengths);
+    const lengthRange = minLength === maxLength ? `${minLength}` : `${minLength}-${maxLength}`;
+
+    const fullFilename = state.currentFilename || '';
+    const filenameHtml = fullFilename
+        ? `<strong class="source-file-label"><span class="source-file-name">${escapeHtml(fullFilename)}</span></strong><span class="source-counts">: </span>`
+        : '';
+
+    const fullPath = state.currentFilePath || '';
+    // Residue unit: amino acids for a protein alignment (it said "bp" for both)
+    const unit = isProteinAlignment() ? 'aa' : 'bp';
+    const summaryHtml = `${filenameHtml}<span class="source-counts"><strong>${seqCount}</strong> seq, <strong>${aliLength}</strong> col, <strong>${lengthRange}</strong> ${unit}</span>`;
+    infoEl.innerHTML = summaryHtml;
+    _fitHeaderInfoPanel();
+    infoEl.dataset.fullFilename = fullFilename;
+    infoEl.dataset.fullPath = fullPath;
+    if (pathLineEl) {
+        pathLineEl.innerHTML = fullPath ? `<span class="source-inline-path">${escapeHtml(fullPath)}</span>` : '';
+        pathLineEl.dataset.fullPath = fullPath;
+    }
+    if (headerRowEl) headerRowEl.style.display = fullPath ? '' : 'none';
+    const titleParts = [];
+    if (fullFilename) titleParts.push(fullFilename);
+    if (fullPath) titleParts.push(fullPath);
+    titleParts.push(`${seqCount} seq, ${aliLength} col, ${lengthRange} ${unit}`);
+    infoEl.title = titleParts.join('\n');
+
+    const fileNameEl = infoEl.querySelector('.source-file-name');
+    if (fileNameEl) {
+        fileNameEl.dataset.fullFilename = fullFilename;
+        fileNameEl.title = fullFilename;
+    }
+
+    const pathEl = pathLineEl?.querySelector('.source-inline-path');
+    if (pathEl) {
+        pathEl.dataset.fullPath = fullPath;
+        requestAnimationFrame(() => {
+            const isTruncated = pathEl.scrollWidth > pathEl.clientWidth + 1;
+            pathEl.title = isTruncated ? fullPath : '';
+            pathEl.dataset.truncated = isTruncated ? '1' : '0';
+        });
+    }
+}
+
+function initSourceInfoInteractions() {
+    const infoEl = el('sourceInfo');
+    const pathLineEl = el('sourcePathLine');
+    if (!infoEl || infoEl.dataset.copyBound === '1') return;
+    infoEl.dataset.copyBound = '1';
+
+    infoEl.addEventListener('dblclick', (event) => {
+        const target = event.target;
+        const fileNameEl = target?.closest?.('.source-file-name');
+        if (fileNameEl) {
+            const filename = fileNameEl.dataset.fullFilename || infoEl.dataset.fullFilename || '';
+            if (!filename) return;
+            navigator.clipboard.writeText(filename)
+                .then(() => showMessage('Filename copied', 1600))
+                .catch(() => showMessage('Failed to copy filename', 2500));
+        }
+    });
+
+    if (pathLineEl && pathLineEl.dataset.copyBound !== '1') {
+        pathLineEl.dataset.copyBound = '1';
+        pathLineEl.addEventListener('dblclick', (event) => {
+            const pathEl = event.target?.closest?.('.source-inline-path');
+            const path = pathEl?.dataset.fullPath || pathLineEl.dataset.fullPath || infoEl.dataset.fullPath || '';
+            if (!path) return;
+            navigator.clipboard.writeText(path)
+                .then(() => showMessage('Path copied', 1600))
+                .catch(() => showMessage('Failed to copy path', 2500));
+        });
+    }
+}
+
+function closeAllMenusViaEsc() {
+    document.querySelectorAll('.menu-section').forEach(section => {
+        clearMenuCloseDelay(section);
+        section.classList.remove('menu-open');
+        section.classList.remove('hover-active');
+    });
+    document.body.classList.add('suppress-menu-hover');
+    const clearSuppress = () => {
+        document.body.classList.remove('suppress-menu-hover');
+        window.removeEventListener('mousemove', clearSuppress);
+    };
+    window.addEventListener('mousemove', clearSuppress, { once: true });
+    if (document.activeElement && typeof document.activeElement.blur === 'function') {
+        document.activeElement.blur();
+    }
+}
+

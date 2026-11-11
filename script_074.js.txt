@@ -1,0 +1,409 @@
+[script.js lines 32718-33125 of ViewAlign fd8b8e4]
+// Reset all colours
+function resetAllColours() {
+    colourState.mappings.clear();
+    colourState.history.clear();
+    // repaint every name from the state: wiping the inline style of each .seq-name also removed the
+    // SNP-group fill/stripe and titles (not name colours), and did nothing in Canvas
+    if (typeof paintNameCells === 'function') paintNameCells();
+    renderAlignment();
+    showMessage('All colors reset', 2000);
+}
+
+// Update preset list display
+function updateColourPresetList() {
+    const presetList = el('colourPresetList');
+    const presetItems = el('presetItems');
+    const presets = colourState.presets;
+
+    if (Object.keys(presets).length === 0) {
+        presetList.style.display = 'none';
+        colourState.selectedPresetName = null;
+        return;
+    }
+
+    presetList.style.display = 'block';
+    presetItems.innerHTML = '';
+
+    Object.keys(presets).forEach(name => {
+        const div = document.createElement('div');
+        div.style.cssText = 'cursor:pointer;padding:2px;border-radius:2px;margin:2px 0;background:#f0f0f0;';
+        div.dataset.name = name;
+        if (name === colourState.selectedPresetName) {
+            div.style.background = '#d6ebff';
+        }
+
+        const nameSpan = document.createElement('span');
+        nameSpan.textContent = name;
+
+        const delSpan = document.createElement('span');
+        delSpan.textContent = 'x';
+        delSpan.style.cssText = 'float:right;cursor:pointer;color:#888;';
+        delSpan.addEventListener('click', (e) => {
+            e.stopPropagation();
+            delete colourState.presets[name];
+            if (colourState.selectedPresetName === name) {
+                colourState.selectedPresetName = null;
+            }
+            safeLocalSet('seqColourPresets', JSON.stringify(colourState.presets), 'the colour presets');
+            updateColourPresetList();
+        });
+
+        div.addEventListener('click', () => {
+            colourState.selectedPresetName = name;
+            colourState.mappings = new Map(colourState.presets[name]);
+            applyColourToSeqNames(colourState.mappings);
+            updateColourPresetList();
+            showMessage(`Loaded '${name}'`, 2000);
+        });
+
+        div.appendChild(nameSpan);
+        div.appendChild(delSpan);
+        presetItems.appendChild(div);
+    });
+}
+
+// Initialize colour seqs feature
+// Show color history inspector
+function showColorHistory() {
+    const content = el('colourHistoryContent');
+
+    if (colourState.history.size === 0) {
+        content.innerHTML = '<div style="padding: 20px; text-align: center; color: #999;">No colors assigned yet</div>';
+        showExclusiveModal('colourInspectorModal');
+        return;
+    }
+
+    // Group by sequence name
+    let html = '';
+    const sortedNames = Array.from(colourState.history.keys()).sort();
+
+    sortedNames.forEach(seqName => {
+        const history = colourState.history.get(seqName);
+        const currentColor = colourState.mappings.get(seqName) || '#ccc';
+
+        html += `<div style="margin-bottom: 12px; padding: 8px; background: #f9f9f9; border-radius: 3px; border-left: 3px solid ${_escapeHtml(currentColor)};">`;
+        html += `<div style="font-weight: bold; margin-bottom: 4px; word-break: break-all;">${_escapeHtml(seqName)}</div>`;
+        html += `<div style="font-size: 10px; color: #666; margin-bottom: 6px;">Current: <span style="display: inline-block; width: 12px; height: 12px; background: ${_escapeHtml(currentColor)}; border: 1px solid #ccc; vertical-align: middle;"></span> ${_escapeHtml(currentColor)}</div>`;
+        html += `<div style="font-size: 10px;">History:</div>`;
+        html += `<div style="margin-left: 8px;">`;
+
+        history.forEach((entry, idx) => {
+            html += `<div style="margin: 2px 0; display: flex; align-items: center; gap: 6px;">`;
+            html += `<span style="color: #999; min-width: 20px;">${idx + 1}.</span>`;
+            html += `<span style="display: inline-block; width: 14px; height: 14px; background: ${_escapeHtml(entry.color)}; border: 1px solid #ccc; border-radius: 2px;"></span>`;
+            html += `<span>${_escapeHtml(entry.color)}</span>`;
+            html += `<span style="color: #0066cc; margin: 0 4px;"><- ${_escapeHtml(entry.method)}</span>`;
+            html += `<span style="color: #999; font-size: 9px;">${_escapeHtml(entry.timestamp)}</span>`;
+            html += `</div>`;
+        });
+
+        html += `</div></div>`;
+    });
+
+    content.innerHTML = html;
+    showExclusiveModal('colourInspectorModal');
+}
+
+function initColourSeqs() {
+    const patternBtn = el('colourPatternButton');
+    const autoBtn = el('colourAutoButton');
+    const saveBtn = el('colourSavePresetButton');
+    const loadBtn = el('colourLoadPresetButton');
+    const resetBtn = el('colourResetButton');
+    const sortBtn = el('colourSortButton');
+    const groupBtn = el('colourGroupButton');
+    const inspectBtn = el('colourInspectButton');
+    const thresholdSlider = el('colourSimilarityThreshold');
+    const patternInput = el('colourPatternInput');
+
+    if (patternBtn) patternBtn.addEventListener('click', applyPatternColour);
+    if (autoBtn) autoBtn.addEventListener('click', autoColourBySimilarity);
+    if (saveBtn) saveBtn.addEventListener('click', saveColourPreset);
+    if (loadBtn) loadBtn.addEventListener('click', loadColourPreset);
+    if (resetBtn) resetBtn.addEventListener('click', resetAllColours);
+    if (sortBtn) sortBtn.addEventListener('click', sortSequencesByColor);
+    if (groupBtn) groupBtn.addEventListener('click', groupColoredSequencesAtTop);
+    if (inspectBtn) inspectBtn.addEventListener('click', showColorHistory);
+
+    // Keep menu open when interacting with pattern input
+    if (patternInput) {
+        patternInput.addEventListener('focus', () => {
+            const colourMenu = document.querySelector('[id="colourseqs-controls"]')?.parentElement;
+            if (colourMenu) {
+                colourMenu.classList.add('menu-open');
+            }
+        });
+        patternInput.addEventListener('blur', () => {
+            setTimeout(() => {
+                if (!document.querySelector('[id="colourseqs-controls"]')?.parentElement?.matches(':hover')) {
+                    document.querySelector('[id="colourseqs-controls"]')?.parentElement?.classList.remove('menu-open');
+                }
+            }, 100);
+        });
+    }
+
+    // Update threshold display
+    const updateThresholdLabel = () => {
+        const sensRaw = parseInt(thresholdSlider.value, 10);
+        const sens = Number.isFinite(sensRaw) ? sensRaw : 3;   // 0 (strictest) is valid
+        const pct = Math.round((0.90 - (sens / 10) * 0.50) * 100);
+        el('colourThresholdValue').textContent = pct + '%';
+    };
+    if (thresholdSlider) {
+        thresholdSlider.addEventListener('input', updateThresholdLabel);
+        updateThresholdLabel();
+    }
+
+    // Load initial presets list
+    updateColourPresetList();
+}
+
+// ============================================================================
+// End of Full-window drag-and-drop
+// ============================================================================
+
+// ============================================================================
+// Persistent horizontal scrollbar synced with alignment
+// ============================================================================
+// Dragging a persistent scrollbar moves it like a scrollbar thumb: with the mouse, and so
+// that the whole track covers the whole alignment. It used to scroll by -1 px per px (the
+// "grab and pan" direction, the opposite of the thumb under the pointer): dragging the thumb
+// down moved the view back up, and from the top it did not move at all.
+function _scrollbarDragRatio(trackPx, contentPx) {
+    const range = contentPx - trackPx;
+    if (range <= 0) return 0;
+    const thumbPx = Math.max(20, trackPx * trackPx / contentPx);
+    return range / Math.max(1, trackPx - thumbPx);
+}
+
+// The persistent bars draw their own grip; the browser's scrollbar is hidden (styles.css). With
+// the native one, pressing its thumb started Chrome's own drag next to ours (pointerdown here),
+// each at its own px-per-px ratio, and on Windows Chrome snaps a native thumb back to where the
+// drag began once the pointer strays ~100px off the bar: the view jumped back mid-drag. Now only
+// our drag moves the bar, with the grip sized by the same formula as _scrollbarDragRatio, so the
+// grip stays under the pointer. The bar stays a scroll container (scrollLeft/scrollTop hold the
+// position); the track is sticky, so it does not scroll away with the content.
+function _attachScrollbarGrip(bar, horizontal) {
+    const track = document.createElement('div');
+    track.className = 'scrollbar-track';
+    const grip = document.createElement('div');
+    grip.className = 'scrollbar-grip';
+    track.appendChild(grip);
+    bar.insertBefore(track, bar.firstChild);
+    let trackPx = 0, contentPx = 0;
+    function place() {
+        const range = contentPx - trackPx;
+        if (range <= 0 || trackPx <= 0) { grip.style.display = 'none'; return; }
+        const gripPx = Math.max(20, trackPx * trackPx / contentPx);
+        const pos = Math.min(1, Math.max(0, (horizontal ? bar.scrollLeft : bar.scrollTop) / range)) * (trackPx - gripPx);
+        grip.style.display = '';
+        if (horizontal) { grip.style.width = gripPx + 'px'; grip.style.transform = `translateX(${pos}px)`; }
+        else { grip.style.height = gripPx + 'px'; grip.style.transform = `translateY(${pos}px)`; }
+    }
+    // after the bar's content size changed (re-measures; not on the scroll path)
+    function update() {
+        trackPx = horizontal ? bar.clientWidth : bar.clientHeight;
+        contentPx = horizontal ? bar.scrollWidth : bar.scrollHeight;
+        place();
+    }
+    bar.addEventListener('scroll', place, { passive: true });
+    if (window.ResizeObserver) new ResizeObserver(update).observe(bar);
+    // A press on the track (not the grip) that does not drag pages towards the press.
+    function isTrackPress(e) {
+        if (grip.style.display === 'none' || e.target === grip) return 0;
+        const r = grip.getBoundingClientRect();
+        const p = horizontal ? e.clientX : e.clientY;
+        return p < (horizontal ? r.left : r.top) ? -1 : p > (horizontal ? r.right : r.bottom) ? 1 : 0;
+    }
+    return { update, place, isTrackPress };
+}
+
+// The persistent bars mirror the alignment's scroll position. A bar's own scroll event used to
+// be treated as user input even when our code had just set it, so every scroll step was
+// written back into the alignment (scrollLeft = bar.scrollLeft). That write is a programmatic
+// scroll: it cancels the browser's smooth/inertial scrolling and, one frame late, puts the
+// view back where it was (two-finger touchpad scrolling jumped back and stalled). Now the bar
+// drives the view only while the user is using the bar.
+function makeBarInputGuard(bar) {
+    let stamp = -1e9, down = false;
+    const touch = () => { stamp = performance.now(); };
+    ['wheel', 'touchstart', 'touchmove', 'keydown', 'mousedown'].forEach(t => bar.addEventListener(t, touch, { capture: true, passive: true }));
+    bar.addEventListener('pointerdown', () => { down = true; touch(); }, true);
+    const up = () => { down = false; touch(); };
+    bar.addEventListener('pointerup', up, true);
+    bar.addEventListener('pointercancel', up, true);
+    window.addEventListener('mouseup', up, true);
+    return { active: () => down || performance.now() - stamp < 350, touch };
+}
+
+(function setupPersistentScrollbar() {
+    const alignment = document.getElementById('alignmentContainer');
+    const bar = document.querySelector('.horizontal-scrollbar');
+    const thumb = document.querySelector('.horizontal-scrollbar-thumb');
+    if (!alignment || !bar || !thumb) return;
+
+    let syncing = false;
+    const barInput = makeBarInputGuard(bar);
+    const grip = _attachScrollbarGrip(bar, true);
+    // Canvas mode's content is a single absolutely-positioned <canvas> panned via
+    // _canvasState.offsetX (alignment.scrollLeft/scrollWidth are meaningless there),
+    // so this bar drives that offset directly instead of the DOM scroll position.
+    // (isCanvasMode(): Canvas or Block, both drawn by the Canvas renderer)
+
+    // The bar is shown only when the alignment is wider than its viewport, like
+    // the vertical bar. Before, the thumb was always at least the viewport + 1px,
+    // so the empty start page (and any alignment that fits) showed a scrollbar
+    // whenever the bar was a pixel narrower than the alignment area. Hidden with
+    // visibility, not display, so the layout does not jump when it appears.
+    // The bar's range (thumb - bar width) is made equal to the view's (content - viewport width).
+    // The thumb used to be the content's width, but the bar is 2px wider than the alignment's
+    // viewport (its border), so the bar stopped short of the alignment's end.
+    function syncSizes() {
+        syncing = true;
+        const canvas = isCanvasMode() ? document.getElementById('alignmentCanvas') : null;
+        const viewW = (canvas && parseFloat(canvas.style.width)) || alignment.clientWidth;
+        const contentW = isCanvasMode()
+            ? (_canvasState.totalContentW || viewW)
+            : (alignment.scrollWidth || viewW);
+        // Block: the bands fit the width, nothing to scroll sideways (the bar stays hidden)
+        const scrollable = !isBlockLayout() && contentW > viewW + 1;
+        if (bar.style.visibility !== (scrollable ? '' : 'hidden')) _canvasState.invalidateInsets?.();   // Canvas reserves only a shown bar
+        bar.style.visibility = scrollable ? '' : 'hidden';
+        // Canvas: the range clampOffsets allows, the vertical bar over the canvas' right edge included
+        const insR = scrollable && isCanvasMode() ? (_canvasState.scrollInsets?.().r || 0) : 0;
+        thumb.style.width = (scrollable ? contentW - viewW + insR + bar.clientWidth : 0) + 'px';
+        bar.scrollLeft = isCanvasMode() ? (_canvasState.offsetX || 0) : alignment.scrollLeft;
+        syncing = false;
+        grip.update();
+    }
+
+    function onBarScroll() {
+        if (syncing || !barInput.active()) return;   // our own mirror write: not user input
+        syncing = true;
+        if (isCanvasMode()) {
+            _canvasState.offsetX = bar.scrollLeft;
+            _canvasState.scheduleDrawMoved?.();   // only the view moved: frame copy, not a full redraw
+        } else {
+            alignment.scrollLeft = bar.scrollLeft;
+            // The bar reached a position the alignment cannot: its width is stale
+            // (the content changed size without a DOM mutation). Re-measure.
+            if (Math.abs(alignment.scrollLeft - bar.scrollLeft) > 1) {
+                syncing = false;
+                syncSizes();
+                return;
+            }
+        }
+        syncing = false;
+    }
+
+    function onAlignmentScroll() {
+        if (syncing || isCanvasMode()) return;
+        if (Math.abs(bar.scrollLeft - alignment.scrollLeft) < 0.5) return;
+        syncing = true;
+        bar.scrollLeft = alignment.scrollLeft;
+        syncing = false;
+    }
+
+    // Registered once; Canvas's draw() calls this after every repaint so wheel-
+    // scroll/drag-pan inside the canvas keeps the bar's thumb position in sync.
+    _canvasState.onOffsetChange = () => {
+        if (syncing || !isCanvasMode()) return;
+        if (Math.abs(bar.scrollLeft - (_canvasState.offsetX || 0)) < 0.5) return;
+        syncing = true;
+        bar.scrollLeft = _canvasState.offsetX || 0;
+        syncing = false;
+    };
+
+    syncSizes();
+    window._syncHorizontalScrollbar = syncSizes;
+    bar.addEventListener('scroll', onBarScroll, { passive: true });
+    alignment.addEventListener('scroll', onAlignmentScroll, { passive: true });
+    // At most one re-measure per frame: syncSizes reads scrollWidth, which forces
+    // a layout, and the windowed renderer mutates the alignment many times per
+    // scroll step (each mutation used to queue its own re-measure).
+    let syncQueued = false;
+    const scheduleSync = () => {
+        if (syncQueued) return;
+        syncQueued = true;
+        window.requestAnimationFrame(() => { syncQueued = false; syncSizes(); });
+    };
+    window.addEventListener('resize', scheduleSync);
+    // Only watch for actual content changes, NOT style changes (which would be triggered by zoom)
+    const mo = new MutationObserver(scheduleSync);
+    mo.observe(alignment, { childList: true, subtree: true, characterData: false, attributes: false });
+    // Rows off screen are laid out at a placeholder size (content-visibility, styles.css) without
+    // their length labels: drawing them widens the alignment with no DOM change, and the bar,
+    // measured before, could not reach the new end.
+    alignment.addEventListener('contentvisibilityautostatechange', scheduleSync, true);
+
+    // Dragging anywhere on the bar moves it like the grip, with the pointer captured: the
+    // drag keeps going however far the pointer strays from the 14px bar.
+    let isDown = false, startX = 0, startScroll = 0, moved = false, page = 0;
+    let dragRaf = null, lastDx = 0;
+    const scrollTo = (x) => {
+        syncing = true;
+        bar.scrollLeft = x;
+        const newScroll = bar.scrollLeft;   // clamped by the browser
+        if (isCanvasMode()) {
+            _canvasState.offsetX = newScroll;
+            _canvasState.scheduleDrawMoved?.();   // only the view moved: frame copy, not a full redraw
+        } else {
+            alignment.scrollLeft = newScroll;
+        }
+        syncing = false;
+    };
+    const applyDrag = () => {
+        dragRaf = null;
+        scrollTo(startScroll + lastDx * _scrollbarDragRatio(bar.clientWidth, bar.scrollWidth));
+    };
+    bar.addEventListener('pointerdown', (e) => {
+        if (e.button !== 0) return;
+        isDown = true; moved = false;
+        page = grip.isTrackPress(e);
+        try { bar.setPointerCapture(e.pointerId); } catch {}
+        bar.classList.add('grabbing');
+        document.body.classList.add('no-select');
+        startX = e.clientX;
+        lastDx = 0;
+        startScroll = bar.scrollLeft;
+        e.preventDefault();
+    });
+    bar.addEventListener('pointermove', (e) => {
+        if (!isDown) return;
+        lastDx = e.clientX - startX;
+        if (Math.abs(lastDx) > 2) moved = true;
+        if (!dragRaf && moved) dragRaf = window.requestAnimationFrame(applyDrag);
+        e.preventDefault();
+    }, { passive: false });
+    const endDrag = () => {
+        if (!isDown) return;
+        isDown = false;
+        bar.classList.remove('grabbing');
+        document.body.classList.remove('no-select');
+        // the last move is applied, not dropped: dropping it left the view short of the grip
+        if (dragRaf) { cancelAnimationFrame(dragRaf); applyDrag(); }
+        else if (!moved && page) scrollTo(bar.scrollLeft + page * Math.max(1, alignment.clientWidth * 0.9));
+    };
+    bar.addEventListener('pointerup', endDrag);
+    bar.addEventListener('pointercancel', endDrag);
+    bar.addEventListener('lostpointercapture', endDrag);
+    window.addEventListener('mouseup', endDrag);
+
+    // Map vertical wheel to horizontal scroll when user hovers the bar
+    bar.addEventListener('wheel', (e) => {
+        if (Math.abs(e.deltaY) > Math.abs(e.deltaX)) {
+            bar.scrollLeft += e.deltaY;
+            e.preventDefault();
+        }
+    }, { passive: false });
+})();
+
+// ============================================================================
+// Persistent vertical scrollbar for Canvas and scrollable DOM modes
+// ============================================================================
+// alignmentContainer's native bars are hidden in CSS so the viewer can use
+// persistent controls in a consistent position. Canvas and Block (both drawn
+// by the Canvas renderer) pan through _canvasState.offsetY; Full and the
+// test-only DOM Block use alignment.scrollTop.
+// This bar mirrors setupPersistentScrollbar's horizontal logic and selects

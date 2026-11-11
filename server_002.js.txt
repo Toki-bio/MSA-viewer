@@ -1,0 +1,468 @@
+[server.js lines 465-931 of ViewAlign fd8b8e4]
+function encodeSeq(s, maxLen) {
+    const len = Math.min(s.length, maxLen);
+    const arr = new Uint8Array(len);
+    for (let i = 0; i < len; i++) arr[i] = BASE_MAP[s.charCodeAt(i)] || 0;
+    return arr;
+}
+
+const KMER     = 9;
+const KMER_MASK = (1 << (KMER * 2)) - 1; // 0x3FFFF  (18 bits)
+const BS_SIZE   = ((1 << (KMER * 2)) >>> 5); // 8192 uint32 words for dedup bitset
+
+// Build inverted index: kmer_hash -> Int32Array of sequence indices
+// Paid once at load time; each search then does O(query_kmers) lookups instead of O(N * db_seq_len)
+function buildInvertedIndex(dbSeqs) {
+    const SCAN_CAP = 600;
+    // Accumulate posting lists as plain arrays first
+    const posting = new Map();
+    const seqBs = new Uint32Array(BS_SIZE); // reuse per seq for dedup
+
+    for (let i = 0; i < dbSeqs.length; i++) {
+        const enc = dbSeqs[i]._enc;
+        if (!enc || enc.length < KMER) continue;
+        // reset dedup bitset
+        seqBs.fill(0);
+        let h = 0;
+        for (let j = 0; j < KMER - 1; j++) h = ((h << 2) | enc[j]) & KMER_MASK;
+        for (let j = KMER - 1; j < enc.length; j++) {
+            h = ((h << 2) | enc[j]) & KMER_MASK;
+            // deduplicate: only add each kmer once per sequence
+            if (seqBs[h >>> 5] & (1 << (h & 31))) continue;
+            seqBs[h >>> 5] |= (1 << (h & 31));
+            let list = posting.get(h);
+            if (!list) { list = []; posting.set(h, list); }
+            list.push(i);
+        }
+    }
+    // Convert to typed arrays for cache-friendly iteration
+    const index = new Map();
+    for (const [k, v] of posting) index.set(k, new Int32Array(v));
+    return index;
+}
+
+function searchDatabase(querySeq, dbSeqs, index, maxHits = 10) {
+    const MIN_HITS = 3;   // require 3 shared unique 9-mers before running SW
+    const MAX_SW   = 400; // cap SW candidates to keep latency bounded
+
+    const qEnc = encodeSeq(querySeq, 600);
+    if (qEnc.length < KMER) return [];
+
+    // Tally kmer hits per DB sequence using the inverted index
+    // O(unique_query_kmers * avg_posting_size) — far cheaper than scanning all seqs
+    const counts = new Uint16Array(dbSeqs.length); // max 65535 hits/seq
+    const qBs    = new Uint32Array(BS_SIZE);         // dedup query kmers
+    let h = 0;
+    for (let i = 0; i < KMER - 1; i++) h = ((h << 2) | qEnc[i]) & KMER_MASK;
+    for (let i = KMER - 1; i < qEnc.length; i++) {
+        h = ((h << 2) | qEnc[i]) & KMER_MASK;
+        if (qBs[h >>> 5] & (1 << (h & 31))) continue; // skip duplicate query kmer
+        qBs[h >>> 5] |= (1 << (h & 31));
+        const list = index ? index.get(h) : null;
+        if (list) for (let j = 0; j < list.length; j++) counts[list[j]]++;
+    }
+
+    // Collect candidates with enough shared kmers
+    const candidates = [];
+    for (let i = 0; i < dbSeqs.length; i++) {
+        if (counts[i] >= MIN_HITS) candidates.push({ entry: dbSeqs[i], hits: counts[i] });
+    }
+    candidates.sort((a, b) => b.hits - a.hits);
+    const top = candidates.slice(0, MAX_SW);
+
+    // Smith-Waterman on top candidates only
+    const scored = [];
+    // E = m * n * 2^-bits (search space: query length x database length); it was always 0, so any
+    // E-value threshold kept every hit, however weak
+    const dbTotal = dbSeqs.reduce((a, e) => a + (e.length || 0), 0) || 1;
+    for (const { entry } of top) {
+        const sw = smithWaterman(querySeq, entry.seq);
+        if (sw && sw.score > 0 && sw.identity > 0) {
+            const evalue = querySeq.length * dbTotal * Math.pow(2, -sw.bitScore);
+            scored.push({ id: entry.id, def: entry.def, length: entry.length,
+                          hsps: [{ ...sw, evalue }] });
+        }
+    }
+    scored.sort((a, b) => b.hsps[0].bitScore - a.hsps[0].bitScore);
+    return scored.slice(0, maxHits);
+}
+
+// ============ BLAST XML PARSER (for when real BLAST is available) ============
+function parseBlastResults(xmlOutput, maxHits = 10) {
+    const results = [];
+    
+    // Simple XML parsing - extract Hit elements
+    const hitMatches = xmlOutput.match(/<Hit>[\s\S]*?<\/Hit>/g) || [];
+    
+    let hitNum = 0;
+    for (const hitXml of hitMatches) {
+        hitNum++;
+        
+        // Extract Hit_id, Hit_def, Hit_len
+        const idMatch = hitXml.match(/<Hit_id>([^<]+)<\/Hit_id>/);
+        const defMatch = hitXml.match(/<Hit_def>([^<]+)<\/Hit_def>/);
+        const lenMatch = hitXml.match(/<Hit_len>(\d+)<\/Hit_len>/);
+        
+        if (!idMatch) continue;
+
+        const hit = {
+            hitNum,
+            id: idMatch[1],
+            def: defMatch ? defMatch[1] : 'Unknown',
+            length: lenMatch ? parseInt(lenMatch[1]) : 0,
+            hsps: []
+        };
+
+        // Extract HSPs (High Scoring Pairs)
+        const hspMatches = hitXml.match(/<Hsp>[\s\S]*?<\/Hsp>/g) || [];
+        
+        for (const hspXml of hspMatches) {
+            // Extract HSP data
+            const eMatch = hspXml.match(/<Hsp_evalue>([^<]+)<\/Hsp_evalue>/);
+            const scoreMatch = hspXml.match(/<Hsp_bit_score>([^<]+)<\/Hsp_bit_score>/);
+            const identityMatch = hspXml.match(/<Hsp_identity>(\d+)<\/Hsp_identity>/);
+            const alignMatch = hspXml.match(/<Hsp_align_len>(\d+)<\/Hsp_align_len>/);
+            const queryFromMatch = hspXml.match(/<Hsp_query_from>(\d+)<\/Hsp_query_from>/);
+            const queryToMatch = hspXml.match(/<Hsp_query_to>(\d+)<\/Hsp_query_to>/);
+            const hitFromMatch = hspXml.match(/<Hsp_hit_from>(\d+)<\/Hsp_hit_from>/);
+            const hitToMatch = hspXml.match(/<Hsp_hit_to>(\d+)<\/Hsp_hit_to>/);
+            const querySeqMatch = hspXml.match(/<Hsp_qseq>([^<]+)<\/Hsp_qseq>/);
+            const hitSeqMatch = hspXml.match(/<Hsp_hseq>([^<]+)<\/Hsp_hseq>/);
+            const midlineMatch = hspXml.match(/<Hsp_midline>([^<]+)<\/Hsp_midline>/);
+
+            if (eMatch) {
+                const identity = identityMatch ? parseInt(identityMatch[1]) : 0;
+                const alignLen = alignMatch ? parseInt(alignMatch[1]) : 0;
+                const percent = alignLen > 0 ? ((identity / alignLen) * 100).toFixed(2) : 0;
+
+                hit.hsps.push({
+                    score: scoreMatch ? parseFloat(scoreMatch[1]) : 0,
+                    evalue: parseFloat(eMatch[1]),
+                    identity: identity,
+                    alignLen: alignLen,
+                    percent: percent,
+                    queryStart: queryFromMatch ? parseInt(queryFromMatch[1]) : 0,
+                    queryEnd: queryToMatch ? parseInt(queryToMatch[1]) : 0,
+                    hitStart: hitFromMatch ? parseInt(hitFromMatch[1]) : 0,
+                    hitEnd: hitToMatch ? parseInt(hitToMatch[1]) : 0,
+                    querySeq: querySeqMatch ? querySeqMatch[1] : '',
+                    hitSeq: hitSeqMatch ? hitSeqMatch[1] : '',
+                    midline: midlineMatch ? midlineMatch[1] : ''
+                });
+            }
+        }
+
+        if (hit.hsps.length > 0) {
+            results.push(hit);
+        }
+    }
+    
+    return results.slice(0, maxHits);   // as many as the request asked for (blastn got -max_target_seqs maxHits)
+}
+
+
+
+// Run BLASTN
+app.post('/api/blast', (req, res) => {
+    const { query, dbName, evalue: rawEvalue = '1e-5', maxHits: rawMaxHits = 10 } = req.body;
+    // Sanitize user-supplied numeric parameters
+    const evalue = parseFloat(rawEvalue) || 1e-5;
+    const maxHits = Math.max(1, Math.min(50, parseInt(rawMaxHits) || 10));
+
+    if (!query || !dbName) {
+        return res.status(400).json({ error: 'Query sequence and database name required' });
+    }
+
+    if (!DATABASES[dbName]) {
+        return res.status(400).json({ error: `Unknown database: ${dbName}` });
+    }
+
+    const dbInfo = DATABASES[dbName];
+    const dbPath = dbInfo.path;
+    if (!fs.existsSync(dbPath)) {
+        return res.status(400).json({ error: `Database file not found: ${dbPath}` });
+    }
+
+    // the search's temporary files: removed in the finally below, also when blastn or the parse fails
+    // (each failed search used to leave both in the temp folder)
+    const tmpDir = os.tmpdir();
+    const uniq = Date.now() + '_' + Math.random().toString(36).slice(2, 8);   // two requests in one millisecond shared files
+    const queryFile = path.join(tmpDir, `query_${uniq}.fasta`);
+    const outputFile = path.join(tmpDir, `blast_${uniq}.xml`);
+    try {
+
+        // Write query to file
+        fs.writeFileSync(queryFile, query);
+
+        // Format database name for blastn
+        const dbBaseName = path.join(path.dirname(dbPath), path.basename(dbPath, path.extname(dbPath)));
+
+        // Check if running on ARM64 (no BLAST available) or if blastn not in PATH
+        let blastAvailable = false;
+        try { execSync('blastn -version', { stdio: 'ignore' }); blastAvailable = true; } catch (_) {}
+
+        // without makeblastdb's indices blastn cannot search the database: use the built-in search
+        // (a database added where makeblastdb was missing failed every search here)
+        const hasIndex = ['.nhr', '.nal', '.00.nhr'].some(ext => fs.existsSync(dbBaseName + ext));
+
+        if (process.arch === 'arm64' || !blastAvailable || !hasIndex) {
+            console.log('Using local SW search for: ' + dbName);
+            const querySeq = fs.readFileSync(queryFile, 'utf8').split(/\r?\n/).filter(l => !l.startsWith('>')).join('').replace(/\s+/g, '').toUpperCase();
+            const cached = DB_CACHE[dbName];
+            if (!cached || cached.length === 0) {
+                return res.status(400).json({ error: `Database ${dbName} not loaded` });
+            }
+            const t0 = Date.now();
+            const hits = searchDatabase(querySeq, cached, DB_INDEX[dbName], parseInt(maxHits) || 10);
+            console.log(`  ${hits.length} hits in ${Date.now() - t0} ms`);
+            return res.json({ success: true, database: dbName, numHits: hits.length, hits });
+        }
+
+        // Run BLAST with XML output (for x64 systems)
+        runBlastn([
+            '-query', queryFile,
+            '-db', dbBaseName,
+            '-evalue', String(evalue),
+            '-outfmt', '5',
+            '-max_target_seqs', String(maxHits),
+            '-out', outputFile,
+        ]);
+
+        // Read and parse results
+        const xmlOutput = fs.readFileSync(outputFile, 'utf8');
+        const results = parseBlastResults(xmlOutput, maxHits);
+
+        res.json({
+            success: true,
+            database: dbName,
+            numHits: results.length,
+            hits: results
+        });
+
+    } catch (err) {
+        console.error('BLAST error:', err);
+        res.status(500).json({ 
+            error: 'BLAST search failed',
+            details: err.message
+        });
+    } finally {
+        for (const f of [queryFile, outputFile]) { try { fs.unlinkSync(f); } catch (_) {} }
+    }
+});
+
+// Batch BLAST search against all databases
+app.post('/api/blast-all', (req, res) => {
+    const { query, evalue: rawEvalue = '1e-5' } = req.body;
+    const evalue = parseFloat(rawEvalue) || 1e-5;
+
+    if (!query) {
+        return res.status(400).json({ error: 'Query sequence required' });
+    }
+
+    try {
+        const allResults = {};
+        
+        for (const [dbName, dbInfo] of Object.entries(DATABASES)) {
+            const dbPath = dbInfo.path;
+            if (!fs.existsSync(dbPath)) {
+                allResults[dbName] = { error: 'Database file not found' };
+                continue;
+            }
+
+            try {
+                // Create temporary files
+                const tmpDir = os.tmpdir();
+                const queryFile = path.join(tmpDir, `query_${Date.now()}_${dbName}.fasta`);
+                const outputFile = path.join(tmpDir, `blast_${Date.now()}_${dbName}.xml`);
+
+                fs.writeFileSync(queryFile, query);
+
+                const dbBaseName = path.join(path.dirname(dbPath), path.basename(dbPath, path.extname(dbPath)));
+                runBlastn([
+                    '-query', queryFile,
+                    '-db', dbBaseName,
+                    '-evalue', String(evalue),
+                    '-outfmt', '5',
+                    '-max_target_seqs', '5',
+                    '-out', outputFile,
+                ], { stdio: 'ignore' });
+
+                try {
+                    const xmlOutput = fs.readFileSync(outputFile, 'utf8');
+                    const results = parseBlastResults(xmlOutput, 5);
+                    allResults[dbName] = {
+                        success: true,
+                        numHits: results.length,
+                        hits: results
+                    };
+                } finally {
+                    for (const f of [queryFile, outputFile]) { try { fs.unlinkSync(f); } catch (_) {} }   // also when blastn failed
+                }
+
+            } catch (err) {
+                console.error(`BLAST error for ${dbName}:`, err.message);
+                allResults[dbName] = { error: err.message };
+            }
+        }
+
+        res.json({
+            success: true,
+            results: allResults
+        });
+
+    } catch (err) {
+        console.error('Batch BLAST error:', err);
+        res.status(500).json({ 
+            error: 'Batch BLAST search failed',
+            details: err.message
+        });
+    }
+});
+
+// ============ BLAST DATABASE MANAGEMENT ============
+
+// GET /api/blast-db — list all databases
+//
+// IMPORTANT — `url` is REQUIRED and MUST stay in this response:
+// The actual search UI (script.js runBlastSearch -> blast-worker.js) never calls
+// blastn/makeblastdb — it's a client-side JS search engine that fetches each
+// database's raw FASTA directly over HTTP (served by the `express.static` handler at the top of this file)
+// and indexes/searches it in a Web Worker. `url` is the only thing that tells the
+// worker where to fetch from. `formatted`/`.nhr` below relates ONLY to the separate,
+// currently-unused server-side /api/blast REST route (real blastn) — it has nothing
+// to do with whether a database is actually searchable from the UI.
+// This exact field was silently dropped once already (see commit c38abf2, which
+// replaced a hardcoded frontend db list — that had `url` on every entry — with this
+// server-fetched one, and didn't carry `url` over). If you refactor this response
+// shape again, keep `url`, or the search silently 404s with no indication why.
+app.get('/api/blast-db', (req, res) => {
+    reloadDbRegistry();
+    const dbs = {};
+    for (const [name, info] of Object.entries(DATABASES)) {
+        dbs[name] = blastDbStatus(name, info);
+    }
+    res.json({ databases: dbs });
+});
+
+// POST /api/blast-db — add a new database from FASTA content
+app.post('/api/blast-db', (req, res) => {
+    const { name, description, fasta } = req.body;
+    if (!name || !fasta) {
+        return res.status(400).json({ error: 'Name and FASTA content required' });
+    }
+    const safeName = name.replace(/[^a-zA-Z0-9._-]/g, '_');
+    if (!safeName || safeName.length > 100) {
+        return res.status(400).json({ error: 'Invalid database name' });
+    }
+    reloadDbRegistry();
+    if (DATABASES[safeName]) {
+        return res.status(409).json({ error: 'Database "' + safeName + '" already exists. Delete it first.' });
+    }
+    // The search in the page (blast-worker.js) fetches the FASTA itself and needs no BLAST+, so a
+    // database is added also where makeblastdb is missing or fails: the indices only serve the
+    // server's own /api/blast route, which falls back to its built-in search without them. An add
+    // that fails removes the FASTA it wrote (it used to stay in blast_dbs/, unregistered).
+    const fastaPath = path.join(BLAST_DB_DIR, safeName + '.fa');
+    let wrote = false;
+    try {
+        if (!fs.existsSync(BLAST_DB_DIR)) fs.mkdirSync(BLAST_DB_DIR, { recursive: true });
+        wrote = true;
+        fs.writeFileSync(fastaPath, fasta, 'utf8');
+        console.log('Creating BLAST database: ' + safeName);
+        const formatted = formatDatabase(fastaPath, safeName);
+        DATABASES[safeName] = {
+            path: fastaPath,
+            desc: (description || '').substring(0, 200)
+        };
+        saveDbRegistry(DATABASES, { throwOnError: true });
+        loadDbCache();
+        console.log('Database "' + safeName + '" registered' + (formatted ? ' and formatted' : ' (no BLAST+ indices; the page search does not need them)'));
+        res.json({ success: true, name: safeName, description: DATABASES[safeName].desc, formatted });
+    } catch (err) {
+        console.error('Failed to create database ' + safeName + ':', err.message);
+        delete DATABASES[safeName];
+        if (wrote) {
+            for (const f of [fastaPath, ...['.nhr', '.nin', '.nsq', '.nog', '.nsd', '.nsi', '.ndb', '.not', '.ntf', '.nto', '.njs'].map(e => path.join(BLAST_DB_DIR, safeName + e))]) {
+                if (isOwnedDbFile(f)) { try { fs.unlinkSync(f); } catch (_) {} }
+            }
+        }
+        res.status(500).json({ error: 'Failed to create database: ' + err.message });
+    }
+});
+
+// DELETE /api/blast-db/:name — remove a database and its index files
+app.delete('/api/blast-db/:name', async (req, res) => {
+    const dbName = req.params.name;
+    reloadDbRegistry();
+    if (!DATABASES[dbName]) {
+        return res.status(404).json({ error: 'Database "' + dbName + '" not found' });
+    }
+    try {
+        const dbInfo = DATABASES[dbName];
+        const dbDir = path.dirname(dbInfo.path);
+        const basePath = path.join(dbDir, dbName);
+        const extensions = ['.nhr','.nin','.nsq','.nog','.nsd','.nsi','.ndb','.not','.ntf','.nto','.njs'];
+        // only files inside blast_dbs/ are deleted: a database registered from elsewhere is unregistered
+        // and its FASTA (and anything next to it) left where it is
+        for (const ext of extensions) {
+            const f = basePath + ext;
+            if (isOwnedDbFile(f)) { try { fs.unlinkSync(f); } catch (_) {} }
+        }
+        const owned = isOwnedDbFile(dbInfo.path);
+        if (owned) { try { fs.unlinkSync(dbInfo.path); } catch (_) {} }
+        delete DATABASES[dbName];
+        delete DB_CACHE[dbName];
+        delete DB_INDEX[dbName];
+        saveDbRegistry(DATABASES);
+        console.log('Database "' + dbName + '" ' + (owned ? 'deleted' : 'unregistered (its file outside blast_dbs/ was kept: ' + dbInfo.path + ')'));
+        res.json({ success: true, name: dbName, fileKept: !owned && fs.existsSync(dbInfo.path) });
+    } catch (err) {
+        console.error('Failed to delete database ' + dbName + ':', err);
+        res.status(500).json({ error: 'Failed to delete database: ' + err.message });
+    }
+});
+
+// ============ MAFFT ALIGNMENT ============
+// Path to MAFFT binary - update this if mafft is in a non-standard location
+const MAFFT_BIN = process.env.MAFFT_BIN || '/staging/conda/envs/bioinfo/bin/mafft';
+
+// Whitelist of allowed MAFFT options to prevent command injection
+const ALLOWED_MAFFT_OPTS = new Set([
+    '--auto', '--add', '--addfragments', '--keeplength',
+    '--maxiterate', '--localpair', '--globalpair', '--retree',
+    '--quiet', '--thread', '--anysymbol', '--preservecase',
+    '--reorder', '--treeout', '--inputorder', '--6merpair',
+    '--genafpair', '--fastapair', '--parttree', '--dpparttree',
+    '--amino', '--nuc', '--clustalout', '--phylipout'
+]);
+
+// The allowed options of a request, in order, with the number that follows an option taking one
+// (--maxiterate 1000): checking token by token kept the flag and dropped its value, and MAFFT then took
+// the input file name as the value.
+const MAFFT_VALUE_OPTS = new Set(['--maxiterate', '--retree', '--thread']);
+function allowedMafftArgs(opts) {
+    const out = [];
+    for (let i = 0; i < opts.length; i++) {
+        const opt = opts[i];
+        if (!ALLOWED_MAFFT_OPTS.has(opt)) continue;
+        out.push(opt);
+        if (MAFFT_VALUE_OPTS.has(opt) && /^-?\d+(\.\d+)?$/.test(String(opts[i + 1] ?? ''))) out.push(String(opts[++i]));
+    }
+    return out;
+}
+
+// Spawn MAFFT as child process to avoid shell injection
+function runMafft(args, inputFiles, env, timeout) {
+    return new Promise((resolve, reject) => {
+        const child = spawn(MAFFT_BIN, args, { env, timeout, maxBuffer: 50 * 1024 * 1024 });
+        let stdout = '', stderr = '';
+        child.stdout.on('data', d => { stdout += d.toString(); });
+        child.stderr.on('data', d => { stderr += d.toString(); });
+        child.on('close', code => {
+            if (code !== 0) reject(new Error(stderr || `MAFFT exited with code ${code}`));
+            else resolve(stdout);
+        });
+        child.on('error', reject);
+    });
+}
+

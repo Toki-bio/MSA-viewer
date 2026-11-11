@@ -1,0 +1,499 @@
+[script.js lines 27506-28003 of ViewAlign fd8b8e4]
+function copySequences(gapped, isFasta, index) {
+    let indices = Array.from(state.selectedRows).sort((a,b)=>a-b);
+    if (indices.length === 0) {
+        indices = [index];
+    }
+    // rows that exist (the menu's row may have been deleted since it opened)
+    indices = indices.filter(i => Number.isInteger(i) && state.seqs[i]);
+    if (!indices.length) { showMessage('Nothing to copy: select rows first.', 2500); return; }
+    let text = '';
+    if (isFasta) {
+        text = indices.map(i => {
+            let seq = state.seqs[i].seq;
+            if (!gapped) seq = degapResidues(seq);
+            return `>${state.seqs[i].fullHeader || state.seqs[i].header}\n${seq}`;
+        }).join('\n');
+    } else {
+        text = indices.map(i => {
+            let seq = state.seqs[i].seq;
+            if (!gapped) seq = degapResidues(seq);
+            return seq;
+        }).join('\n');
+    }
+    navigator.clipboard.writeText(text).then(() => {
+        const count = indices.length;
+        const type = isFasta ? 'FASTA' : 'plain text';
+        const gapType = gapped ? 'gapped' : 'ungapped';
+        showMessage(`${count > 1 ? 'Selected sequences' : 'Sequence'} copied as ${type} (${gapType})!`, 2000);
+    }).catch(err => {
+        console.error('Copy failed:', err);
+        showMessage("Failed to copy.", 5000);
+    });
+}
+
+// ============================================================
+// Sequence Editor (SeqEdit)
+// ============================================================
+
+const _seqEditUndoStack = [];
+let _seqEditUndoPos = -1;
+
+function _seqEditPushUndo() {
+    const textarea = document.getElementById('seqEditTextarea');
+    if (!textarea) return;
+    const val = textarea.value;
+    if (_seqEditUndoPos >= 0 && _seqEditUndoStack[_seqEditUndoPos] === val) return;
+    _seqEditUndoStack.length = _seqEditUndoPos + 1;
+    _seqEditUndoStack.push(val);
+    _seqEditUndoPos = _seqEditUndoStack.length - 1;
+    if (_seqEditUndoStack.length > 50) { _seqEditUndoStack.shift(); _seqEditUndoPos--; }
+    _updateSeqEditUndoButtons();
+}
+
+function _seqEditOpen() {
+    const modal = document.getElementById('seqEditModal');
+    return !!modal && modal.style.display !== 'none' && modal.getClientRects().length > 0;
+}
+
+function _seqEditUndo() {
+    if (_seqEditUndoPos <= 0) return;
+    _seqEditUndoPos--;
+    const textarea = document.getElementById('seqEditTextarea');
+    if (textarea) textarea.value = _seqEditUndoStack[_seqEditUndoPos];
+    _updateSeqEditUndoButtons();
+    _updateSeqEditLength();
+}
+
+function _seqEditRedo() {
+    if (_seqEditUndoPos >= _seqEditUndoStack.length - 1) return;
+    _seqEditUndoPos++;
+    const textarea = document.getElementById('seqEditTextarea');
+    if (textarea) textarea.value = _seqEditUndoStack[_seqEditUndoPos];
+    _updateSeqEditUndoButtons();
+    _updateSeqEditLength();
+}
+
+function _updateSeqEditUndoButtons() {
+    const undoBtn = document.getElementById('seqEditUndoBtn');
+    const redoBtn = document.getElementById('seqEditRedoBtn');
+    if (undoBtn) undoBtn.disabled = _seqEditUndoPos < 1;
+    if (redoBtn) redoBtn.disabled = _seqEditUndoPos >= _seqEditUndoStack.length - 1;
+}
+
+function _seqEditResetUndo(initialValue) {
+    _seqEditUndoStack.length = 0;
+    _seqEditUndoStack.push(initialValue);
+    _seqEditUndoPos = 0;
+    _updateSeqEditUndoButtons();
+}
+
+
+// The sequences the open editor was opened on, by object: rows can move behind the dialog
+// (Ctrl+Up with focus on a button), and Apply used to write to whatever row then had the
+// remembered index, overwriting another sequence.
+let _seqEditTargetObjs = [];
+
+function openSeqEditor(index) {
+    if (index === undefined || index === null) {
+        // Use selected rows, or open freeform if none selected
+        if (state.selectedRows.size > 1) {
+            // Multi-sequence mode
+            return openSeqEditorMulti();
+        } else if (state.selectedRows.size === 1) {
+            index = _minOf(state.selectedRows);
+        } else {
+            index = -1; // freeform mode
+        }
+    }
+    if (index !== -1 && (index < 0 || index >= state.seqs.length)) return;
+
+    const modal = document.getElementById('seqEditModal');
+    if (!modal) return;
+    const textarea = document.getElementById('seqEditTextarea');
+    const nameInput = document.getElementById('seqEditNameInput');
+    const indexEl = document.getElementById('seqEditIndex');
+
+    // Show name input for single/freeform mode
+    if (nameInput) nameInput.style.display = '';
+    const nameLabel = nameInput?.previousElementSibling;
+    if (nameLabel) nameLabel.style.display = '';
+
+    if (index === -1) {
+        // Freeform mode: blank editor for new or arbitrary text
+        if (nameInput) nameInput.value = 'new_sequence';
+        if (indexEl) indexEl.textContent = '-1';
+        _seqEditTargetObjs = [];
+        textarea.value = '>new_sequence\n';
+    } else {
+        const s = state.seqs[index];
+        if (nameInput) nameInput.value = s.fullHeader || s.header;
+        if (indexEl) indexEl.textContent = String(index);
+        _seqEditTargetObjs = [s];
+        textarea.value = `>${s.fullHeader || s.header}\n${s.seq}`;
+    }
+    _updateSeqEditLength();
+
+    showExclusiveModal('seqEditModal');
+    _seqEditResetUndo(textarea.value);
+    textarea.focus();
+}
+
+function openSeqEditorMulti() {
+    const modal = document.getElementById('seqEditModal');
+    if (!modal) return;
+    const textarea = document.getElementById('seqEditTextarea');
+    const nameInput = document.getElementById('seqEditNameInput');
+    const indexEl = document.getElementById('seqEditIndex');
+
+    // Hide name input for multi mode - names are in the textarea
+    if (nameInput) nameInput.style.display = 'none';
+    const nameLabel = nameInput?.previousElementSibling;
+    if (nameLabel) nameLabel.style.display = 'none';
+
+    // Store multi indices
+    const indices = Array.from(state.selectedRows).sort((a, b) => a - b);
+    if (indexEl) indexEl.textContent = 'multi:' + indices.join(',');
+    _seqEditTargetObjs = indices.map(i => state.seqs[i]);
+
+    // Build multi-FASTA
+    let text = '';
+    for (const i of indices) {
+        const s = state.seqs[i];
+        text += `>${s.fullHeader || s.header}\n${s.seq}\n`;
+    }
+    textarea.value = text.trimEnd();
+    _updateSeqEditLength();
+    _seqEditResetUndo(textarea.value);
+
+    showExclusiveModal('seqEditModal');
+    textarea.focus();
+}
+
+function _updateSeqEditLength() {
+    const textarea = document.getElementById('seqEditTextarea');
+    if (!textarea) return;
+    const lines = textarea.value.split('\n');
+    let seqLen = 0;
+    let seqCount = 0;
+    for (const line of lines) {
+        if (line.startsWith('>')) {
+            seqCount++;
+        } else {
+            seqLen += line.trim().length;
+        }
+    }
+    const lenSpan = document.getElementById('seqEditLength');
+    if (lenSpan) {
+        if (seqCount > 1) {
+            lenSpan.textContent = `${seqLen} (${seqCount} sequences)`;
+        } else {
+            lenSpan.textContent = String(seqLen);
+        }
+    }
+}
+
+function closeSeqEditor() {
+    const modal = document.getElementById('seqEditModal');
+    if (modal) modal.style.display = 'none';
+}
+
+// The residues of an editor record: no spaces and no position numbers (pasted GenBank-style text
+// "1 acgtacgtac gtacgtacgt" used to keep them as residues; audit M13). A record made only of digits
+// and gap signs is a row of character states and keeps its digits (as in parseFasta).
+function _seqEditCleanSeq(text) {
+    // line by line, so that a position number beside a gap-only line is seen as one (GLM check 2026-11-11, Q12)
+    let compact = '';
+    for (const line of String(text || '').split('\n')) compact += _dropGapLinePositionNumber(line.trim(), compact.length).replace(/\s+/g, '');
+    return _fastaStateRow(compact) ? compact : compact.replace(/\d+/g, '');
+}
+function _getSeqEditSequence() {
+    const textarea = document.getElementById('seqEditTextarea');
+    if (!textarea) return '';
+    const lines = textarea.value.split('\n');
+    let seq = '';
+    for (const line of lines) {
+        const trimmed = line.trim();
+        if (!trimmed.startsWith('>')) seq += trimmed + '\n';
+    }
+    return _seqEditCleanSeq(seq);
+}
+
+/** Parse multi-FASTA from textarea into [{header, seq}, ...] */
+function _getSeqEditMultiFasta() {
+    const textarea = document.getElementById('seqEditTextarea');
+    if (!textarea) return [];
+    const lines = textarea.value.split('\n');
+    const result = [];
+    let currentHeader = null;
+    let currentSeq = '';
+    for (const line of lines) {
+        const trimmed = line.trim();
+        if (trimmed.startsWith('>')) {
+            if (currentHeader !== null) {
+                result.push({ header: currentHeader, seq: _seqEditCleanSeq(currentSeq) });
+            }
+            currentHeader = trimmed.substring(1).trim();
+            currentSeq = '';
+        } else {
+            currentSeq += trimmed + '\n';
+        }
+    }
+    if (currentHeader !== null) {
+        result.push({ header: currentHeader, seq: _seqEditCleanSeq(currentSeq) });
+    }
+    return result;
+}
+
+/** Write multi-FASTA back to textarea */
+function _setSeqEditMultiFasta(entries) {
+    const textarea = document.getElementById('seqEditTextarea');
+    if (!textarea) return;
+    textarea.value = entries.map(e => `>${e.header}\n${e.seq}`).join('\n');
+    _updateSeqEditLength();
+}
+
+function _isSeqEditMulti() {
+    const indexEl = document.getElementById('seqEditIndex');
+    return indexEl && indexEl.textContent.startsWith('multi:');
+}
+
+function _setSeqEditSequence(seq) {
+    const textarea = document.getElementById('seqEditTextarea');
+    if (!textarea) return;
+    const nameInput = document.getElementById('seqEditNameInput');
+    const name = nameInput ? nameInput.value : 'sequence';
+    textarea.value = `>${name}\n${seq}`;
+    _updateSeqEditLength();
+}
+
+const _complementMap = { 'A':'T','T':'A','C':'G','G':'C','N':'N','-':'-','.':'.',
+    'U':'A','R':'Y','Y':'R','M':'K','K':'M','S':'S','W':'W',
+    'H':'D','B':'V','V':'B','D':'H',
+    'a':'t','t':'a','c':'g','g':'c','n':'n','u':'a',
+    'r':'y','y':'r','m':'k','k':'m','s':'s','w':'w',
+    'h':'d','b':'v','v':'b','d':'h' };
+
+function _seqEditTransform(fn) {
+    if (_isSeqEditMulti()) {
+        const entries = _getSeqEditMultiFasta();
+        for (const e of entries) e.seq = fn(e.seq);
+        _setSeqEditMultiFasta(entries);
+    } else {
+        _setSeqEditSequence(fn(_getSeqEditSequence()));
+    }
+    _seqEditPushUndo();   // setting the value fires no 'input': without this Undo could not get the text back
+}
+
+function seqEditDegap() {
+    _seqEditTransform(seq => seq.replace(/[-.\s]/g, ''));
+}
+
+function seqEditReverse() {
+    _seqEditTransform(seq => seq.split('').reverse().join(''));
+}
+
+// the Sequence editor's complement: in an RNA alignment A pairs with U (the alignment decides, as for Reverse complement)
+function _seqEditComp(rna) { return b => (rna && (b === 'A' || b === 'a')) ? (b === 'A' ? 'U' : 'u') : (_complementMap[b] || b); }
+// RNA or DNA for the editor's Complement / Rev Comp: a row of the alignment follows the alignment; freeform mode (no row) is a pasted text with nothing
+// to do with the open alignment, so the text itself decides (any U and no T in it)
+function _seqEditRna() {
+    if (document.getElementById('seqEditIndex')?.textContent === '-1') {
+        const body = (document.getElementById('seqEditTextarea')?.value || '').split(/\r?\n/).filter(l => !l.trim().startsWith('>'));
+        return alignmentIsRna(body.map(l => ({ seq: l })));
+    }
+    return alignmentIsRna();
+}
+function seqEditComplement() {
+    const f = _seqEditComp(_seqEditRna());
+    _seqEditTransform(seq => seq.split('').map(f).join(''));
+}
+
+function seqEditRevComp() {
+    const f = _seqEditComp(_seqEditRna());
+    _seqEditTransform(seq => seq.split('').reverse().map(f).join(''));
+}
+
+function seqEditUppercase() {
+    _seqEditTransform(seq => seq.toUpperCase());
+}
+
+function seqEditLowercase() {
+    _seqEditTransform(seq => seq.toLowerCase());
+}
+
+// "Pad/trim to alignment length": pad a short sequence, and trim only trailing gaps from a
+// long one. It used to cut a long one to the width, dropping its last residues; one that is
+// still longer now widens the alignment (the caller pads the other rows).
+function _seqEditFitWidth(seq, alignLen) {
+    if (seq.length < alignLen) return seq.padEnd(alignLen, '-');
+    let end = seq.length;
+    while (end > alignLen && (seq[end - 1] === '-' || seq[end - 1] === '.')) end--;
+    return seq.slice(0, end);
+}
+
+function seqEditApply() {
+    const indexStr = document.getElementById('seqEditIndex')?.textContent;
+
+    // Multi-sequence mode
+    if (indexStr && indexStr.startsWith('multi:')) {
+        const indices = indexStr.substring(6).split(',').map(Number)
+            .map((i, k) => (_seqEditTargetObjs[k] ? state.seqs.indexOf(_seqEditTargetObjs[k]) : i));
+        const entries = _getSeqEditMultiFasta();
+        if (entries.length === 0) {
+            showMessage("No sequences found.", 2000);
+            return;
+        }
+
+        // Which record belongs to which row. Same count: by position, so a row can be renamed. A different
+        // count: by name (the n-th record with a name is the n-th opened row with it). By position, a
+        // removed middle record gave the next row's name and residues to the row before (audit M12).
+        const targetOf = new Array(entries.length).fill(-1);
+        let untouched = 0;
+        if (entries.length === indices.length) {
+            for (let i = 0; i < entries.length; i++) targetOf[i] = indices[i];
+        } else {
+            const byName = new Map();
+            indices.forEach(idx => { const q = state.seqs[idx]; if (!q) return; const k = q.fullHeader || q.header; if (!byName.has(k)) byName.set(k, []); byName.get(k).push(idx); });
+            let matched = 0;
+            entries.forEach((e, i) => { const q = byName.get(e.header); if (q && q.length) { targetOf[i] = q.shift(); matched++; } });
+            if (entries.length < indices.length && matched < entries.length) {
+                showMessage(`The text has ${entries.length} records for ${indices.length} rows and a changed name, so it is not clear which row is which. Nothing was changed: keep the names, or keep one record per row.`, 9000);
+                return;
+            }
+            if (entries.length > indices.length && matched < indices.length) {
+                // names were changed and records added: the first records are the rows, as before
+                targetOf.fill(-1);
+                for (let i = 0; i < indices.length; i++) targetOf[i] = indices[i];
+            }
+            untouched = indices.length - targetOf.filter(t => t >= 0).length;
+        }
+        const order = targetOf.map((t, i) => i).filter(i => targetOf[i] >= 0).concat(targetOf.map((t, i) => i).filter(i => targetOf[i] < 0));
+        const orderedEntries = order.map(i => entries[i]);
+        const orderedTargets = order.map(i => targetOf[i]).filter(t => t >= 0);
+        entries.length = 0; orderedEntries.forEach(e => entries.push(e));
+        indices.length = 0; orderedTargets.forEach(t => indices.push(t));
+
+        pushUndo('seqedit-multi');
+        const padCheckbox = document.getElementById('seqEditPadGaps');
+        const alignLen = state.seqs.length > 0 ? _maxOf(state.seqs, s => s.seq.length) : 0;
+
+        // Update existing sequences (the records come first that belong to a row, in the order of `indices`)
+        const updateCount = Math.min(entries.length, indices.length);
+        for (let i = 0; i < updateCount; i++) {
+            const idx = indices[i];
+            if (idx < 0 || idx >= state.seqs.length) continue;
+            let seq = entries[i].seq;
+            if (padCheckbox && padCheckbox.checked && alignLen > 0) seq = _seqEditFitWidth(seq, alignLen);
+            // The name changes only when the record's long name was changed. A row whose name is not the first
+            // word of its long name (NEXUS "Homo_sapiens" / "Homo sapiens") was renamed to "Homo" by any Apply
+            // and lost its name colour; a ">" with no name gave an empty name (GLM check 2026-11-11, Q15b).
+            const was = state.seqs[idx].fullHeader || state.seqs[idx].header;
+            const fullH = entries[i].header || was;
+            if (fullH !== was) {
+                const oldName = state.seqs[idx].header;
+                state.seqs[idx].header = fullH.split(/\s+/)[0];
+                state.seqs[idx].fullHeader = fullH;
+                _migrateColourMapping(oldName, state.seqs[idx].header);
+            }
+            state.seqs[idx].seq = seq;
+            state.seqs[idx].gaplessPositions = calculateGaplessPositions(seq);
+        }
+        // If user added extra sequences in the textarea, append them
+        // Recompute alignment length in case updates above changed it
+        const updatedAlignLen = state.seqs.length > 0 ? _maxOf(state.seqs, s => s.seq.length) : 0;
+        for (let i = updateCount; i < entries.length; i++) {
+            let seq = entries[i].seq;
+            if (padCheckbox && padCheckbox.checked && updatedAlignLen > 0) seq = _seqEditFitWidth(seq, updatedAlignLen);
+            const fullH = entries[i].header || 'unnamed';
+            state.seqs.push({
+                header: fullH.split(/\s+/)[0],
+                fullHeader: fullH,
+                seq: seq,
+                gaplessPositions: calculateGaplessPositions(seq)
+            });
+        }
+        if (padCheckbox && padCheckbox.checked) { normalizeAlignmentLengths(); refreshAllGaplessPositions(); }
+        closeSeqEditor();
+        renderAlignment();
+        const added = entries.length - updateCount;
+        showMessage(`${updateCount} sequence${updateCount > 1 ? 's' : ''} updated!`
+            + (added > 0 ? ` ${added} added.` : '')
+            + (untouched > 0 ? ` ${untouched} row${untouched > 1 ? 's' : ''} without a record in the text ${untouched > 1 ? 'were' : 'was'} left as ${untouched > 1 ? 'they were' : 'it was'}.` : ''), untouched > 0 ? 6000 : 2000);
+        return;
+    }
+
+    let index = parseInt(indexStr);
+    const isFreeform = (index === -1);
+    if (!isFreeform && _seqEditTargetObjs[0]) index = state.seqs.indexOf(_seqEditTargetObjs[0]);
+
+    if (!isFreeform && (isNaN(index) || index < 0 || index >= state.seqs.length)) {
+        showMessage("Invalid sequence index.", 3000);
+        return;
+    }
+
+    // Two ">" records in the one-row editor used to be joined into one row (audit L10)
+    const records = _getSeqEditMultiFasta();
+    if (records.length > 1) {
+        showMessage(`The text holds ${records.length} records, but this editor changes one row. Remove the extra record, or select several rows and open the editor for them.`, 8000);
+        return;
+    }
+    let seq = _getSeqEditSequence();
+    if (!seq) {
+        showMessage("Sequence is empty.", 2000);
+        return;
+    }
+
+    // The name: the Name field when the user changed it, else a name typed on the ">" line of the
+    // text (it used to be ignored; audit L10), else the Name field as it stands
+    const nameInput = document.getElementById('seqEditNameInput');
+    let newFullHeader = nameInput ? nameInput.value.trim() : '';
+    const openedAs = isFreeform ? 'new_sequence' : (_seqEditTargetObjs[0] ? (_seqEditTargetObjs[0].fullHeader || _seqEditTargetObjs[0].header) : newFullHeader);
+    const typedName = records.length === 1 ? records[0].header : '';
+    if (typedName && typedName !== openedAs && newFullHeader === openedAs) newFullHeader = typedName;
+    if (!newFullHeader) {
+        const textarea = document.getElementById('seqEditTextarea');
+        const firstLine = textarea.value.split('\n')[0].trim();
+        if (firstLine.startsWith('>')) {
+            newFullHeader = firstLine.substring(1).trim();
+        }
+    }
+    if (!newFullHeader) newFullHeader = 'sequence';
+    // an unchanged long name keeps the row's name (see the note in the several-rows branch above)
+    const keepName = !isFreeform && _seqEditTargetObjs[0] && newFullHeader === openedAs;
+    const newHeader = keepName ? _seqEditTargetObjs[0].header : newFullHeader.split(/\s+/)[0];
+
+    // Pad or trim if checkbox is checked
+    const padCheckbox = document.getElementById('seqEditPadGaps');
+    if (padCheckbox && padCheckbox.checked && state.seqs.length > 0) {
+        const alignLen = _maxOf(state.seqs, s => s.seq.length);
+        if (alignLen > 0) seq = _seqEditFitWidth(seq, alignLen);
+    }
+
+    if (isFreeform) {
+        pushUndo('seqedit-add');
+        const newSeq = {
+            header: newHeader,
+            fullHeader: newFullHeader,
+            seq: seq,
+            gaplessPositions: calculateGaplessPositions(seq)
+        };
+        state.seqs.push(newSeq);
+        if (padCheckbox && padCheckbox.checked) { normalizeAlignmentLengths(); refreshAllGaplessPositions(); }
+        closeSeqEditor();
+        renderAlignment();
+        showMessage("New sequence added!", 2000);
+    } else {
+        pushUndo('seqedit');
+        if (state.seqs[index].header !== newHeader) _migrateColourMapping(state.seqs[index].header, newHeader);
+        state.seqs[index].header = newHeader;
+        state.seqs[index].fullHeader = newFullHeader;
+        state.seqs[index].seq = seq;
+        state.seqs[index].gaplessPositions = calculateGaplessPositions(seq);
+        if (padCheckbox && padCheckbox.checked) { normalizeAlignmentLengths(); refreshAllGaplessPositions(); }
+        closeSeqEditor();
+        renderAlignment();
+        showMessage("Sequence updated!", 2000);
+    }
+}
+

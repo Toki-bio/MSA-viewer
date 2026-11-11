@@ -1,0 +1,449 @@
+[script.js lines 12746-13193 of ViewAlign fd8b8e4]
+// Highlight diffs only changes which columns carry .diff-highlight (the look is CSS on
+// body.highlight-diffs), so switching it or its threshold needs no redraw: recompute the
+// columns and toggle the class on the columns that changed. A full redraw took 8-12 s at
+// 316k residues. Returns false when a redraw is needed instead: Variable sites only (hides
+// columns, draws breakpoint markers) now or on screen, or a non-span view.
+function _refreshDiffHighlightInPlace() {
+    if (!isSpanRenderMode() || !state.seqs || state.seqs.length < 2) return false;
+    if (_foldDomInfo()) return false;   // folds: the ruler carries fold markers, a redraw keeps them
+    if (el('varSitesOnly')?.checked || document.body.classList.contains('var-sites-only')) return false;
+    if (!alignmentContainer?.querySelector('.seq-data')) return false;
+    const len = state.seqs.reduce((m, s) => Math.max(m, s.seq.length), 0);
+    const before = state._diffColumns || new Set();
+    _computeVarSites(len);
+    const after = state._diffColumns || new Set();
+    // The ruler is plain text without diff columns and one span per column with them
+    // (so its digits fade and bold with the rows); build it the way a redraw would.
+    alignmentContainer.querySelectorAll('.scale-ruler-line .seq-data[data-scale]').forEach(d => {
+        const [n, start] = d.dataset.scale.split(':').map(Number);
+        if (state._diffColumns && !d.children.length) d.innerHTML = generateScaleHTML(n, 10, start);
+        else if (!state._diffColumns && d.children.length) d.textContent = generateScale(n, 10, start);
+    });
+    const changed = [];
+    before.forEach(p => { if (!after.has(p)) changed.push(p); });
+    after.forEach(p => { if (!before.has(p)) changed.push(p); });
+    _forEachSpanInColumns(changed, (span, pos) => span.classList.toggle('diff-highlight', after.has(pos)));
+    return true;
+}
+
+// A message about a change that is followed by a redraw: the redraw writes its own line into
+// the status area (Consensus: ... cols), which would replace the message a moment later, so the
+// message is shown again when the redraw is done (only if that happens within 3 s).
+let _pendingRenderMessage = null;
+function showMessageAfterRender(text, ms) {
+    showMessage(text, ms);
+    _pendingRenderMessage = { text, ms, at: performance.now() };
+}
+function _flushRenderMessage() {
+    const m = _pendingRenderMessage;
+    _pendingRenderMessage = null;
+    if (m && performance.now() - m.at < 3000) showMessage(m.text, m.ms);
+}
+
+// FNV-1a over every sequence (and the row order): the consensus and conservation caches are
+// stamped with it, so a change that keeps the alignment length (reverse complement, a
+// same-length paste) can no longer reuse a stale consensus row or shading in Canvas.
+// ~1 ms per 360k residues; computed once per render, never per frame.
+function _seqsFingerprint() {
+    let h = 0x811c9dc5;
+    const seqs = state.seqs || [];
+    for (let i = 0; i < seqs.length; i++) {
+        const q = seqs[i].seq || '';
+        for (let k = 0; k < q.length; k++) { h ^= q.charCodeAt(k); h = Math.imul(h, 16777619); }
+        h ^= 0x2c; h = Math.imul(h, 16777619);
+    }
+    return (h >>> 0) + ':' + seqs.length;
+}
+
+function renderAlignment(options = {}) {
+    if (typeof _cancelPendingSpanRepaint === 'function') _cancelPendingSpanRepaint();
+    _remapRowKeyedSelections();
+    // Catch-all sync: covers every path that flips a mode radio programmatically
+    // (BAM load, snapshot/session restore, the auto-switch heuristic below,
+    // etc.) without going through onModeChange, so the top-bar quick switcher
+    // never drifts from whichever mode is actually about to render.
+    syncQuickModeSwitch();
+    syncCodonModePanel();
+    syncSearchControlsAvailability();
+    // A genome holds no rows. Rows here came by a way other than a load (Add sequences, a snapshot): they were invisible behind
+    // the genome, so the genome goes and they show (GLM audit #1)
+    if (_genome) {
+        if (!state.seqs || !state.seqs.length) { _genomeRender(); return; }
+        _genomeClose();
+        syncQuickModeSwitch();
+    }
+    if (!state.seqs || state.seqs.length === 0) {
+        // Wraps (on a phone the one line ran off under its own scrollbar) and offers the
+        // example alignment through the ?url= loader
+        alignmentContainer.innerHTML = '<div style="padding:20px; color:#666; font-style:italic; white-space:normal; overflow-wrap:anywhere;">'
+            + 'No sequences loaded. Paste FASTA/MSF in the Input menu and click Load, or drop a file on the page. '
+            + '<a href="?url=examples/svk_k4.fa&amp;title=SVK%20SINE%20(K1%E2%80%93K4)" style="font-style:normal;">Try an example alignment</a> (40 SINE copies, 4 subfamilies).</div>';
+        syncCodonModePanel();
+        return;
+    }
+    // The Variants window follows the reads, the genes and the genetic code
+    const varWin = document.getElementById('variantsWindow');
+    if (varWin && varWin.style.display !== 'none') {
+        if ((bamState.allReads || bamState.reads || []).length) _fillVariantsTable(); else varWin.style.display = 'none';
+    }
+    // Reads mode: delegate to BAM renderer
+    if (document.getElementById('modeReads')?.checked) {
+        if (!bamState.reads || bamState.reads.length === 0) {
+            alignmentContainer.innerHTML = '<div style="padding:20px;color:#888;">No reads loaded. Open a BAM file with the BAM button (after loading a reference FASTA).</div>';
+            syncCodonModePanel();
+            return;
+        }
+        renderReadsAlignment();
+        _syncSelectionDomFromState();
+        syncCodonModePanel();
+        return;
+    }
+    const coverageMin = clampMinCoverage(el('consensusMinCoverage')?.value) / 100;
+    // Compute alignment length and windowing need early — _preserveScrollTop
+    // and the render-path dispatch both depend on these.  _needsWindowed must
+    // be declared before its first use to avoid a temporal-dead-zone
+    // ReferenceError that would throw on every call to renderAlignment.
+    const len = _maxOf(state.seqs, s => s.seq.length);
+    const TOTAL_RESIDUES = state.seqs.length * len;
+    const _needsWindowed = TOTAL_RESIDUES > ALIGN_WINDOWED_DOM_THRESHOLD || !!state.alignmentIndex?.needsWindowedDom;
+    state._needsWindowedDom = _needsWindowed;
+    // Clearing innerHTML resets scrollTop to 0 in every browser, which would
+    // silently defeat the unified windowed renderer's scroll listener (it
+    // triggers exactly this re-render, then would always read the just-reset
+    // 0 instead of where the user actually scrolled to). Save and restore
+    // around the rebuild, scoped to when windowing might apply so this doesn't
+    // change scroll behavior anywhere else.
+    const _preserveScrollTop = ((document.getElementById('modeSingle')?.checked || isDomBlock()) && _needsWindowed)
+        ? alignmentContainer.scrollTop : null;
+    // The same for scrollLeft: emptying the container zeroed it, and the column window was then
+    // built from that 0, so every redraw (colour scheme, consensus, Highlight diffs, zoom) threw a
+    // windowed Full view back to column 1.
+    const _preserveScrollLeft = _preserveScrollTop !== null ? alignmentContainer.scrollLeft : null;
+    alignmentContainer.innerHTML = '';
+    _syncResidueWidthVar();   // while the alignment is empty: measuring then costs no layout of it
+    // Ensure Full/Block modes have correct scroll/layout behaviour
+    // (any leftover Canvas/Compact inline styles are overwritten)
+    alignmentContainer.style.position = 'static';
+    if (_preserveScrollTop !== null) {
+        // Windowed mode needs alignmentContainer itself to be the real
+        // scrolling viewport (fixed height, native overflow scroll) so its
+        // own scrollTop/clientHeight are meaningful - height:auto (the
+        // normal non-windowed behaviour, which scrolls via the page instead)
+        // would make scrollHeight always equal clientHeight and defeat
+        // windowing entirely. Same formula Canvas mode already uses for its
+        // own fixed-height viewport.
+        // (from a page-scrolled small view: measure from the container's unscrolled top)
+        if (window.scrollY) window.scrollTo(0, 0);
+        // (clamped to a minimum inside: a negative or zero height, the controls panel taller than
+        // the window, would make visBottom <= visTop in _buildUnifiedBlock, producing zero rows)
+        _fitAlignmentViewport();
+        alignmentContainer.style.overflow = 'auto';
+    } else {
+        alignmentContainer.style.height = 'auto';
+        alignmentContainer.style.overflow = 'auto';
+    }
+    setAlignmentColorSchemeClass();
+    // Container-level drag handlers: allow drops anywhere, show preview
+    // Remove old handlers first to avoid stacking
+    if (!alignmentContainer._dragHandlersSet) {
+        document.addEventListener('dragenter', _handleInternalDragEnterOver, true);
+        document.addEventListener('dragover', _handleInternalDragEnterOver, true);
+        alignmentContainer.addEventListener('dragover', (e) => {
+            if (_draggedSeqIndex < 0) return;
+            e.preventDefault();
+            e.dataTransfer.dropEffect = 'move';
+            _showDragInsertPreview(e, alignmentContainer);
+        });
+        alignmentContainer.addEventListener('dragenter', (e) => {
+            if (_draggedSeqIndex < 0) return;
+            e.preventDefault();
+            if (e.dataTransfer) e.dataTransfer.dropEffect = 'move';
+        });
+        alignmentContainer.addEventListener('drop', handleDrop);
+        alignmentContainer._dragHandlersSet = true;
+    }
+    state.spanCache = new Map();
+    state.domSelectedNucs = new Map();
+    _appliedColumnSel = new Set(); // a new file's rows are built from the (cleared) selection
+    state.domPendingNuc = null;
+
+    const nameLengthSlider = el('nameLengthSlider');
+    const blackThresh = parseInt(el('blackSlider').value) / 100;
+    const darkThresh = parseInt(el('darkSlider').value) / 100;
+    const lightThresh = parseInt(el('lightSlider').value) / 100;
+    const enableBlack = el('enableBlack').checked;
+    const enableDark = el('enableDark').checked;
+    const enableLight = el('enableLight').checked;
+    const stickyNames = el('stickyNames').checked;
+    const useBlocks = isDomBlock();   // the DOM Block layout (Canvas Block returns in the Canvas path below)
+
+    // (len, TOTAL_RESIDUES, and _needsWindowed are computed earlier in
+    //  renderAlignment, before _preserveScrollTop, to avoid a
+    //  temporal-dead-zone ReferenceError.)
+    // -- Auto-detect: Canvas for large alignments --
+    // Disable span cache for large alignments (>80K residues) during view-only rendering.
+    // Edit mode keeps it at any size: the cache is what lets a GeneDoc drag repaint one row
+    // instead of re-rendering the whole alignment on every column step.
+    state._enableSpanCache = (TOTAL_RESIDUES <= 80000) || !!state.editModeActive;
+    // History: 150,000 before DOM windowing existed, then ALIGN_CRAZY_VOLUME (5M) once the
+    // windowed DOM scroll refresh was as cheap as a Canvas frame (~50-65 ms either way, 6M to
+    // 100M residues). Since v245 it is ALIGN_CANVAS_DEFAULT_RESIDUES: Canvas scrolls by copying
+    // the frame (v244, ~8 ms) while the DOM view at 100k-500k residues lays out and repaints
+    // on every scroll step; see the comment at that constant for the measurements.
+    const CANVAS_AUTO_THRESHOLD = ALIGN_CANVAS_DEFAULT_RESIDUES;
+    let _renderStartTime = performance.now();
+    const userWantsCanvas = document.getElementById('modeCanvas')?.checked;
+    // The size switch protects the DOM views; Block is drawn by the Canvas renderer and needs no
+    // protection (the default view for a new file is still Canvas: !_userChoseDomView).
+    const sizeWantsCanvas = TOTAL_RESIDUES >= CANVAS_AUTO_THRESHOLD && !isBlockLayout();
+
+    if (!userWantsCanvas && !_userDismissedAutoCanvas && (sizeWantsCanvas || !_userChoseDomView)) {
+        const canvasRadio = document.getElementById('modeCanvas');
+        if (canvasRadio) canvasRadio.checked = true;
+        _lastModeRadioId = 'modeCanvas'; // bypasses onModeChange, so sync explicitly
+        syncQuickModeSwitch();
+        syncCodonModePanel(); // this bypasses onModeChange, so sync explicitly
+        const note = `Canvas view: everything works here, and it is fast on any size; `
+            + `Block (mode switch at the top) wraps the rows into blocks.`;
+        if (!_canvasNoteShown) {                        // once per session: Canvas is simply the default view
+            _canvasNoteShown = true;
+            showMessage(note, 10000);
+            _canvasSwitchNote = note;                   // survives the caller's own "File loaded" message
+            _canvasSwitchNoteUntil = performance.now() + 5000;
+        }
+        // Re-read to pick up the new checked state
+        // Canvas dispatch is handled below
+    }
+
+    const blockWidth = blockSizeRequested();
+    const nameLen = effectiveNameLength();
+    // Update CSS variable for scale ruler padding
+    document.documentElement.style.setProperty('--nameLen', nameLen);
+    const standard = new Set(['A', 'C', 'G', 'T', 'U', 'N', '-', '.', 'a', 'c', 'g', 't', 'u', 'n']);
+    const ambiguous = new Set(['R','Y','M','K','S','W','H','B','V','D','r','y','m','k','s','w','h','b','v','d']);
+    const ambiguousMap = {
+        'A,G': 'R', 'G,A': 'R', 'C,T': 'Y', 'T,C': 'Y', 'A,C': 'M', 'C,A': 'M',
+        'G,T': 'K', 'T,G': 'K', 'C,G': 'S', 'G,C': 'S', 'A,T': 'W', 'T,A': 'W',
+        'A,C,T': 'H', 'A,T,C': 'H', 'C,A,T': 'H', 'C,T,A': 'H', 'T,A,C': 'H', 'T,C,A': 'H',
+        'G,C,T': 'B', 'G,T,C': 'B', 'C,G,T': 'B', 'C,T,G': 'B', 'T,G,C': 'B', 'T,C,G': 'B',
+        'A,G,T': 'D', 'A,T,G': 'D', 'G,A,T': 'D', 'G,T,A': 'D', 'T,A,G': 'D', 'T,G,A': 'D',
+        'A,C,G': 'V', 'A,G,C': 'V', 'C,A,G': 'V', 'C,G,A': 'V', 'G,A,C': 'V', 'G,C,A': 'V'
+    };
+    const showConsensus = el('showConsensus').checked;
+    const consType = _checkedRadioValue('consensusType', 'normal');
+    const threshold = clampConsensusPercent(el('consensusThreshold').value) / 100;
+    const fallbackMode = (document.getElementById('consensusFallback')?.value) || 'gap';
+
+    // (len is declared above, before TOTAL_RESIDUES calculation)
+
+    const shadeMode = _checkedRadioValue('shadeMode', 'all');
+    const useCanvas = isCanvasMode();   // Canvas, or Block (Canvas Block)
+
+    // Var-sites / highlight-diffs computation must run before the Canvas path
+    // (which returns early) so Canvas mode has access to _diffColumns,
+    // _brkBeforePos and _brkInfo for breakpoint marker rendering.
+    _foldCheckLength(len);
+    _computeVarSites(len);
+    _prepareAnnotLayout(len);
+
+    // -- Canvas fast path (UGENE-style: first paint costs only the visible region) --
+    // Conservation shading is deferred: draw an unshaded frame immediately, then
+    // compute conservation off the critical path (idle, time-sliced) and repaint shaded.
+    // The consensus row (v245) is drawn like the DOM one: top or bottom of the alignment,
+    // scrolling with it. Up to 2M residues it is computed here (a few ms at 600 x 600);
+    // above that the band shows empty until the time-sliced computation below repaints it.
+    if (useCanvas) {
+        _updateCodonAnalysisState(len);
+        const fpNow = _seqsFingerprint();
+        if (state.conservationDataCache && state.conservationDataCache.fp !== fpNow) state.conservationDataCache = null;
+        if (state.consensusCache && (state.consensusCache.fp !== fpNow || state.consensusCache.opts !== _consensusOptsKey())) state.consensusCache = null;   // a changed consensus setting needs a new consensus too
+        const cachedConservation = (state.conservationDataCache?.len === len
+            && state.conservationDataCache?.shadeMode === shadeMode)
+            ? state.conservationDataCache.data : null;
+        let consInfo = null;
+        if (showConsensus) {
+            let values = state.consensusCache?.len === len ? state.consensusCache.values : null;
+            if (!values && TOTAL_RESIDUES <= 2_000_000) {
+                const consStr = computeConsensusForSequences(state.seqs.map(s => s.seq));
+                values = consStr.split('');
+                state.consensusCache = { len, values: values.slice(), fp: _seqsFingerprint(), opts: _consensusOptsKey() };
+                state.consensusSeq = consStr.replace(/-/g, '');
+            }
+            consInfo = { values, position: _checkedRadioValue('consensusPosition', 'top'), threshold };
+        }
+        _renderCanvasAlignment(len, cachedConservation || [], shadeMode, blackThresh, darkThresh, lightThresh,
+            enableBlack, enableDark, enableLight, nameLen, stickyNames, consInfo);
+
+        // Invalidate any still-running chunked jobs from a previous load/render
+        // so they don't write stale results (or fight over the main thread)
+        // once a new file/render supersedes them.
+        if (_canvasDeferredToken) _canvasDeferredToken.cancelled = true;
+        const myToken = { cancelled: false };
+        _canvasDeferredToken = myToken;
+
+        if (!cachedConservation) {
+            const computeShadingAndRepaint = () => {
+                if (myToken.cancelled) return;
+                if (!state.seqs || !state.seqs.length) return;
+                if (_maxOf(state.seqs, s => s.seq.length) !== len) return; // alignment changed
+                // its own copy of the row list: a row delete splices state.seqs in place
+                preCalculateConservationChunked(state.seqs.slice(), len, shadeMode, (data) => {
+                    if (myToken.cancelled) return;
+                    state.conservationDataCache = { len, shadeMode, data, fp: _seqsFingerprint() };
+                    if (isCanvasMode()) renderAlignment(options);
+                }, myToken);
+            };
+            if (typeof requestIdleCallback === 'function') {
+                requestIdleCallback(computeShadingAndRepaint, { timeout: 1500 });
+            } else {
+                setTimeout(computeShadingAndRepaint, 30);
+            }
+        }
+
+        // Consensus of a very large alignment: computed time-sliced so the first paint is
+        // not delayed, then the row is repainted (also feeds Copy Consensus etc.).
+        if (showConsensus && state.consensusCache?.len !== len) {
+            const computeConsensusIdle = () => {
+                if (myToken.cancelled) return;
+                if (!state.seqs || !state.seqs.length) return;
+                if (_maxOf(state.seqs, s => s.seq.length) !== len) return;
+                computeConsensusForSequencesChunked(state.seqs.map(s => s.seq), (consStr) => {
+                    if (myToken.cancelled) return;
+                    const cons = consStr.split('');
+                    state.consensusCache = { len, values: cons.slice(), fp: _seqsFingerprint(), opts: _consensusOptsKey() };
+                    state.consensusSeq = consStr.replace(/-/g, '');
+                    if (_canvasState.consensus && _canvasState.consensus.len === len) {
+                        _canvasState.consensus.values = cons;
+                        _canvasState.consensus.caseCache = null;
+                        _canvasState.scheduleDraw?.();
+                    }
+                }, myToken);
+            };
+            if (typeof requestIdleCallback === 'function') {
+                requestIdleCallback(computeConsensusIdle, { timeout: 2000 });
+            } else {
+                setTimeout(computeConsensusIdle, 60);
+            }
+        }
+        _syncSelectionDomFromState();
+        syncCodonModePanel();
+        updateSourceInfo();   // the header counts (seq, col, bp): this path returns before the DOM path's update
+        _flushRenderMessage();
+        return;
+    }
+
+    // Leaving Canvas: its deferred shading/consensus jobs describe a frame no longer shown.
+    // They were only cancelled by the next Canvas render, and after a switch to a DOM view (Block's old DOM renderer, ?view=full) a row
+    // delete made the shading job throw ("reading 'seq'" of a spliced-out row).
+    if (_canvasDeferredToken) { _canvasDeferredToken.cancelled = true; _canvasDeferredToken = null; }
+
+    let consensus = [];
+    state._codonData = null;
+    state._codonFrames = null;
+    state._codonActiveFrame = 0;
+    document.body.classList.remove('codon-mode');
+    if (showConsensus) {
+        const deferredConsensus = options.deferConservation ? getDeferredConsensus(len) : null;
+        if (deferredConsensus) {
+            consensus = deferredConsensus;
+        } else {
+            // Use unified helper for consensus computation
+            consensus = computeConsensusForSequences(state.seqs.map(s => s.seq)).split('');
+            state.consensusCache = { len, values: consensus.slice(), fp: _seqsFingerprint(), opts: _consensusOptsKey() };
+        }
+    }
+    state.consensusSeq = consensus.join('').replace(/-/g, '');
+    const shouldRenderConsensus = showConsensus;
+    const consensusPosEl = document.querySelector('input[name="consensusPosition"]:checked');
+    const consensusPosition = consensusPosEl ? consensusPosEl.value : 'top';
+    if (showConsensus) {
+        document.getElementById('statusMessage').textContent = `Consensus: ${consensusPosition} | ${consensus.length} cols`;
+    }
+
+    // *** Pre-calculate conservation for ALL columns ONCE (the DOM views: Full, test-only DOM Block) ***
+    const conservationData = (options.deferConservation && getDeferredConservationData(len, shadeMode))
+        || preCalculateConservation(state.seqs, len, shadeMode);
+    if (!options.deferConservation) {
+        state.conservationDataCache = { len, shadeMode, data: conservationData, fp: _seqsFingerprint() };
+    }
+
+    // Var-sites / highlight-diffs already computed above (before Canvas path)
+    // so Canvas mode has access to breakpoint data. No need to recompute here.
+    _updateCodonAnalysisState(len);
+
+    // Full mode = Block mode with blockWidth = len (one block = one ruler + one
+    // consensus + all rows). Both windowed and non-windowed paths use the same
+    // blockWidth parameter, so the only difference is its value.
+    const effectiveBlockWidth = useBlocks ? blockWidth : len;
+    if (_needsWindowed) {
+        renderUnifiedWindowedDom(alignmentContainer, len, effectiveBlockWidth, nameLen, stickyNames, standard, ambiguous, blackThresh, darkThresh, lightThresh, enableBlack, enableDark, enableLight, conservationData, shouldRenderConsensus, consensusPosition, consensus, options, _preserveScrollTop, false, _preserveScrollLeft);
+    } else if (TOTAL_RESIDUES > ALIGN_WINDOWED_DOM_THRESHOLD) {
+        // Safety net: should have been windowed but wasn't.  Show a message
+        // instead of creating millions of DOM nodes that crash the tab.
+        alignmentContainer.innerHTML = '<div style="padding:20px;color:#666;">Alignment too large for standard rendering. Switch to Canvas mode or reduce alignment size.</div>';
+    } else {
+        for (let start = 0; start < len; start += effectiveBlockWidth) {
+            const end = Math.min(start + effectiveBlockWidth, len);
+            const blockDiv = _buildBlockElement(start, end, len, nameLen, stickyNames, standard, ambiguous, blackThresh, darkThresh, lightThresh, enableBlack, enableDark, enableLight, conservationData, shouldRenderConsensus, consensusPosition, consensus, options);
+            alignmentContainer.appendChild(blockDiv);
+        }
+        _insertAnnotTracks(alignmentContainer);
+    }
+    setTimeout(() => {
+        toggleStickyNames();
+    }, 0);
+    ['blackSlider', 'darkSlider', 'lightSlider', 'nameLengthSlider', 'zoomSlider', 'blockSizeSlider', 'consensusThreshold'].forEach(id => {
+        updateSliderBackground(el(id));
+    });
+    updateRowSelections();
+    updateColumnSelections();
+    scheduleNucSelectionRefresh();
+    updateEditActiveCell();
+    recalculateCollapsibleHeights();
+    // GeneDoc edit dragging is handled by delegated alignmentContainer events.
+    // Update sequence/source statistics after any rendering change
+    if (typeof updateSourceInfo === 'function') {
+        updateSourceInfo();
+    }
+    // Re-apply sequence name colours if any mappings exist
+    const _renderMs = performance.now() - _renderStartTime;
+    if (_renderMs > 50 && TOTAL_RESIDUES > 10000) console.warn('[PERF] render: '+_renderMs.toFixed(0)+'ms | '+TOTAL_RESIDUES.toLocaleString()+' residues');
+
+    if (typeof applyColourToSeqNames === 'function' && colourState && colourState.mappings.size > 0) {
+        applyColourToSeqNames(colourState.mappings);
+    }
+    // Rows are built with their search highlights (createSequenceLine); only the colour rules
+    // need to exist.
+    (state.searchHistory || []).forEach(_ensureSearchStyle);
+    _syncResidueWidthVar();
+    applyClusterVisualsFromState();
+
+    // Post-process: AA translation rows (phase/stops now built inline)
+    if (state._codonData) {
+        // Add AA translation rows below each sequence
+        const seqRows = alignmentContainer.querySelectorAll('.seq-line');
+        seqRows.forEach(rowEl => {
+            const seqIdx = parseInt(rowEl.dataset.seqIndex, 10);
+            if (!Number.isInteger(seqIdx) || seqIdx < 0) return;
+            // Check if already has AA rows
+            if (rowEl.nextElementSibling?.classList.contains('aa-row')) return;
+
+            const ntSpans = rowEl.querySelectorAll('.seq-data > span[data-pos]');
+            let viewStart = 0;
+            let viewEnd = len;
+            if (ntSpans.length > 0) {
+                viewStart = parseInt(ntSpans[0].dataset.pos) || 0;
+                viewEnd = (parseInt(ntSpans[ntSpans.length - 1].dataset.pos) || 0) + 1;
+            }
+
+            // Rows built by the block builders already carry their translation rows (see
+            // _appendCodonRows); this covers any other row.
+            _appendCodonRows(rowEl, seqIdx, viewStart, viewEnd, null);
+        });
+    }
+    syncCodonModePanel();
+    renderBlockMaskOverlay();
+    _flushRenderMessage();
+}
+

@@ -1,0 +1,359 @@
+[script.js lines 13194-13551 of ViewAlign fd8b8e4]
+// ==== 2D block-mask overlay ==============================================
+// Draws a block mask (from block-mask.js's computeBlockMask, or a supplied
+// JSON via ?mask=) as a translucent rectangle layer over the rendered
+// alignment. Reuses the viewer's own .block-block DOM and its residue spans
+// for geometry rather than re-deriving char/row metrics. Called at the end
+// of renderAlignment so it stays in sync with reorder / mode / zoom changes.
+//
+// Mask JSON: { row_headers:[...], blocks:[{type, col_start, col_end,
+//              rows:"all"|[k...], group_rank?}] }
+// where col_* are 0-based inclusive alignment columns and each k indexes
+// row_headers (the non-consensus sequences in the order the mask was built).
+
+const BLOCKMASK_COLORS = {
+    CONSERVATIVE: '#16a34a', MOSAIC: '#f59e0b', DECAY_SLOPE: '#8b5cf6',
+    DIVERGENT: '#cbd5e1', SIMPLE_REPEAT: '#ec4899'
+};
+const BLOCKMASK_SVGNS = 'http://www.w3.org/2000/svg';
+let _blockMaskOpacity = 0.45;
+
+// "Squint" granularity presets, coarsest -> finest. Mirrors
+// reference/granularity_presets.json so the panel works on the deployed
+// (static) site with no fetch. See block-mask.js for what each key does.
+const BLOCKMASK_PRESETS = {
+    V1_coarsest: { WIN: 44, MOSAIC_STD: 0.16, BG_MARGIN: 0.12, MIN_ZONE_W: 40, ZONE_BRIDGE: 6, ROW_MIN_GROUP: 6, ROW_MIN_GAP_ABS: 0.22, MIN_BLOCK_W: 40 },
+    V2_coarse:   { WIN: 32, MOSAIC_STD: 0.14, BG_MARGIN: 0.11, MIN_ZONE_W: 30, ZONE_BRIDGE: 5, ROW_MIN_GROUP: 5, ROW_MIN_GAP_ABS: 0.19, MIN_BLOCK_W: 25 },
+    V3_medium:   { WIN: 20, MOSAIC_STD: 0.12, BG_MARGIN: 0.10, MIN_ZONE_W: 18, ZONE_BRIDGE: 4, ROW_MIN_GROUP: 4, ROW_MIN_GAP_ABS: 0.15, MIN_BLOCK_W: 15 },
+    V4_fine:     { WIN: 14, MOSAIC_STD: 0.11, BG_MARGIN: 0.09, MIN_ZONE_W: 12, ZONE_BRIDGE: 3, ROW_MIN_GROUP: 3, ROW_MIN_GAP_ABS: 0.12, MIN_BLOCK_W: 9 },
+    V5_finest:   { WIN: 10, MOSAIC_STD: 0.10, BG_MARGIN: 0.08, MIN_ZONE_W: 8,  ZONE_BRIDGE: 2, ROW_MIN_GROUP: 3, ROW_MIN_GAP_ABS: 0.10, MIN_BLOCK_W: 5 }
+};
+
+function setBlockMaskOpacity(v) {
+    _blockMaskOpacity = Math.max(0, Math.min(1, +v));
+    renderBlockMaskOverlay();
+}
+function clearBlockMask() {
+    state.blockMask = null;
+    state._biclusterRaw = null;
+    renderBlockMaskOverlay();
+    if (typeof _updateInstrumentStatus === 'function') _updateInstrumentStatus();
+}
+
+// Results computed on the columns of the alignment as it was: 2D blocks and group colours (whose
+// exclusive/shared features are column positions). A realignment or a different file makes
+// them wrong, so they are dropped instead of being drawn over the new columns. Returns true when
+// something was cleared; the caller renders.
+function _dropColumnAnalyses() {
+    const had = !!(state.blockMask || state._biclusterRaw || state.clusterResults || state.clusterTypeRows);
+    state.blockMask = null;
+    state._biclusterRaw = null;
+    state._blockMaskPreset = null;
+    state.clusterPaintSuspended = false;
+    state.clusterResults = null;
+    state.clusterMap = null;
+    state._clusterCharMap = null;
+    state.clusterSource = null;
+    state.clusterSourceLabel = null;
+    state.clusterTypeRows = null;
+    if (!had) return false;
+    const status = el('blockMaskStatus');
+    if (status) status.textContent = '';
+    if (typeof updateClusteringStatus === 'function') updateClusteringStatus('');
+    if (typeof _updateInstrumentStatus === 'function') _updateInstrumentStatus();
+    if (typeof _geOnGroupsCleared === 'function') _geOnGroupsCleared();
+    return true;
+}
+
+// After a realignment: drop them and say so (after the realign's own message)
+function _dropColumnAnalysesAfterRealign() {
+    if (_dropColumnAnalyses()) {
+        setTimeout(() => showMessage('Groups and 2D blocks cleared: the alignment changed. Run them again to recalculate.', 4500), 400);
+    }
+}
+
+// Longest run of consecutive indices / group size, in the ORIGINAL mask row
+// order (which mirrors MAFFT's similarity ordering). A low value means the
+// group crosscuts that ordering - real localized mosaic, or noise - and is
+// drawn with a dashed warning stroke rather than a clean rectangle.
+// The 2D block rectangles for the Canvas view, in content coordinates (CSS px from the top-left
+// of the alignment, names excluded), the same rectangles renderBlockMaskOverlay() builds for
+// the DOM: one per run of rows that are consecutive on screen, dashed when the rows are
+// scattered (contiguity < 0.6) or the block is local-only, the whole alignment for rows 'all'.
+function _canvasBlockMaskRects(charW, rowPitch, nSeqs, posSlot) {
+    const mask = state.blockMask;
+    if (!mask || !Array.isArray(mask.blocks) || !Array.isArray(mask.row_headers)) return [];
+    const headerToIdx = new Map();
+    for (let i = 0; i < state.seqs.length; i++) { const h = state.seqs[i].header; if (!headerToIdx.has(h)) headerToIdx.set(h, i); }
+    const rowVis = mask.row_headers.map(h => headerToIdx.has(h) ? headerToIdx.get(h) : -1);
+    const rects = [];
+    for (const mb of mask.blocks) {
+        // the slots of the block's shown columns (Variable sites only hides some)
+        let s0 = Infinity, s1 = -1;
+        for (let c = mb.col_start; c <= mb.col_end; c++) { const sc = posSlot(c); if (sc >= 0) { if (sc < s0) s0 = sc; if (sc > s1) s1 = sc; } }
+        if (s1 < 0) continue;
+        const x = s0 * charW, w = (s1 - s0 + 1) * charW;
+        const fill = BLOCKMASK_COLORS[mb.type] || '#999';
+        const typeRows = (Array.isArray(mb.sourceRows) && mb.sourceRows.length >= 2) ? mb.sourceRows
+            : (Array.isArray(mb.rows) && mb.rows.length >= 2 ? mb.rows : null);
+        let title = null;
+        if (typeRows) {
+            title = 'Click to stack this type (all members, including orphans). Undoable.';
+            const agr = mb.typeAgreement;
+            if (agr && agr.kind === 'inside') title = 'Stack inside ' + (agr.typeName || 'type') + '. ' + title;
+            else if (agr && agr.kind === 'supports') title = 'Supports ' + (agr.typeName || 'type') + '. ' + title;
+            else if (agr && agr.kind === 'discordant') title = 'Discordant with current types. ' + title;
+        }
+        const add = (y, h, op, dashed, localOnly) => rects.push({ x, y, w, h, fill, op: localOnly ? op * 0.35 : (dashed ? op * 0.7 : op), dashed: !!dashed, localOnly: !!localOnly, typeRows, title });
+        if (mb.rows === 'all') { add(0, nSeqs * rowPitch, _blockMaskOpacity * 0.8, false, false); continue; }
+        if (!Array.isArray(mb.rows)) continue;
+        const vis = [];
+        for (const k of mb.rows) { const si = rowVis[k]; if (si >= 0 && si < nSeqs) vis.push(si); }
+        if (!vis.length) continue;
+        vis.sort((a, b) => a - b);
+        const localOnly = !!mb.localOnly;
+        const groupDashed = !localOnly && _blockMaskGroupContiguity(vis) < 0.6;
+        let runStart = vis[0], prev = vis[0], runLen = 1;
+        const flush = (a, z, len) => add(a * rowPitch, (z - a + 1) * rowPitch, _blockMaskOpacity, groupDashed || (!localOnly && len === 1), localOnly);
+        for (let i = 1; i < vis.length; i++) {
+            if (vis[i] === prev + 1) { prev = vis[i]; runLen++; continue; }
+            flush(runStart, prev, runLen);
+            runStart = vis[i]; prev = vis[i]; runLen = 1;
+        }
+        flush(runStart, prev, runLen);
+    }
+    return rects;
+}
+// The typed block rectangle under a viewport point of the Canvas (for its click and tooltip)
+function _canvasBlockMaskHit(clientX, clientY) {
+    const rects = _canvasState.maskRects;
+    if (!rects || !rects.length || !_canvasState.canvas) return null;
+    const m = _canvasState.metrics;
+    // _canvasLocal: in the Block view the band under the point, its rows mapped onto the strip's pitch (the
+    // rectangles' own). Before batch 4 it took the point's x as band 1's column and its y over the whole stacked
+    // layout: below band 1 the y was past every rectangle, so the click and tooltip did nothing there (cb34 #29)
+    const P = _canvasLocal(clientX, clientY);
+    const sticky = _canvasState.layout ? true : el('stickyNames')?.checked !== false;
+    if (sticky && P.x < m.nameW) return null;   // under the fixed names: not drawn there
+    const x = P.x - m.nameW + P.ox;
+    if (x >= P.s1 * m.charW) return null;   // past the band's last column
+    const y = P.y - (m.headerH || m.charH) + P.oy;
+    for (let i = rects.length - 1; i >= 0; i--) { const r = rects[i]; if (r.typeRows && x >= r.x && x < r.x + r.w && y >= r.y && y < r.y + r.h) return r; }
+    return null;
+}
+
+function _blockMaskGroupContiguity(rows) {
+    if (!rows || rows.length < 2) return 1;
+    const s = rows.slice().sort((a, b) => a - b);
+    let best = 1, run = 1;
+    for (let i = 1; i < s.length; i++) {
+        if (s[i] === s[i - 1] + 1) { run++; if (run > best) best = run; }
+        else run = 1;
+    }
+    return best / s.length;
+}
+
+// The windowed views (above ALIGN_WINDOWED_DOM_THRESHOLD) build only the rows and columns near the
+// screen and rebuild them as it moves: the overlay is drawn over what is built and redrawn after
+// each change of the window (one frame later, _scheduleBlockMaskOverlay). The rectangles sit in
+// their block's own coordinates, so scrolling alone moves them with the residues. Which rows form
+// a run, and the dashed outline of a scattered group or a lone row, are decided on all of the
+// mask's rows, not on the built ones, so a rectangle does not change style at the window's edge.
+// (Show 2D used to draw nothing at all on a windowed view.)
+let _blockMaskOverlayRaf = 0;
+function _scheduleBlockMaskOverlay() {
+    if (!state.blockMask || _blockMaskOverlayRaf) return;
+    _blockMaskOverlayRaf = requestAnimationFrame(() => { _blockMaskOverlayRaf = 0; renderBlockMaskOverlay(); });
+}
+
+function renderBlockMaskOverlay() {
+    document.querySelectorAll('.block-mask-layer').forEach(el => el.remove());
+    if (isCanvasMode()) { _canvasState.scheduleOverlay?.(); return; }   // Canvas / Block: the overlay layer draws (or clears) it
+    const mask = state.blockMask;
+    if (!mask || !Array.isArray(mask.blocks) || !Array.isArray(mask.row_headers)) return;
+    const windowed = !!state._needsWindowedDom;
+    const container = document.getElementById('alignmentContainer');
+    if (!container) return;
+    const blockEls = container.querySelectorAll('.block-block');
+    if (!blockEls.length) return;
+
+    // mask row k -> current visual index in state.seqs (by header string)
+    const headerToIdx = new Map();
+    for (let i = 0; i < state.seqs.length; i++) {
+        const h = state.seqs[i].header;
+        if (!headerToIdx.has(h)) headerToIdx.set(h, i);
+    }
+    const rowVis = mask.row_headers.map(h => headerToIdx.has(h) ? headerToIdx.get(h) : -1);
+
+    blockEls.forEach(blockEl => {
+        // :not(.consensus-line) -- ViewAlign's own displayed Consensus row
+        // carries data-seq-index="-1" too (see addConsensusLine /
+        // CONSENSUS_ROW_INDEX); it must never be treated as a mask row or
+        // used as the top/bottom edge of a full-height rectangle.
+        const dataRows = blockEl.querySelectorAll('.seq-line[data-seq-index]:not(.consensus-line)');
+        if (!dataRows.length) return;
+        const firstData = dataRows[0].querySelector('.seq-data');
+        const spans = firstData ? firstData.querySelectorAll('span[data-pos]') : [];
+        if (spans.length < 2) return;
+        const colStart = parseInt(spans[0].dataset.pos, 10);
+        const colEnd = parseInt(spans[spans.length - 1].dataset.pos, 10);
+        const bRect = blockEl.getBoundingClientRect();
+        if (getComputedStyle(blockEl).position === 'static') blockEl.style.position = 'relative';
+
+        const sp0L = spans[0].getBoundingClientRect().left;
+        const cw = spans[1].getBoundingClientRect().left - sp0L;
+        const x0 = sp0L - bRect.left + blockEl.scrollLeft;
+        const colX = (P) => {
+            const sp = firstData.querySelector('span[data-pos="' + P + '"]');
+            if (sp) return sp.getBoundingClientRect().left - bRect.left + blockEl.scrollLeft;
+            return x0 + (P - colStart) * cw;
+        };
+
+        const rowElByIdx = new Map();
+        dataRows.forEach(r => rowElByIdx.set(parseInt(r.dataset.seqIndex, 10), r));
+        const rowH = dataRows[0].getBoundingClientRect().height;
+        const rowTop = (seqIdx) => {
+            const r = rowElByIdx.get(seqIdx);
+            return r ? (r.getBoundingClientRect().top - bRect.top + blockEl.scrollTop) : null;
+        };
+        const firstY = dataRows[0].getBoundingClientRect().top - bRect.top + blockEl.scrollTop;
+        const lastY = dataRows[dataRows.length - 1].getBoundingClientRect().top - bRect.top + blockEl.scrollTop + rowH;
+
+        const svg = document.createElementNS(BLOCKMASK_SVGNS, 'svg');
+        svg.setAttribute('class', 'block-mask-layer');
+        svg.style.position = 'absolute';
+        svg.style.left = '0';
+        svg.style.top = '0';
+        svg.style.pointerEvents = 'none';
+        svg.style.overflow = 'visible';
+        svg.style.zIndex = '4';
+        svg.setAttribute('width', blockEl.scrollWidth);
+        svg.setAttribute('height', blockEl.scrollHeight);
+
+        mask.blocks.forEach(mb => {
+            if (mb.col_end < colStart || mb.col_start > colEnd) return;
+            const cs = Math.max(mb.col_start, colStart);
+            const ce = Math.min(mb.col_end, colEnd);
+            const x = colX(cs);
+            const w = (ce - cs + 1) * cw;
+            const fill = BLOCKMASK_COLORS[mb.type] || '#999';
+
+            const typeRows = (Array.isArray(mb.sourceRows) && mb.sourceRows.length >= 2)
+                ? mb.sourceRows
+                : (Array.isArray(mb.rows) && mb.rows.length >= 2 ? mb.rows : null);
+
+            const addRect = (y, h, op, dashed, localOnly) => {
+                const r = document.createElementNS(BLOCKMASK_SVGNS, 'rect');
+                r.setAttribute('x', x.toFixed(1));
+                r.setAttribute('y', y.toFixed(1));
+                r.setAttribute('width', Math.max(0.5, w).toFixed(1));
+                r.setAttribute('height', Math.max(1, h).toFixed(1));
+                r.setAttribute('fill', fill);
+                r.setAttribute('fill-opacity', (localOnly ? op * 0.35 : op).toFixed(3));
+                if (dashed || localOnly) {
+                    r.setAttribute('stroke', localOnly ? fill : '#c0392b');
+                    r.setAttribute('stroke-width', localOnly ? '2' : '1');
+                    r.setAttribute('stroke-dasharray', localOnly ? '4 3' : '3 2');
+                    r.setAttribute('stroke-opacity', '0.95');
+                    if (!localOnly) r.setAttribute('fill-opacity', (op * 0.7).toFixed(3));
+                } else {
+                    r.setAttribute('stroke', fill);
+                    r.setAttribute('stroke-width', '1');
+                    r.setAttribute('stroke-opacity', '0.9');
+                }
+                if (localOnly) r.setAttribute('data-local-only', '1');
+                if (typeRows) {
+                    r.style.pointerEvents = 'auto';
+                    r.style.cursor = 'pointer';
+                    r.setAttribute('data-type-rows', typeRows.join(','));
+                    let title = 'Click to stack this type (all members, including orphans). Undoable.';
+                    const agr = mb.typeAgreement;
+                    if (agr && agr.kind === 'inside') title = 'Stack inside ' + (agr.typeName || 'type') + '. ' + title;
+                    else if (agr && agr.kind === 'supports') title = 'Supports ' + (agr.typeName || 'type') + '. ' + title;
+                    else if (agr && agr.kind === 'discordant') title = 'Discordant with current types. ' + title;
+                    r.setAttribute('title', title);
+                    r.addEventListener('click', (ev) => {
+                        ev.preventDefault();
+                        ev.stopPropagation();
+                        groupRowsByType(typeRows);
+                    });
+                }
+                svg.appendChild(r);
+            };
+
+            if (mb.rows === 'all') {
+                addRect(firstY, lastY - firstY, _blockMaskOpacity * 0.8, false);
+                return;
+            }
+            const vis = [];
+            for (const k of mb.rows) {
+                const si = rowVis[k];
+                if (si >= 0 && rowElByIdx.has(si)) vis.push(si);
+            }
+            const localOnly = !!mb.localOnly;
+            if (windowed) {
+                // Runs of consecutive rows over the whole mask, each clipped to the built rows
+                const all = [];
+                for (const k of mb.rows) if (rowVis[k] >= 0) all.push(rowVis[k]);
+                if (!all.length || !vis.length) return;
+                all.sort((a, b) => a - b);
+                const builtLo = _minOf(vis, v => v), builtHi = _maxOf(vis, v => v);
+                const dashedAll = !localOnly && _blockMaskGroupContiguity(all) < 0.6;
+                let a = 0;
+                for (let i = 1; i <= all.length; i++) {
+                    if (i < all.length && all[i] === all[i - 1] + 1) continue;
+                    const lo = Math.max(all[a], builtLo), hi = Math.min(all[i - 1], builtHi);
+                    const ya = lo <= hi ? rowTop(lo) : null, yz = lo <= hi ? rowTop(hi) : null;
+                    if (ya != null && yz != null) addRect(ya, (yz - ya) + rowH, _blockMaskOpacity, dashedAll || (!localOnly && i - a === 1), localOnly);
+                    a = i;
+                }
+                return;
+            }
+            if (!vis.length) return;
+            vis.sort((a, b) => rowElByIdx.get(a).getBoundingClientRect().top - rowElByIdx.get(b).getBoundingClientRect().top);
+            const groupDashed = !localOnly && _blockMaskGroupContiguity(vis) < 0.6;
+            let runStart = vis[0], prev = vis[0], runLen = 1;
+            const flush = (a, z, len) => {
+                const ya = rowTop(a), yz = rowTop(z);
+                if (ya == null || yz == null) return;
+                addRect(ya, (yz - ya) + rowH, _blockMaskOpacity, groupDashed || (!localOnly && len === 1), localOnly);
+            };
+            for (let i = 1; i < vis.length; i++) {
+                const yPrev = rowElByIdx.get(prev).getBoundingClientRect().top;
+                const yCur = rowElByIdx.get(vis[i]).getBoundingClientRect().top;
+                if (Math.abs(yCur - yPrev - rowH) < rowH * 0.5) { prev = vis[i]; runLen++; continue; }
+                flush(runStart, prev, runLen);
+                runStart = vis[i];
+                prev = vis[i];
+                runLen = 1;
+            }
+            flush(runStart, prev, runLen);
+        });
+
+        blockEl.appendChild(svg);
+    });
+}
+
+// Compute a mask live from the loaded alignment + a granularity preset object
+// (window.__BLOCKMASK_PRESETS[name]) or an explicit params object.
+function applyBlockMaskLive(presetOrParams) {
+    if (typeof BlockMask === 'undefined') { showMessage('block-mask.js not loaded', 3000); return null; }
+    if (!state.seqs || !state.seqs.length) { showMessage('Load an alignment first', 3000); return null; }
+    const fasta = state.seqs.map(s => '>' + s.header + '\n' + s.seq).join('\n') + '\n';
+    let params = presetOrParams;
+    if (typeof presetOrParams === 'string') {
+        params = BLOCKMASK_PRESETS[presetOrParams] || (window.__BLOCKMASK_PRESETS || {})[presetOrParams];
+        if (!params) { showMessage('Unknown block-mask preset: ' + presetOrParams, 3000); return null; }
+    }
+    state._blockMaskPreset = (typeof presetOrParams === 'string') ? presetOrParams : null;
+    state.blockMask = BlockMask.computeBlockMask(fasta, params || {}, {});
+    renderBlockMaskOverlay();
+    return state.blockMask;
+}
+
+// Live compute for the new row/column-symmetric biclustering algorithm
+// (block-bicluster.js) - separate from the reference-row block-mask
+// above, reuses the SAME overlay renderer (renderBlockMaskOverlay) since
+// both produce the same { blocks: [{col_start,col_end,rows,...}],
+// row_headers } shape. computeBiclusterMask's blocks carry `.coherence`
+// (a float or null) rather than block-mask's categorical `.type`.

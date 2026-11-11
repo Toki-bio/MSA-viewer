@@ -1,0 +1,537 @@
+[styles.css lines 4231-4767 of ViewAlign fd8b8e4]
+#selections-menu-section.sel-menu-off {
+    visibility: hidden;
+    pointer-events: none;
+}
+.sel-badge {
+    display: inline-block;
+    min-width: 14px;
+    padding: 0 4px;
+    margin-left: 2px;
+    border-radius: 7px;
+    background: #2a6fb0;
+    color: #fff;
+    font-size: 10px;
+    font-weight: bold;
+    line-height: 14px;
+    text-align: center;
+}
+.sel-badge:empty {
+    visibility: hidden;   /* keeps its box: the tab (and the menu line) stays the same width with and without a count */
+}
+#selections-controls {
+    min-width: 300px;
+    max-width: 420px;
+    font-size: 11px;
+}
+.sel-toolbar {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px;
+    margin-bottom: 6px;
+}
+.sel-toolbar button {
+    height: 22px;
+    font-size: 11px;
+    padding: 0 7px;
+}
+#selectionsUndoBtn {
+    margin-left: auto;
+    color: #2a6fb0;
+}
+.sel-list {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+}
+.sel-item {
+    display: flex;
+    align-items: center;
+    gap: 5px;
+    padding: 2px 4px;
+    border: 1px solid #ddd;
+    border-radius: 3px;
+    background: #fff;
+}
+.sel-item:hover {
+    background: #f4f7fa;
+}
+.sel-item.is-off .sel-text,
+.sel-item.is-off .sel-icon-wrap {
+    opacity: 0.45;
+}
+.sel-item.is-off .sel-kind {
+    text-decoration: line-through;
+}
+.sel-item input[type="checkbox"] {
+    margin: 0;
+    width: 13px;
+    height: 13px;
+}
+.sel-icon-wrap {
+    display: inline-flex;
+    width: 14px;
+    justify-content: center;
+    flex-shrink: 0;
+}
+.sel-swatch {
+    width: 12px;
+    height: 12px;
+    border: 1px solid #666;
+    border-radius: 2px;
+}
+.sel-icon {
+    color: #2a6fb0;
+    font-size: 11px;
+    line-height: 1;
+}
+.sel-text {
+    flex: 1;
+    min-width: 0;
+    overflow: hidden;
+    white-space: nowrap;
+    text-overflow: ellipsis;
+}
+.sel-kind {
+    font-weight: bold;
+}
+.sel-count {
+    margin: 0 4px;
+    color: #2a6fb0;
+    font-weight: bold;
+}
+.sel-detail {
+    color: #666;
+}
+.sel-go,
+.sel-remove {
+    background: none;
+    border: none;
+    color: #888;
+    cursor: pointer;
+    font-size: 13px;
+    line-height: 1;
+    padding: 0 2px;
+}
+.sel-go:hover,
+.sel-remove:hover {
+    color: #222;
+}
+.sel-empty {
+    color: #888;
+    font-style: italic;
+    padding: 4px 2px;
+}
+.sel-hint {
+    margin-top: 6px;
+    color: #888;
+    font-size: 10px;
+}
+.search-item.is-off > span {
+    opacity: 0.45;
+    text-decoration: line-through;
+}
+.search-item input[type="checkbox"] {
+    margin: 0;
+    width: 12px;
+    height: 12px;
+}
+
+.sel-note {
+    display: block;
+    color: #8a5a00;
+    font-size: 10px;
+    white-space: normal;
+}
+
+/* Second font for TSD marks: Arial drawn with Courier New's vertical metrics, so the letter sits on
+   the same baseline in the same box (plain Arial sits ~1.5 px lower, which made the mark look too
+   high and cut the descender of a lowercase g). */
+@font-face {
+    font-family: 'ViewAlign Sans';
+    src: local('Arial'), local('ArialMT'), local('Liberation Sans'), local('Helvetica');
+    font-weight: 400;
+    ascent-override: 83.25%;
+    descent-override: 30%;
+    line-gap-override: 0%;
+    size-adjust: 90%;
+}
+@font-face {
+    font-family: 'ViewAlign Sans';
+    src: local('Arial Bold'), local('Arial-BoldMT'), local('Liberation Sans Bold'), local('Helvetica Bold');
+    font-weight: 700;
+    ascent-override: 83.25%;
+    descent-override: 30%;
+    line-gap-override: 0%;
+    size-adjust: 90%;
+}
+
+.ge-gather {
+    margin-left: auto;
+    background: none;
+    border: 1px solid #c9d1da;
+    border-radius: 3px;
+    color: #4a5a6a;
+    cursor: pointer;
+    font-size: 12px;
+    line-height: 1;
+    padding: 1px 5px;
+}
+.ge-gather:hover { background: #eef3f8; color: #1a5aa0; }
+.ge-text-btn.ge-on { background: #fff3cd; border-color: #e0b84a; color: #7a5b00; }
+
+
+/* ---- Accessibility ---- */
+.visually-hidden {
+    position: absolute !important;
+    width: 1px; height: 1px;
+    margin: -1px; padding: 0; border: 0;
+    overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap;
+}
+/* Keyboard focus is always visible (sliders and some fields removed their outline) */
+:focus-visible {
+    outline: 2px solid #1565c0 !important;
+    outline-offset: 1px;
+}
+.menu-section > .section-header:focus-visible {
+    outline-offset: -2px;
+}
+@media (prefers-reduced-motion: reduce) {
+    *, *::before, *::after {
+        animation-duration: 0.01ms !important;
+        animation-iteration-count: 1 !important;
+        transition-duration: 0.01ms !important;
+        scroll-behavior: auto !important;
+    }
+}
+
+/* The codon-aligner settings, just revealed by "Codon alignment (MACSE)" */
+@keyframes al-flash { from { background: #fff3b0; } to { background: transparent; } }
+.al-checks.al-flash { animation: al-flash 1.6s ease-out; border-radius: 3px; }
+
+/* The intron of a spliced CDS (GenBank join, BED12 blocks) on the annotation track: the feature box is cut
+   there, and a thin line in the gene's colour joins its exons */
+.annot-intron {
+    position: absolute;
+    height: calc(1em - 2px);
+    margin-top: 1px;
+    pointer-events: none;
+    background: linear-gradient(to bottom, transparent calc(50% - 1px), var(--intron-c) calc(50% - 1px), var(--intron-c) calc(50% + 1px), transparent calc(50% + 1px)), #fff;
+}
+
+/* Variants window (Reads view): non-modal, so the reads stay usable beside it */
+.var-window {
+    position: fixed; right: 12px; bottom: 12px; width: min(980px, calc(100vw - 24px)); height: 300px;
+    z-index: 10001; background: #fff; border: 1px solid #b8c4d0; border-radius: 6px; box-shadow: 0 4px 18px rgba(0,0,0,0.25);
+    display: flex; flex-direction: column; font-size: 12px; box-sizing: border-box; padding: 0 0 6px 0;
+}
+.var-window > .win-titlebar { margin: 0; padding: 4px 8px 4px 12px; flex: 0 0 auto; }
+.var-toolbar { display: flex; gap: 8px; align-items: center; padding: 4px 10px; flex: 0 0 auto; }
+.var-toolbar #variantsSummary { flex: 1 1 auto; color: #444; }
+.var-table-wrap { flex: 1 1 auto; overflow: auto; margin: 0 10px; border: 1px solid #dde3ea; }
+#variantsTable { border-collapse: collapse; width: 100%; font-family: Arial, Helvetica, sans-serif; }
+#variantsTable th { position: sticky; top: 0; background: #eef2f6; text-align: left; padding: 3px 6px; font-weight: 600; border-bottom: 1px solid #c9d3dd; white-space: nowrap; }
+#variantsTable td { padding: 2px 6px; border-bottom: 1px solid #eef1f4; white-space: nowrap; }
+#variantsTable tr[data-pos] { cursor: pointer; }
+#variantsTable tr[data-pos]:hover { background: #f4f8fc; }
+#variantsTable tr.var-sel { outline: 2px solid #e0a800; outline-offset: -2px; }
+#variantsTable tr.var-severe td:nth-child(9) { color: #b3261e; font-weight: 600; }
+#variantsTable tr.var-moderate td:nth-child(9) { color: #b26a00; font-weight: 600; }
+#variantsTable tr.var-silent td:nth-child(9) { color: #2e7d32; }
+#variantsTable tr.var-other td:nth-child(9) { color: #666; }
+.var-help { color: #777; font-size: 11px; padding: 4px 10px 0; flex: 0 0 auto; }
+
+/* Printing: the fixed menu bar printed over the first block, and the browser dropped the
+   conservation-shading backgrounds, leaving white residues on white paper */
+@media print {
+    #controls { display: none !important; }
+    body {
+        -webkit-print-color-adjust: exact;
+        print-color-adjust: exact;
+    }
+    /* Block: every band as SVG (#printBlock, made before printing by _preparePrintBlock) in place of the page */
+    body.print-block > *:not(#printBlock) { display: none !important; }
+    body.print-block #printBlock { display: block; }
+    #printBlock svg { display: block; max-width: 100%; height: auto; break-inside: avoid; page-break-inside: avoid; margin: 0 0 10px; }
+    #printBlock .print-block-note { font: 11px sans-serif; color: #555; margin: 0 0 8px; }
+}
+#printBlock { display: none; }
+
+/* The boundary between names and sequences: drag it to set the name column's width */
+#alignmentContainer.name-resize-hover, #alignmentContainer.name-resize-hover *,
+body.name-resizing, body.name-resizing * { cursor: col-resize !important; }
+body.name-resizing { user-select: none; }
+
+/* Columns: hide gappy threshold and the fold count (hidden columns, Canvas) */
+.fold-gappy { display: inline-flex; align-items: center; gap: 2px; font-size: 11px; white-space: nowrap; }
+.fold-gappy input { width: 3.2em; font-size: 11px; padding: 0 2px; }
+.fold-status { font-size: 10px; color: #8a6d00; align-self: center; }
+.fold-status:empty { display: none; }
+
+/* split-view panes (B2): dock of iframes at the right or bottom of the page */
+.pane-dock { position: fixed; z-index: 900; background: #ddd; display: flex; }
+.pane-dock-right { top: 0; right: 0; bottom: 0; flex-direction: row; }
+.pane-dock-below { left: 0; right: 0; bottom: 0; flex-direction: column; }
+.pane-splitter { flex: 0 0 6px; background: #9aa; cursor: col-resize; touch-action: none; }
+.pane-dock-below .pane-splitter { cursor: row-resize; }
+.pane-holder { flex: 1 1 auto; display: flex; min-width: 0; min-height: 0; }
+.pane-dock-right .pane-holder { flex-direction: column; }
+.pane-dock-below .pane-holder { flex-direction: row; }
+.pane { flex: 1 1 0; display: flex; flex-direction: column; min-width: 0; min-height: 0; border: 1px solid #889; }
+.pane-head { flex: 0 0 auto; display: flex; align-items: center; gap: 4px; padding: 1px 4px; background: #eef; font: 11px sans-serif; }
+.pane-title { flex: 1 1 auto; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.pane-head button { font-size: 12px; padding: 0 6px; cursor: pointer; }
+.pane iframe { flex: 1 1 auto; border: 0; width: 100%; min-height: 0; background: #fff; }
+.pane-dock.pane-dragging iframe { pointer-events: none; }
+
+/* Hidden columns in Full / Block (split-view plan A2): the folded spans go, one marker cell stands for them */
+.seq-data > span.fold-hidden { display: none !important; }
+.col-fold { display: inline-block; width: var(--res-w, 1ch); text-align: center; letter-spacing: normal; background-color: #f2c14e; color: #333; cursor: pointer; user-select: none; -webkit-user-select: none; box-shadow: inset 1px 0 #b8860b, inset -1px 0 #b8860b; }
+.col-fold:hover { filter: brightness(0.92); }
+.consensus-line .seq-data span.col-fold { background-color: #f2c14e !important; }
+#actions-controls .action-section-columns .fold-visonly { grid-column: 1 / -1; display: flex; align-items: center; gap: 4px; font-size: 11px; }
+
+/* Column selection edges (owner 2026-10-28: the tint alone vanished over black shading): a bright line down the
+   left and right edge of each run of selected columns; colour = COL_SEL_EDGE in script.js. Residue selection frames
+   (.nuc-selected, !important) win where both apply. */
+.seq-data > span.column-selected.col-sel-l { box-shadow: inset 2px 0 0 0 #4fc3f7; }
+.seq-data > span.column-selected.col-sel-r { box-shadow: inset -2px 0 0 0 #4fc3f7; }
+.seq-data > span.column-selected.col-sel-l.col-sel-r { box-shadow: inset 2px 0 0 0 #4fc3f7, inset -2px 0 0 0 #4fc3f7; }
+.consensus-line .seq-data > span.column-selected { box-shadow: none; }
+.rf-table tr.rf-group { cursor: pointer; background: #f3f6fa; }
+.rf-table tr.rf-group .rf-caret { display: inline-block; width: 14px; text-align: center; color: #456; }
+.rf-table tr.rf-member td:first-child { padding-left: 14px; }
+.rf-table tr.rf-member { background: #fbfcfe; }
+.rf-table tr.rf-more td { cursor: pointer; color: #1a5fb4; font-style: italic; }
+
+/* Docked dot plot window (owner 2026-11-01: after "show in alignment" the window covered the stretch): a bar in the
+   lower right corner; the stretch marks stay while the window is open, the bar brings the window back */
+#dotPlotDialog.dot-docked { position: fixed !important; left: auto !important; top: auto !important; right: 12px; bottom: 12px;
+    width: 380px !important; height: auto !important; min-width: 0 !important; min-height: 0 !important; padding: 4px 8px !important; }
+#dotPlotDialog.dot-docked > *:not(.win-titlebar) { display: none !important; }
+#dotPlotDialog.dot-docked .win-titlebar { margin: 0; cursor: default !important; }
+#dotPlotDialog.dot-docked #dotPlotMaxBtn { display: none; }
+#dotPlotDockClear { font-size: 10px; padding: 1px 5px; margin-right: 4px; }
+.dot-preset-note { font-size: 11px; color: #a55; }
+.dot-edit-bar { display: flex; gap: 10px; align-items: center; padding: 4px 10px; margin: 2px 0; background: #fff3cd; color: #664d03; border: 1px solid #e0c36a; border-radius: 4px; font-size: 12px; }
+.dot-edit-bar[hidden] { display: none; }
+.dot-ctl-row input[type="color"] { width: 26px; height: 20px; padding: 0; border: 1px solid #bbb; background: none; }
+.dot-ctl-row select { font-size: 11px; max-width: 150px; }
+.dot-strip-bar input[type="range"] { width: 200px; }
+.dot-ruler { margin: 4px 0 0; padding: 2px 8px; border: 1px solid #d8d8d8; background: #f7f7f7; color: #777;
+    font: 12px/1.15 ui-monospace, SFMono-Regular, Menlo, monospace; white-space: pre; overflow: hidden; min-height: 2.3em; }
+.dot-ruler-a { border-bottom: 0; border-radius: 6px 6px 0 0; }
+.dot-ruler-b { margin-top: 0; border-top: 0; border-radius: 0 0 6px 6px; }
+.dot-ruler[hidden] { display: none; }
+#dotPlotDockClear { display: none; }
+#dotPlotDialog.dot-docked #dotPlotDockClear:not([hidden]) { display: inline-block; }
+
+/* Search colour hover palette */
+.search-colour-pop {
+    position: fixed;
+    z-index: 10050;
+    display: grid;
+    grid-template-columns: repeat(6, 20px);
+    gap: 4px;
+    padding: 6px;
+    background: #fff;
+    border: 1px solid #aaa;
+    border-radius: 4px;
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.2);
+}
+.search-colour-chip {
+    width: 20px;
+    height: 20px;
+    padding: 0;
+    border: 1px solid #666;
+    border-radius: 3px;
+    cursor: pointer;
+}
+.search-colour-chip:hover { outline: 2px solid #333; }
+.search-colour-chip.current { outline: 2px solid #0066cc; outline-offset: 1px; }
+.search-colour-more {
+    grid-column: 1 / -1;
+    font-size: 11px;
+    padding: 2px 4px;
+    cursor: pointer;
+}
+
+/* A class or tag rule with its own display must not beat the hidden attribute */
+[hidden] { display: none !important; }
+
+/* Find a function: the bar in the menu row and its list (finder.js) */
+#finderBox {
+    flex: 0 0 auto;
+    margin: 0 3px;
+}
+#finderInput {
+    width: 128px;
+    height: 18px;
+    box-sizing: border-box;
+    padding: 0 5px;
+    font-size: 11px;
+    border: 1px solid #bbb;
+    border-radius: 3px;
+    background: #fff;
+}
+#finderInput:focus {
+    outline: none;
+    border-color: #4a9eff;
+    box-shadow: 0 0 0 1px #4a9eff;
+}
+#finderPanel {
+    position: fixed;
+    z-index: 10060;
+    display: flex;
+    background: #fff;
+    border: 1px solid #ccc;
+    border-radius: 4px;
+    box-shadow: 0 4px 12px rgba(0,0,0,0.22);
+    font-size: 12px;
+}
+#finderPanel[hidden] { display: none; }
+#finderList {
+    flex: 1;
+    min-width: 0;
+    overflow-y: auto;
+    overscroll-behavior: contain;
+    padding: 0 0 4px;
+}
+.finder-head {
+    position: sticky;
+    top: 0;
+    padding: 4px 9px 2px;
+    background: #f3f5f7;
+    color: #556;
+    font-size: 10px;
+    font-weight: 600;
+    letter-spacing: 0.03em;
+    text-transform: uppercase;
+}
+.finder-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+    gap: 14px;
+    padding: 3px 9px;
+    cursor: pointer;
+}
+.finder-row.on { background: #e4f0ff; }
+.finder-main {
+    flex: 1;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+.finder-desc {
+    margin-left: 8px;
+    color: #667;
+    font-size: 11px;
+}
+.finder-main b { color: #0a5bb5; font-weight: 600; }
+.finder-note {
+    flex: 0 0 auto;
+    max-width: 45%;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    color: #667;
+    font-size: 10.5px;
+}
+.finder-off { color: #777; cursor: default; }
+.finder-right .finder-note { color: #8a5200; }
+.finder-none { padding: 14px 9px; color: #667; }
+.finder-flash { outline: 2px solid #4a9eff; outline-offset: 1px; }
+/* No room for the bar: a magnifier that widens over its neighbours while in use, so the toolbar keeps its lines.
+   The view switch fits the menu line of a 1366 px screen with nothing to spare, so the 22 px the magnifier takes
+   come back from padding around that line: it fits exactly where it did before the magnifier. */
+@media (max-width: 1500px) {
+    #finderBox {
+        position: relative;
+        width: 20px;
+        height: 18px;
+        margin: 0;
+    }
+    .mode-row:not(.own-line) { padding: 0; }
+    .case-switch { margin-left: 0; }
+    #headerInfoPanel { padding-left: 4px; }
+    #finderInput {
+        position: absolute;
+        top: 0;
+        right: 0;
+        width: 20px;
+        padding: 0 3px 0 18px;
+        background: #fff url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12'%3E%3Ccircle cx='5' cy='5' r='3.5' fill='none' stroke='%23556' stroke-width='1.4'/%3E%3Cpath d='M7.7 7.7 11 11' stroke='%23556' stroke-width='1.4' stroke-linecap='round'/%3E%3C/svg%3E") no-repeat 3px center;
+        cursor: pointer;
+    }
+    #finderInput:not(:focus)::placeholder { color: transparent; }
+    #finderInput:focus {
+        width: 170px;
+        z-index: 10061;
+        cursor: text;
+    }
+}
+
+/* Worked examples (DEMOS in script.js): the "Example" pill next to a feature, and the note the example tab shows.
+   One colour for every pill. The pill is shorter than the line it sits on (negative vertical margins), so adding it
+   moves nothing. Selectors carry [data-demo] to win over the button rules of the panels they sit in. */
+button.demo-pill[data-demo] {
+    display: inline-flex;
+    align-items: center;
+    flex: 0 0 auto;
+    width: auto;
+    min-width: 0;
+    height: 16px;
+    margin: -2px 0 -2px 6px;
+    padding: 0 6px;
+    font-size: 10px;
+    font-weight: 600;
+    line-height: 14px;
+    color: #5b21b6;
+    background: #f5f3ff;
+    border: 1px solid #8b5cf6;
+    border-radius: 8px;
+    box-sizing: border-box;
+    white-space: nowrap;
+    overflow: visible;
+    vertical-align: middle;
+    cursor: pointer;
+}
+button.demo-pill[data-demo]:hover { background: #ede9fe; }
+button.demo-pill[data-demo]:focus-visible { outline: 2px solid #5b21b6; outline-offset: 1px; }
+/* in a window's title bar: just before the window buttons, on the right */
+.win-titlebar > button.demo-pill[data-demo] { margin: 0 6px 0 auto; }
+.win-titlebar .win-btns > button.demo-pill[data-demo] { margin: 0 6px 0 0; align-self: center; }
+/* a button that shares its place with a pill keeps most of the width */
+.demo-wrap { display: flex; align-items: center; gap: 4px; min-width: 0; }
+.demo-wrap > button:first-child { flex: 1 1 auto; min-width: 0; }
+.demo-wrap > button.demo-pill[data-demo] { margin: 0; }
+.demo-row { display: flex; align-items: center; gap: 2px; margin-top: 6px; font-size: 10px; color: #555; }
+#demoNote {
+    position: fixed;
+    right: 16px;
+    bottom: 16px;
+    z-index: 10100;   /* above the windows (10002) and popups (10050) an example may open */
+    width: min(360px, calc(100vw - 32px));
+    max-height: 40vh;
+    overflow: hidden;
+    box-sizing: border-box;
+    padding: 8px 10px 10px;
+    background: #fff;
+    color: #222;
+    border: 1px solid #8b5cf6;
+    border-left: 4px solid #8b5cf6;
+    border-radius: 6px;
+    box-shadow: 0 4px 16px rgba(0, 0, 0, 0.2);
+    font-size: 12px;
+    line-height: 1.4;
+}
+#demoNote .demo-note-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 4px; color: #5b21b6; }
+#demoNote p { margin: 0; }
+#demoNote .demo-note-close {
+    width: 22px; height: 22px; margin: 0; padding: 0; flex: 0 0 auto;
+    font-size: 16px; line-height: 20px; color: #444; background: transparent; border: 1px solid transparent; border-radius: 4px; cursor: pointer;
+}
+#demoNote .demo-note-close:hover { background: #ede9fe; }
+#demoNote .demo-note-close:focus-visible { outline: 2px solid #5b21b6; outline-offset: 1px; }

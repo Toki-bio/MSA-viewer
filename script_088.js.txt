@@ -1,0 +1,342 @@
+[script.js lines 38106-38446 of ViewAlign fd8b8e4]
+/**
+ * Direct and Inverted pairs inside microsatellites, grouped (owner's decision 2026-10-31, option B2). In low-complexity
+ * sequence the long pairs of one microsatellite against itself or another of the same unit ((AT)n against (AT)n) filled
+ * the list of 100: in a 25 kb row of mixed low-complexity and random blocks, 99 of the 100 rows, and the 4 planted
+ * direct repeats ranked 742-1762 of 6,179.
+ * - The Tandem search (Min array length TANDEM_GROUP_MIN_LEN, Max divergence TANDEM_GROUP_MAX_DIV, whatever the
+ *   panel's settings) gives the sequence's tandem arrays.
+ * - A pair both of whose copies lie (at least 70 % of each) inside tandem arrays of the same unit, up to rotation (and
+ *   for Inverted, copy B's array may have the reverse-complement unit), joins that unit's group: one row per unit,
+ *   "(AT)n, 1,654 pairs (in 4 tandem arrays, 4,002 bp)", ranked by its longest pair. Other pairs are rows as before.
+ * - Up to `cap` rows (groups and pairs) are kept, longest first; every pair of a kept group is kept (the panel shows
+ *   them 20 at a time). results.groups: [{ key, unit, unitLen, n, longest, arrays: [{start, end}], bp }], each pair of a
+ *   group has .groupKey; results.rowsTotal / rowsShown: rows before and after the cap; results.total: pairs found.
+ * - No pair is lost or added: the pairs are those of _findRepeats with no cap, the groups only gather them.
+ */
+const TANDEM_GROUP_MIN_LEN = 20;
+const TANDEM_GROUP_MAX_DIV = 15;
+function _findRepeatsGrouped(seq, minLen, maxDivPct, type, opts = {}) {
+    return _drainRepeatSteps(_findRepeatsGroupedSteps(seq, minLen, maxDivPct, type, opts));
+}
+function* _findRepeatsGroupedSteps(seq, minLen, maxDivPct, type, opts = {}) {
+    const protein = !!opts.protein;
+    const rowCap = opts.cap || 100;
+    const stop = opts.stop || null;
+    const g = _findRepeatsSteps(seq, minLen, maxDivPct, type, { ...opts, cap: Infinity });
+    let r;
+    while (!(r = g.next()).done) yield 0.85 * r.value;
+    const all = r.value;
+    let arrays = [];
+    if (all.length && !(stop && stop.now)) {
+        const seqU = protein ? seq.toUpperCase() : seq.toUpperCase().replace(/U/g, 'T');
+        const tg = _findTandemRepeatsSteps(seqU, TANDEM_GROUP_MIN_LEN, TANDEM_GROUP_MAX_DIV, { protein, cap: Infinity });
+        while (!(r = tg.next()).done) yield 0.85 + 0.1 * r.value;
+        arrays = r.value.slice().sort((x, y) => x.start - y.start);
+    }
+    // the unit up to rotation (CA = AC); inverted: copy B is read on the other strand
+    const canon = (u) => { let best = u; for (let i = 1; i < u.length; i++) { const v = u.slice(i) + u.slice(0, i); if (v < best) best = v; } return best; };
+    const keyOf = arrays.map(a => canon(a.unit));
+    const rcKeyOf = arrays.map(a => protein ? null : canon(_revComp(a.unit)));
+    const arrayAt = (s, e) => {   // the array holding at least 70 % of [s, e), or -1
+        for (let i = 0; i < arrays.length && arrays[i].start < e; i++) {
+            const A = arrays[i];
+            if (Math.min(e, A.end) - Math.max(s, A.start) >= 0.7 * (e - s)) return i;
+        }
+        return -1;
+    };
+    const groups = new Map();
+    let done = 0;
+    for (const p of all) {
+        if ((++done & 1023) === 0) yield 0.95 + 0.05 * done / all.length;
+        const ia = arrayAt(p.posA, p.posA + p.length);
+        if (ia < 0) continue;
+        const ib = arrayAt(p.posB, p.posB + p.length);
+        if (ib < 0 || arrays[ib].unitLen !== arrays[ia].unitLen) continue;
+        const key = keyOf[ia];
+        if (keyOf[ib] !== key && !(type === 'inverted' && rcKeyOf[ib] === key)) continue;
+        let grp = groups.get(key);
+        if (!grp) { grp = { key, unit: key, unitLen: arrays[ia].unitLen, n: 0, longest: 0, arr: new Set() }; groups.set(key, grp); }
+        grp.n++;
+        grp.longest = Math.max(grp.longest, p.length);
+        grp.arr.add(ia); grp.arr.add(ib);
+        p.groupKey = key;
+    }
+    // rows: groups and the other pairs, longest first (a group before a pair of its length); keep `cap` rows
+    const rows = [...groups.values(), ...all.filter(p => p.groupKey === undefined)];
+    rows.sort((x, y) => ((y.longest ?? y.length) - (x.longest ?? x.length)) || ((y.key ? 1 : 0) - (x.key ? 1 : 0)));
+    const keptRows = rows.slice(0, rowCap);
+    const keptGroups = new Set(keptRows.filter(x => x.key).map(x => x.key)), keptPairs = new Set(keptRows);
+    const out = all.filter(p => p.groupKey === undefined ? keptPairs.has(p) : keptGroups.has(p.groupKey));
+    out.groups = keptRows.filter(x => x.key).map(grp => {
+        const arrs = [...grp.arr].sort((x, y) => x - y).map(i => ({ start: arrays[i].start, end: arrays[i].end }));
+        return { key: grp.key, unit: grp.unit, unitLen: grp.unitLen, n: grp.n, longest: grp.longest, arrays: arrs,
+            bp: arrs.reduce((s, a) => s + a.end - a.start, 0) };
+    });
+    out.total = all.length;
+    out.rowsTotal = rows.length;
+    out.rowsShown = keptRows.length;
+    out.groupedPairs = [...groups.values()].reduce((s, x) => s + x.n, 0);
+    out.groupsTotal = groups.size;
+    for (const k of ['searchedTo', 'stoppedByUser', 'seedLimited']) if (all[k] !== undefined) out[k] = all[k];
+    return out;
+}
+
+/**
+ * Tandem arrays (2026-10-30, owner's decision: "Min length" is the length of the whole array, all copies together;
+ * units are tried from 1 upward, so mononucleotide runs, microsatellites and minisatellites are all found).
+ *
+ * Positions are indices into the ungapped, upper-cased sequence. A result is {start, end (exclusive), unitLen,
+ * copies (length / unitLen, one decimal: a partial last unit counts, as in TRF), length, unit (the consensus unit,
+ * read from the array's first base), divergence (string, 1 decimal: mismatches against the consensus unit, per
+ * base of the array), mismatches}.
+ *
+ * - Each unit length p (1 .. TANDEM_MAX_UNIT, at most half the sequence) is scanned once for stretches where a base
+ *   equals the base p further on (+1 match, a mismatch penalised; X-drop). N and other ambiguity codes never match.
+ * - Each stretch is refined against its consensus unit (majority base per unit position, recomputed until stable):
+ *   the array is the best-scoring segment with +1 per base equal to the consensus and -(1-d)/d per other base, so it
+ *   starts and ends on a matching base and its mismatches stay below the divergence limit d. Parts of the stretch
+ *   left outside are searched again on their own (two neighbouring arrays of one unit length stay two arrays).
+ * - One row per array: an array whose unit length is a multiple of an array already found (smaller units first)
+ *   and which lies at least half inside it is the same array (CACA... is CA, not CACA); the part outside, if any,
+ *   is searched again. A short array lying wholly inside a longer array of a longer unit is part of that unit and is
+ *   not listed.
+ * - Substitutions only: an insertion or deletion inside an array ends it there.
+ * - At most `cap` results, longest first; results.total is the number found. The scan costs about
+ *   length x unit lengths; past TANDEM_WORK_LIMIT the longest unit tried is lowered and results.maxUnit says so.
+ */
+const TANDEM_MAX_UNIT = 500;
+const TANDEM_WORK_LIMIT = 150000000;
+// (TANDEM_TOTAL_WORK_LIMIT, 4 x this, stopped a search of several sequences after 5-7 s of work so the tab was not held
+// for 45 s. The search now runs in slices with progress, Pause and Cancel, and searches every sequence; 2026-10-31.)
+function _findTandemRepeats(seq, minLen, maxDivPct, opts = {}) {
+    return _drainRepeatSteps(_findTandemRepeatsSteps(seq, minLen, maxDivPct, opts));
+}
+// a generator like _findRepeatsSteps: yields the fraction of unit lengths done; opts.stop stops after the unit length
+// being scanned (results.stoppedByUser, results.maxUnit the longest unit searched)
+const TANDEM_YIELD_WORK = 300000;   // bases scanned between yields
+function* _findTandemRepeatsSteps(seq, minLen, maxDivPct, opts = {}) {
+    const protein = !!opts.protein;
+    const stop = opts.stop || null;
+    const cap = opts.cap || 100;
+    const n = seq.length;
+    const d = Math.max(0, maxDivPct) / 100;
+    const minL = Math.max(2, minLen | 0);
+    // residue codes 0..K-1; -1 never matches (N and other ambiguity codes; X, B, Z, J and stops in protein)
+    const K = protein ? 26 : 4;
+    const code = new Int8Array(n);
+    const NUC = { A: 0, C: 1, G: 2, T: 3 };
+    for (let i = 0; i < n; i++) {
+        const c = seq[i];
+        if (protein) code[i] = (c >= 'A' && c <= 'Z' && c !== 'X' && c !== 'B' && c !== 'Z' && c !== 'J') ? c.charCodeAt(0) - 65 : -1;
+        else code[i] = c in NUC ? NUC[c] : -1;
+    }
+    // a unit position with no countable residue in any copy: X in protein (N is asparagine there; GLM dtan #6)
+    const letter = (c) => c < 0 ? (protein ? 'X' : 'N') : (protein ? String.fromCharCode(c + 65) : 'ACGT'[c]);
+    const results = [];
+    results.total = 0;
+    if (n < minL) return results;
+
+    // consensus scoring: a segment with a positive score has mismatches < d * length
+    const pen = d > 0 ? (1 - d) / d : n + 1;
+    // neighbour scan: one substitution shows twice (against the copy before and the copy after)
+    const penRaw = d > 0 ? Math.max(1, (1 - 2 * d) / (2 * d)) : n + 1;
+    const xdrop = d > 0 ? 3 * penRaw + 5 : 0.5;
+    const fullMax = Math.min(TANDEM_MAX_UNIT, Math.floor(n / 2));
+    const maxUnit = Math.min(fullMax, Math.max(1, Math.floor(TANDEM_WORK_LIMIT / Math.max(1, n))));
+
+    const kept = [];                                  // accepted arrays, smaller units first
+    const owner = new Int32Array(n).fill(-1);         // the first (smallest-unit) array covering each base
+
+    // the accepted array, of a unit dividing p, that covers at least half of [x, y)
+    // A run of bases with one owner is counted at once, in a typed array (a Map write per base took 0.2 s per
+    // 50 kb poly-A row; GLM dtan #3)
+    let ovCount = new Int32Array(64);
+    const ovTouched = [];
+    const explainedBy = (x, y, p) => {
+        if (ovCount.length < kept.length) ovCount = new Int32Array(kept.length * 2);
+        let best = -1, bestOv = 0;
+        for (let i = x; i < y;) {
+            const o = owner[i];
+            let j = i + 1;
+            while (j < y && owner[j] === o) j++;
+            if (o >= 0 && p % kept[o].unitLen === 0) {
+                if (!ovCount[o]) ovTouched.push(o);
+                ovCount[o] += j - i;
+            }
+            i = j;
+        }
+        for (const o of ovTouched) { if (ovCount[o] > bestOv) { best = o; bestOv = ovCount[o]; } ovCount[o] = 0; }
+        ovTouched.length = 0;
+        return bestOv * 2 >= (y - x) ? kept[best] : null;
+    };
+
+    // majority residue per unit position over [s, e), positions counted from a; a tie goes to the residue that reached
+    // the top count first (A, C, C, A gives C), not to the first copy's (GLM dtan #7)
+    const counts = new Int32Array(TANDEM_MAX_UNIT * 26);
+    const consensus = (s, e, a, p) => {
+        counts.fill(0, 0, p * K);
+        const cons = new Int8Array(p).fill(-1);
+        for (let i = s; i < e; i++) {
+            const c = code[i];
+            if (c < 0) continue;
+            const ph = (i - a) % p;
+            const v = ++counts[ph * K + c];
+            if (cons[ph] < 0 || v > counts[ph * K + cons[ph]]) cons[ph] = c;
+        }
+        return cons;
+    };
+    // best-scoring segment of [a, b) against the consensus; null if none scores above 0
+    const bestSegment = (a, b, p, cons) => {
+        let cur = 0, st = a, best = 0, bs = -1, be = -1;
+        for (let i = a; i < b; i++) {
+            const v = code[i] >= 0 && code[i] === cons[(i - a) % p] ? 1 : -pen;
+            if (cur <= 0) { if (v < 0) continue; cur = 0; st = i; }
+            cur += v;
+            if (cur > best) { best = cur; bs = st; be = i + 1; }
+        }
+        return bs < 0 ? null : [bs, be];
+    };
+
+    let scanned = 0, yieldAt = TANDEM_YIELD_WORK, lastUnit = maxUnit, stoppedByUser = false;
+    for (let p = 1; p <= maxUnit; p++) {
+        if (scanned >= yieldAt) {
+            yieldAt = scanned + TANDEM_YIELD_WORK;
+            yield (p - 1) / maxUnit;
+            if (stop && stop.now) { lastUnit = p - 1; stoppedByUser = true; break; }
+        }
+        scanned += n;
+        const need = Math.max(minL, 2 * p);
+        const work = [];
+        // stretches where base i equals base i + p; [a, e] compared with [a + p, e + p], so the array is [a, e + p + 1)
+        const lim = n - p;
+        let i = 0, prev = null;   // prev: the last stretch long enough to be joined to the next
+        const joined = [];
+        while (i < lim) {
+            if (!(code[i] >= 0 && code[i] === code[i + p])) { i++; continue; }
+            let cur = 0, best = 0, bestEnd = i, j = i;
+            for (; j < lim; j++) {
+                cur += (code[j] >= 0 && code[j] === code[j + p]) ? 1 : -penRaw;
+                if (cur > best) { best = cur; bestEnd = j; }
+                else if (cur <= 0 || cur < best - xdrop) break;
+            }
+            // one copy with 3 or more substitutions breaks the neighbour scan (it differs from the copy before and the
+            // copy after): stretches at most one unit apart are refined together, so the consensus decides. The array
+            // was split there, or reported with a doubled unit (AGGCT x 4, ACCGT, AGGCT x 4 came out as a 10-bp unit;
+            // GLM dtan #2)
+            // The stretches themselves are searched as before (the joined one alone lost arrays: its consensus could be
+            // taken over by a neighbouring array of a unit dividing p), and the joined one first. Only stretches of two
+            // copies and half the minimum each are joined (refining every short one made random sequence 3 times slower).
+            if (bestEnd - i + 1 >= p && bestEnd + p + 1 - i >= need) work.push([i, bestEnd + p + 1]);
+            if (d > 0 && bestEnd - i + 1 >= p && bestEnd + p + 1 - i >= Math.max(2 * p, need / 2)) {   // at 0 % no copy may differ
+                if (prev && i - prev[1] <= p) { prev[1] = bestEnd + p + 1; prev.joined = true; }
+                else { if (prev?.joined && prev[1] - prev[0] >= need) joined.push(prev); prev = [i, bestEnd + p + 1]; }
+            }
+            i = bestEnd + 1;
+        }
+        if (prev?.joined && prev[1] - prev[0] >= need) joined.push(prev);
+        work.push(...joined);   // popped first
+        while (work.length) {
+            const [a, b] = work.pop();
+            if (b - a < need) continue;
+            // already found with a smaller unit: search only what lies outside that array
+            let K0 = explainedBy(a, b, p);
+            if (K0) {
+                work.push([a, Math.min(b, K0.start)], [Math.max(a, K0.end), b]);
+                continue;
+            }
+            let s = a, e = b, cons = null;
+            for (let it = 0; it < 4; it++) {
+                cons = consensus(s, e, a, p);
+                const seg = bestSegment(a, b, p, cons);
+                if (!seg) { s = e = -1; break; }
+                if (seg[0] === s && seg[1] === e) break;
+                s = seg[0]; e = seg[1];
+            }
+            if (s < 0) continue;
+            let L = e - s;
+            if (L < need) {
+                work.push([a, s], [e, b]);
+                continue;
+            }
+            // The ends (owner's decision 2026-10-31, "include"): the array is the best-scoring stretch at the divergence
+            // limit d, so a substitution in the first few bases of the first copy (or the last few of the last) left the
+            // agreeing bases before (after) it outside: a 12-bp unit whose first copy differs at its 6th and 9th bases
+            // started after the 9th. Each end is now extended over the best-scoring run beyond it, scored +1 per base
+            // agreeing with the consensus unit (in phase) and -max(7/3, (1 - 2d)/(2d)) per other base, i.e. a run that
+            // agrees at more than max(70 %, 1 - 2d) of its bases; the extension starts and ends on an agreeing base and
+            // the whole array stays within d. The run must hold at least 6 agreeing bases (ACACA after two substitutions
+            // before a (CA)n is chance), and only an array that reached Min array length without it is extended (else 11
+            // chance arrays of 10-18-bp units in 100 kb of random sequence reached 20 bp). Random flank agrees at ~25 %
+            // and is barely taken (measured over 3,000 planted arrays between random flanks; see the regression check).
+            if (d > 0) {
+                const agree = (i) => code[i] >= 0 && code[i] === cons[((i - a) % p + p) % p];
+                const pen2 = Math.max(7 / 3, (1 - 2 * d) / (2 * d));   // at least 70 % agreement, whatever d
+                const drop = 3 * pen2 + 3;
+                const reach = (from, step) => {   // the furthest end of the best-scoring run beyond `from` with 6+ agreeing bases
+                    let cur = 0, best = 0, at = from, agreeing = 0;
+                    for (let i = from + step; i >= 0 && i < n; i += step) {
+                        const ok = agree(i);
+                        if (ok) agreeing++;
+                        cur += ok ? 1 : -pen2;
+                        if (cur > best && agreeing >= 6) { best = cur; at = i; } else if (best - cur > drop) break;
+                    }
+                    return at;
+                };
+                const mmIn = (x, y) => { let m = 0; for (let k = x; k < y; k++) if (!agree(k)) m++; return m; };
+                const ns = reach(s, -1), ne = reach(e - 1, 1) + 1;
+                const within = (x, y) => mmIn(x, y) <= Math.floor((y - x) * d + 1e-9);
+                if (ns < s || ne > e) {
+                    if (within(ns, ne)) { s = ns; e = ne; }
+                    else if (ns < s && within(ns, e)) s = ns;
+                    else if (ne > e && within(s, ne)) e = ne;
+                }
+                L = e - s;
+            }
+            K0 = explainedBy(s, e, p);
+            if (K0) {
+                // the array, extended past [a, b), can be explained by an array lying beyond [a, b): then nothing of
+                // [a, b) is left out by it, and pushing [a, b) again looped for ever
+                for (const [x, y] of [[a, Math.min(b, K0.start)], [Math.max(a, K0.end), b]]) if (y - x < b - a) work.push([x, y]);
+                continue;
+            }
+            let mism = 0;
+            for (let k = s; k < e; k++) if (!(code[k] >= 0 && code[k] === cons[((k - a) % p + p) % p])) mism++;
+            let unit = '';
+            for (let k = 0; k < p; k++) unit += letter(cons[((s - a + k) % p + p) % p]);
+            // a consensus unit that is itself repeated (AAAAA) is its shortest period (A): the same bases agree with it,
+            // so the mismatches are the same (an A-rich tail at 12 % came out as (AAAAA)n once its ends were extended)
+            let q = p;
+            for (let r = 1; r < p; r++) if (p % r === 0 && unit === unit.slice(0, r).repeat(p / r)) { q = r; break; }
+            if (q < p) unit = unit.slice(0, q);
+            const idx = kept.length;
+            kept.push({ start: s, end: e, unitLen: q, copies: Math.round(L / q * 10) / 10, length: L, unit,
+                divergence: (mism / L * 100).toFixed(1), mismatches: mism });
+            for (let k = s; k < e; k++) if (owner[k] < 0) owner[k] = idx;
+            work.push([a, s], [e, b]);
+        }
+    }
+
+    // a short array wholly inside a longer array of a longer unit is part of that unit
+    // Two units can give the very same stretch (since the ends are extended, 2026-10-31: an A-rich tail at 12 % came out
+    // as (AAAAA)n and as a 16-bp unit over the same 41 bp): it is one array, listed with the smaller unit.
+    const byStart = kept.slice().sort((x, y) => (x.start - y.start) || (y.length - x.length) || (x.unitLen - y.unitLen));
+    const active = [];
+    const listed = [];
+    for (const r of byStart) {
+        for (let k = active.length - 1; k >= 0; k--) if (active[k].end <= r.start) active.splice(k, 1);
+        if (active.some(f => f.end >= r.end && f.unitLen > r.unitLen && f.length > r.length)) continue;
+        // not listed, but still covers what lies inside it as before
+        if (active.some(f => f.start === r.start && f.end === r.end && f.unitLen < r.unitLen)) { active.push(r); continue; }
+        listed.push(r);
+        active.push(r);
+    }
+    listed.sort((x, y) => (y.length - x.length) || (x.unitLen - y.unitLen) || (x.start - y.start));
+    const out = listed.slice(0, cap);
+    out.total = listed.length;
+    out.maxUnit = lastUnit;
+    if (stoppedByUser) out.stoppedByUser = true;
+    else if (maxUnit < fullMax) out.unitLimited = true;
+    return out;
+}
+

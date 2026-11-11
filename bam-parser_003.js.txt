@@ -1,0 +1,25 @@
+[bam-parser.js lines 837-861 of ViewAlign fd8b8e4]
+// ── Export for use in script.js (global scope) ───────────────────────────────
+
+// window.BamParser in the page; module.exports in Node (tests/unit/bam-index.test.js)
+const _bamParserApi = {
+    decompressBAM,
+    sniffBam,
+    parseBAMHeader,
+    parseBAMRecord,
+    parseBAMRecords,
+    expandCigar,
+    cigarToString,
+    checkRefMatch,
+    matchReference,
+    parseBAI,
+    reg2bins,
+    baiChunks,
+    readBamHeaderFromFile,
+    readBamRegion,
+    checkIndex,
+    MAX_READS,
+    skipReason,
+};
+if (typeof window !== 'undefined') window.BamParser = _bamParserApi;
+if (typeof module !== 'undefined' && module.exports) module.exports = _bamParserApi;

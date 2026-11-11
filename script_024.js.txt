@@ -1,0 +1,381 @@
+[script.js lines 10201-10580 of ViewAlign fd8b8e4]
+// A BAM's index (.bai) can come with it (picked or dropped together): then only the loaded reference's region is
+// read from the BAM. Without it the whole file is decompressed, which a whole-genome BAM cannot be in a browser.
+const _isReadsIndexName = n => /\.(bai|csi|crai)$/i.test(n || '');
+const _BAM_NO_INDEX_MAX = 512 * 1024 * 1024;
+
+// Load and parse a SAM, BAM or CRAM file. The input is emptied on every path out (early returns included), so
+// picking the same file again after a failed load fires 'change' again (GLM audit fix2 B3).
+async function handleBamFile(event) {
+    try {
+        await _handleBamFileInner(event);
+    } finally {
+        try { if (event && event.target && 'value' in event.target) event.target.value = ''; } catch (_) { /* a synthetic event */ }
+    }
+}
+async function _handleBamFileInner(event) {
+    let kindName = 'BAM';   // the type named in the error message once it is known
+    const all = Array.from((event.target && event.target.files) || []);
+    const vcfFile = all.find(f => /\.vcf(\.gz)?$/i.test(f.name));
+    if (vcfFile) { await _readsLoadVcf(vcfFile); return; }
+    const file = all.find(f => !_isReadsIndexName(f.name));
+    const indexFile = event.indexFile || all.find(f => /\.bai$/i.test(f.name)) || null;
+    if (!file) {
+        if (all.length) showMessage('That is an index: select the BAM together with its .bai (both files at once), after loading the reference.', 6000);
+        return;
+    }
+    if (!indexFile && all.some(f => /\.(csi|crai)$/i.test(f.name))) showMessage('Only .bai indexes are read (not .csi or .crai): the whole file is read instead.', 5000);
+
+    showMessage('Loading BAM...', 0);
+
+    try {
+        // the SAM/BAM button comes here directly: sniff the content too, not only the name
+        const ext = event.readsKind || await _sniffReadsKind(file) || file.name.split('.').pop().toLowerCase();
+        if (/^(sam|bam|cram)$/.test(ext)) kindName = ext.toUpperCase();
+        let buf;
+
+        let truncated = false;
+        if (ext === 'sam') {
+            // SAM is plain text - parse into pseudo-buffer
+            const text = await file.text();
+            buf = parseSAMToBuffer(text);
+        } else if (ext === 'cram') {
+            showMessage('Decoding CRAM...', 0);
+            const samText = await cramToSamText(file);
+            truncated = !!samText.truncated;
+            buf = parseSAMToBuffer(String(samText));
+        } else if (indexFile) {
+            buf = { _indexed: true };
+        } else {
+            if (file.size > _BAM_NO_INDEX_MAX) {
+                statusMessage.style.display = 'none';
+                showMessage(`This BAM is ${(file.size / 1048576).toFixed(0)} MB: too big to read whole in a browser. Select it together with its index (.bai, made by samtools index) - both files at once - after loading the reference (or the gene region, named as samtools faidx writes it, e.g. chr7:117480025-117668665); only that region's reads are then read.`, 0);
+                return;
+            }
+            // BAM binary - decompress with browser's DecompressionStream
+            buf = await BamParser.decompressBAM(file);
+            truncated = !!buf.truncated;
+        }
+
+        // Parse header (SAM pseudo-buffer or real BAM)
+        let header, records, exceededLimit, totalReads, skipped, indexedNote = '';
+        if (buf._indexed) {
+            showMessage('Reading the BAM index...', 0);
+            header = await BamParser.readBamHeaderFromFile(file);
+            const index = BamParser.parseBAI(new Uint8Array(await indexFile.arrayBuffer()));
+            if (index.refs.length !== header.refNames.length) throw new Error(`the index (${indexFile.name}) is not this BAM's: ${index.refs.length} references in the index, ${header.refNames.length} in the BAM`);
+            const loaded0 = state.seqs.map(s => ({ name: String(s.fullHeader || s.header || '').trim().split(/\s+/)[0], seq: s.seq.replace(/[-.]/g, '') }));
+            const m0 = BamParser.matchReference(header.refNames, header.refLengths, loaded0, null);
+            records = []; totalReads = 0; skipped = {}; exceededLimit = false;
+            if (m0) {
+                const beg = m0.offset, end = m0.offset + loaded0[m0.loadedIndex].seq.length;
+                const got = await BamParser.readBamRegion(file, index, m0.refID, beg, end, true);
+                records = got.records; totalReads = got.totalReads; skipped = got.skipped;
+                exceededLimit = got.records.length >= BamParser.MAX_READS;
+                indexedNote = `read through the index: ${header.refNames[m0.refID]}:${(beg + 1).toLocaleString()}-${end.toLocaleString()}, ${(got.fileBytesRead / 1048576).toFixed(2)} MB read of a ${(file.size / 1048576).toFixed(1)} MB file`;
+            }
+        } else if (buf._isSAM) {
+            header = { refNames: buf._refNames, refLengths: buf._refLengths, headerEndOffset: 0 };
+            const MAX = BamParser.MAX_READS;
+            totalReads = buf._totalReads != null ? buf._totalReads : buf._records.length;
+            exceededLimit = buf._records.length > MAX;
+            records = exceededLimit ? buf._records.slice(0, MAX) : buf._records;
+            skipped = buf._skipped || {};
+        } else {
+            header = BamParser.parseBAMHeader(buf);
+            const parsed = BamParser.parseBAMRecords(buf, header.headerEndOffset, true);
+            records = parsed.records;
+            exceededLimit = parsed.exceededLimit;
+            totalReads = parsed.totalReads;
+            skipped = parsed.skipped || {};
+        }
+
+        // Flagged reads came along (keepFlagged) and are hidden until asked for; the message still counts them
+        for (const r of records) { const why = BamParser.skipReason(r.flag); if (why) skipped[why] = (skipped[why] || 0) + 1; }
+
+        // Check reference match. Sequence records carry header/fullHeader, never `name`,
+        // so reading s.name matched undefined against every BAM reference and no BAM or SAM
+        // could ever load. Compare on the first whitespace-delimited token, which is what
+        // a SAM/BAM @SQ SN: field holds for a FASTA header like ">chr1 description".
+        // read positions count reference bases: the alignment's gaps go (as for CRAM), or reads on a
+        // reference row with gaps sat shifted and the length check against the header failed
+        const loadedSeqs = state.seqs.map(s => ({
+            name: String(s.fullHeader || s.header || '').trim().split(/\s+/)[0],
+            seq: s.seq.replace(/[-.]/g, '')
+        }));
+        const readsPerRef = [];
+        for (const r of records) if (!BamParser.skipReason(r.flag)) readsPerRef[r.refID] = (readsPerRef[r.refID] || 0) + 1;
+        // Exact name, a samtools faidx region of it (reads shifted), the same name apart from chr / version /
+        // case, or the only loaded sequence at the reference's length (BamParser.matchReference)
+        const match = BamParser.matchReference(header.refNames, header.refLengths, loadedSeqs, readsPerRef);
+        const matchedRef = match ? header.refNames[match.refID] : null;
+        const warnings = [];
+        if (match && match.how === 'name' && header.refLengths[match.refID] !== loadedSeqs[match.loadedIndex].seq.length) {
+            warnings.push(`Reference length mismatch for "${matchedRef}": the file says ${header.refLengths[match.refID].toLocaleString()} bp, `
+                + `the loaded sequence is ${loadedSeqs[match.loadedIndex].seq.length.toLocaleString()} bp.`);
+        }
+        if (match && match.note) warnings.push(match.note.charAt(0).toUpperCase() + match.note.slice(1) + '.');
+        if (warnings.length) {
+            warnings.forEach(w => console.warn('BAM:', w));
+            // shown, not only logged: a reference length that differs means the reads may not line up
+            showMessage('Reads: ' + warnings.join(' '), 6000);
+        }
+
+        if (!matchedRef) {
+            statusMessage.style.display = 'none';
+            // say which names were compared: "Load a reference FASTA first" was shown with one loaded
+            const list = (a, n) => a.slice(0, n).join(', ') + (a.length > n ? `, ... (${a.length})` : '');
+            const withReads = header.refNames.filter((nm, i) => readsPerRef[i] > 0);
+            showMessage(loadedSeqs.length
+                ? `No loaded sequence matches the ${ext.toUpperCase()} references. Reads are on: ${list(withReads.length ? withReads : header.refNames, 5)}; `
+                  + `loaded: ${list(loadedSeqs.map(x => x.name), 5)}. Load that reference (FASTA or GenBank), or a region of it named like samtools faidx (name:start-end).`
+                : `${ext.toUpperCase()} reference does not match loaded sequences. Load a reference FASTA first.`, 9000);
+            return;
+        }
+
+        // (No refusal above a read count: the drawn reads are downsampled below, every read counts for the
+        // coverage and the sample row. Only past BamParser.MAX_READS kept reads is the file cut, and said so.)
+
+        // Filter reads to matched reference; on a faidx region they are shifted onto it, and reads outside it go
+        const refIdx = match.refID, offset = match.offset;
+        const regionLen = loadedSeqs[match.loadedIndex].seq.length;
+        let fileReads = records.filter(r => r.refID === refIdx);
+        if (offset) {
+            fileReads = fileReads.filter(r => r.pos + computeReadSpan(r.cigar) > offset && r.pos < offset + regionLen);
+            for (const r of fileReads) { r.pos -= offset; if (r.next_pos >= 0) r.next_pos -= offset; }
+        }
+        fileReads.sort((a, b) => a.pos - b.pos || a.name.localeCompare(b.name));
+        for (const r of fileReads) { r.start = r.pos; r.end = r.pos + computeReadSpan(r.cigar) - 1; }
+        _readsFilter = { ..._READS_FILTER_DEFAULT };
+        _readsOpts = { ..._READS_OPTS_DEFAULT };
+        _readsSyncFilterBoxes();
+        const matchedReads = fileReads.filter(_readsPasses);
+
+        if (matchedReads.length === 0) {
+            statusMessage.style.display = 'none';
+            showMessage(truncated
+                ? `${ext.toUpperCase()} file is truncated (it stops before its end-of-file marker) and no complete reads on ${matchedRef} come before the cut.`
+                : 'No reads map to the matched reference.', truncated ? 0 : 3000);
+            return;
+        }
+
+        // Get reference sequence
+        const refSeqObj = loadedSeqs[match.loadedIndex];
+        const refSeq = refSeqObj ? refSeqObj.seq.toUpperCase() : '';
+
+        // Determine view window: leftmost read pos to rightmost read end
+        let minPos = Infinity;
+        let maxPos = 0;
+        for (const r of matchedReads) {
+            if (r.pos < minPos) minPos = r.pos;
+            const readEnd = r.pos + computeReadSpan(r.cigar);
+            if (readEnd > maxPos) maxPos = readEnd;
+        }
+        // Expand slightly for context
+        minPos = Math.max(0, minPos - 10);
+        maxPos = Math.min(refSeq.length, maxPos + 10);
+
+        // Drawn reads: at most READS_PER_WINDOW starting in each 100-bp window (reservoir sampling with a fixed seed, so
+        // the same file always shows the same reads), as igv.js does; every read still counts for the coverage and
+        // the sample row (bamState.allReads)
+        const { shown, dropped } = _downsampleReads(matchedReads);
+
+        // Store BAM state
+        bamState = {
+            reads: shown,                     // drawn
+            sampled: shown,                   // the downsampled reads; with pairs on, their mates join them in reads
+            groupRanges: [],                  // [{ from, to, label, key }] the tracks of each group
+            sampleName: String(file.name || 'sample').replace(/\.(bam|sam|cram)$/i, ''),   // the sample row's name
+            allReads: matchedReads,           // every read that passed the filters: coverage, sample row
+            fileReads,                        // every mapped read on this reference, the flagged ones too
+            downsampled: dropped,             // [{ start, end, dropped }] windows that lost reads
+            skipped,                          // { reason: count } reads not used (flags)
+            totalInFile: totalReads,
+            refName: refSeqObj.name,          // the loaded row's name (the row is found by it)
+            bamRefName: matchedRef,           // the name in the reads file
+            offset,                           // reads file position - offset = position on the loaded row (faidx region)
+            refSeq,
+            refStart: minPos,
+            refEnd: maxPos,
+            columns: [],
+            readOrder: [],
+        };
+
+        // Phase 1: compute genomic start/end span and assign packed tracks.
+        // assignReadTracks sorts reads in place by start (consistent with the
+        // pos sort above) and sets read.track on each read.
+        _readsLayout();
+
+        // Reads view (Full is hidden; the rows go to Canvas when the user leaves Reads)
+        const singleRadio = document.getElementById('modeCanvas');
+        if (singleRadio) singleRadio.checked = true;
+        const readsRadio = document.getElementById('modeReads');
+        if (readsRadio) { readsRadio.checked = true; _lastModeRadioId = 'modeReads'; }
+
+        renderAlignment();
+        updateBamButtonVisibility();
+        statusMessage.style.display = 'none';
+        if (truncated) {
+            showMessage(`${ext.toUpperCase()} file is truncated (it stops before its end-of-file marker): loaded the ${matchedReads.length} complete reads on ${matchedRef} (${minPos + 1}-${maxPos}); later reads are missing.`, 0);
+        } else {
+            const notes = [];
+            if (shown.length < matchedReads.length) notes.push(`showing ${shown.length.toLocaleString()} (downsampled to ${_READS_PER_WINDOW} per 100 bp; all ${matchedReads.length.toLocaleString()} count for coverage and the sample row)`);
+            const sk = Object.entries(skipped || {}).filter(([, n]) => n > 0);
+            if (sk.length) notes.push('not used: ' + sk.map(([why, n]) => `${n.toLocaleString()} ${why}`).join(', '));
+            if (exceededLimit) notes.push(`the file has more reads than the browser keeps (${BamParser.MAX_READS.toLocaleString()}): later reads are left out; cut the region with samtools view`);
+            if (match.note) notes.push(match.note);
+            if (indexedNote) notes.push(indexedNote);
+            showMessage(`Loaded ${matchedReads.length.toLocaleString()} reads on ${refSeqObj.name} (${minPos + 1}-${maxPos})` + (notes.length ? '; ' + notes.join('; ') : ''), notes.length ? 9000 : 2500);
+        }
+
+    } catch (err) {
+        statusMessage.style.display = 'none';
+        console.error('BAM load error:', err);
+        showMessage('Error loading ' + kindName + ': ' + err.message, 4000);
+    }
+}
+
+/**
+ * Compute the total span of a read across the reference from its CIGAR.
+ * Sum M, D, N operations (but not I or S).
+ */
+// At most _READS_PER_WINDOW reads starting in each 100-bp window are drawn (igv.js: sampling windows with a reservoir);
+// the rest stay in bamState.allReads. Deterministic (fixed seed). reads must be sorted by pos.
+const _READS_PER_WINDOW = 50;
+function _downsampleReads(reads, perWindow = _READS_PER_WINDOW, windowBp = 100) {
+    if (reads.length <= perWindow) return { shown: reads, dropped: [] };
+    let seed = 12345;
+    const rnd = () => (seed = (Math.imul(seed, 1103515245) + 12345) & 0x7fffffff) / 0x80000000;
+    const shown = [], dropped = [];
+    for (let i = 0; i < reads.length;) {
+        const w = Math.floor(reads[i].pos / windowBp);
+        let j = i;
+        while (j < reads.length && Math.floor(reads[j].pos / windowBp) === w) j++;
+        if (j - i <= perWindow) { for (let k = i; k < j; k++) shown.push(reads[k]); }
+        else {
+            const res = reads.slice(i, i + perWindow);
+            for (let k = i + perWindow; k < j; k++) { const r = Math.floor(rnd() * (k - i + 1)); if (r < perWindow) res[r] = reads[k]; }
+            res.sort((a, b) => a.pos - b.pos || (a.name < b.name ? -1 : a.name > b.name ? 1 : 0));
+            shown.push(...res);
+            dropped.push({ start: w * windowBp, end: (w + 1) * windowBp, dropped: j - i - perWindow });
+        }
+        i = j;
+    }
+    return { shown, dropped };
+}
+
+function computeReadSpan(cigar) {
+    let span = 0;
+    for (const op of cigar) {
+        if (op.op === 'M' || op.op === '=' || op.op === 'X' || op.op === 'D' || op.op === 'N') {
+            span += op.len;
+        }
+    }
+    return span;
+}
+
+/**
+ * Parse SAM text into a format compatible with the BAM parser's buffer output.
+ * Simplified: creates a synthetic buffer-like object with SAM records.
+ * In practice, we parse SAM as text and build record objects directly.
+ */
+function parseSAMToBuffer(text) {
+    // Parse SAM text into BAM-like records for the reads view pipeline.
+    // Returns a pseudo-buffer object with header and records compatible with
+    // BamParser.parseBAMHeader and BamParser.parseBAMRecords.
+    // CRLF line ends (a SAM saved on Windows): split on '\n' alone, the last field kept its '\r', so QUAL '*' was '*\r',
+    // read as a quality string of low values: every base failed the quality minimum, a row of N and no variants
+    const lines = text.split(/\r?\n/).filter(l => l.trim());
+    const headerLines = lines.filter(l => l.startsWith('@'));
+    const readLines = lines.filter(l => !l.startsWith('@'));
+
+    // Parse @SQ headers to get reference names and lengths
+    const refNames = [];
+    const refLengths = [];
+    for (const line of headerLines) {
+        if (line.startsWith('@SQ')) {
+            const fields = line.split('\t');
+            let name = '', len = 0;
+            for (const f of fields) {
+                if (f.startsWith('SN:')) name = f.substring(3);
+                else if (f.startsWith('LN:')) len = parseInt(f.substring(3)) || 0;
+            }
+            if (name) { refNames.push(name); refLengths.push(len); }
+        }
+    }
+
+    // No @SQ lines (samtools view without -h): the references are the reads' RNAME values, each as long as its
+    // reads reach (nothing matched before, so a headerless SAM never loaded)
+    if (!refNames.length) {
+        const end = new Map();
+        for (const line of readLines) {
+            const f = line.split('\t');
+            if (f.length < 11 || f[2] === '*') continue;
+            const e = (parseInt(f[3]) || 1) - 1 + _cigarRefSpan(f[5] || '');
+            end.set(f[2], Math.max(end.get(f[2]) || 0, e));
+        }
+        for (const [n, e] of end) { refNames.push(n); refLengths.push(e); }
+    }
+
+    // Parse alignment records; reads that are not evidence (unmapped, secondary, QC-failed, duplicate,
+    // supplementary: BamParser.skipReason) are counted and dropped, as for BAM (duplicates were kept)
+    const records = [];
+    const skipped = {};
+    let totalReads = 0;
+    for (const line of readLines) {
+        const f = line.split('\t');
+        if (f.length < 11) continue;
+        totalReads++;
+        const flag = parseInt(f[1]) || 0;
+        const why = BamParser.skipReason(flag, true) || (!f[5] || f[5] === '*' || !f[9] || f[9] === '*' ? 'no CIGAR or sequence' : null);
+        if (why) { skipped[why] = (skipped[why] || 0) + 1; continue; }
+
+        const rname = f[2];
+        const refID = refNames.indexOf(rname);
+        const pos = parseInt(f[3]) - 1; // 0-based
+        const mapq = parseInt(f[4]) || 0;
+        const cigarStr = f[5];
+        const seq = f[9];
+        const tlen = parseInt(f[8]) || 0;
+        const nextRef = f[6] === '=' ? refID : (f[6] !== '*' ? refNames.indexOf(f[6]) : -1);
+        const nextPos = f[7] !== '*' && f[7] !== '=' ? parseInt(f[7]) - 1 : (f[7] === '=' ? pos : -1);
+
+        // Parse CIGAR string into ops array
+        const cigarOps = [];
+        const cigarMatches = cigarStr.match(/\d+[MIDNSHP=X]/g) || [];
+        for (const cm of cigarMatches) {
+            cigarOps.push({ len: parseInt(cm), op: cm[cm.length - 1] });
+        }
+
+        // Parse optional tags
+        const tags = {};
+        for (let i = 11; i < f.length; i++) {
+            const tagMatch = f[i].match(/^([A-Za-z][A-Za-z0-9]):([AifZHB]):(.*)$/);
+            if (tagMatch) {
+                const [, tag, type, value] = tagMatch;
+                if (type === 'i' || type === 'I') tags[tag] = parseInt(value);
+                else if (type === 'f') tags[tag] = parseFloat(value);
+                else tags[tag] = value;
+            }
+        }
+
+        records.push({
+            name: f[0],
+            refID,
+            pos,
+            mapq,
+            flag,
+            seq,
+            qual: f[10] || '',
+            cigar: cigarOps,
+            tlen,
+            next_refID: nextRef,
+            next_pos: nextPos,
+            tags,
+        });
+    }
+
+    // Return a pseudo-buffer object compatible with the BAM pipeline
+    return { _isSAM: true, _refNames: refNames, _refLengths: refLengths, _records: records, _skipped: skipped, _totalReads: totalReads };
+}
+

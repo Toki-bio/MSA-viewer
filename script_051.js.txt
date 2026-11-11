@@ -1,0 +1,484 @@
+[script.js lines 21654-22136 of ViewAlign fd8b8e4]
+// [id, {segs, row, color}] at their current position (the anchor object is not saved)
+function _serializeRepeats(map) {
+    return [...map].map(([id, info]) => { const v = _repeatView(info); return [id, { segs: v.segs, row: v.row, color: info.color }]; })
+        .filter(([, i]) => i.row === null || i.row >= 0);
+}
+
+function _snapshotSelections() {
+    const st = state.selectionStash;
+    const nucs = m => m ? [...m].map(([r, s]) => [r, [...s].sort((a, b) => a - b)]) : null;
+    return {
+        nucs: nucs(state.selectedNucs),
+        tsd: state.tsdMarks?.size ? [...state.tsdMarks].map(([r, s]) => [r, [...s]]) : null,
+        tsdStyle: state.tsdMarkStyle, tsdColor: state.tsdMarkColor,
+        repeats: state.repeatHighlights?.size ? _serializeRepeats(state.repeatHighlights) : null,
+        stash: {
+            rows: st.rows ? [..._objsToRows(st.rows)] : null,
+            cols: st.cols ? [...st.cols] : null,
+            nucs: st.nucs ? nucs(_objsToNucs(st.nucs)) : null,
+            tsd: st.tsd ? [...st.tsd].map(([r, s]) => [r, [...s]]) : null,
+            repeats: st.repeats ? _serializeRepeats(st.repeats) : null,
+            names: st.names ? [...st.names] : null
+        }
+    };
+}
+
+function _applySnapshotSelections(sel) {
+    if (!sel || typeof sel !== 'object') return;
+    const n = state.seqs.length;
+    const nucMap = arr => {
+        const m = new Map();
+        (arr || []).forEach(([r, ps]) => { if (Number.isInteger(r) && r < n && Array.isArray(ps)) m.set(r, new Set(ps.filter(Number.isInteger))); });
+        return m;
+    };
+    const setMap = arr => new Map((arr || []).filter(([r]) => Number.isInteger(r) && r < n).map(([r, ps]) => [r, new Set(ps)]));
+    state.selectedNucs = nucMap(sel.nucs);
+    const hadMarks = (state.tsdMarks?.size || 0) + (state.repeatHighlights?.size || 0) > 0;
+    // Replace, not keep: marks from the previous session belong to other rows
+    state.tsdMarks = setMap(sel.tsd);
+    // Colours and the style name come from the file: only a plain colour and a known style (audit M8)
+    if (sel.tsd) {
+        state.tsdMarkStyle = ['color', 'bold', 'lowercase'].includes(sel.tsdStyle) ? sel.tsdStyle : state.tsdMarkStyle;
+        state.tsdMarkColor = _safeCssColor(sel.tsdColor) || state.tsdMarkColor;
+    }
+    const safeRepeats = arr => new Map((Array.isArray(arr) ? arr : []).filter(e => Array.isArray(e) && e[1] && typeof e[1] === 'object')
+        .map(([id, v]) => [String(id), { ...v, color: _safeCssColor(v.color) || '#ffd54f' }]));
+    state.repeatHighlights = safeRepeats(sel.repeats);
+    const s = sel.stash || {};
+    state.selectionStash = {
+        rows: s.rows ? _rowsToObjs(s.rows.filter(i => Number.isInteger(i) && i < n)) : null,
+        cols: s.cols ? new Set(s.cols) : null,
+        nucs: s.nucs ? _nucsToObjs(nucMap(s.nucs)) : null,
+        tsd: s.tsd ? ResidueMarks.fromRowCols(setMap(s.tsd)) : null,
+        repeats: s.repeats ? safeRepeats(s.repeats) : null,
+        names: s.names ? new Map(s.names) : null
+    };
+    _selectionsUndo = null;
+    if (sel.tsd || sel.repeats || hadMarks) renderAlignment({ deferConservation: true });
+    else _refreshRowColNucDom();
+    scheduleSelectionsPanelRefresh();
+}
+
+function initSelectionsPanel() {
+    el('selectionsClearBtn')?.addEventListener('click', clearAllSelections);
+    el('selectionsClearSelBtn')?.addEventListener('click', () => clearActiveSelection());
+    el('selectionsUndoBtn')?.addEventListener('click', undoSelectionsRemoval);
+    el('selectionsToggleAllBtn')?.addEventListener('click', () => {
+        const items = collectSelectionItems();
+        setAllSelectionsOn(!(items.length && items.every(i => i.on)));
+    });
+    // Docking back or detaching changes whether an empty panel should still show
+    const group = el('selections-controls');
+    if (group) new MutationObserver(scheduleSelectionsPanelRefresh).observe(group, { attributes: true, attributeFilter: ['class'] });
+    refreshSelectionsPanel();
+}
+
+function openInfoModal() {
+    showExclusiveModal('infoModal');
+}
+function closeInfoModal() {
+    infoModal.style.display = 'none';
+}
+
+// ============================================================================
+// Clustering and Trimming Functions
+// ============================================================================
+
+function updateClusteringStatus(msg) {
+    const statusEl = el('clusteringStatus');
+    if (statusEl) statusEl.textContent = msg;
+    debugLog('[Clustering] ' + msg);
+}
+
+function getTrimParameters() {
+    return {
+        edgeWindow: parseInt(el('edgeWindowInput')?.value) || 15,
+        leftGapThresh: (parseInt(el('leftGapInput')?.value) || 50) / 100,
+        rightGapThresh: (parseInt(el('rightGapInput')?.value) || 80) / 100
+    };
+}
+
+function _trimAlnLen() {
+    return (state.seqs && state.seqs[0] && state.seqs[0].seq) ? state.seqs[0].seq.length : 0;
+}
+
+function _trimKeepRange(b, len) {
+    const leftEnd = (b && b.leftTrimEnd != null) ? b.leftTrimEnd : -1;
+    const rightStart = (b && b.rightTrimStart != null) ? b.rightTrimStart : len;
+    return {
+        from: leftEnd < 0 ? 1 : leftEnd + 2,
+        to: rightStart >= len ? len : rightStart
+    };
+}
+
+function _gapOnlyColumnCount() {
+    if (!state.seqs.length) return 0;
+    const len = _trimAlnLen();
+    let n = 0;
+    for (let pos = 0; pos < len; pos++) {
+        let allGap = true;
+        for (let i = 0; i < state.seqs.length; i++) {
+            const ch = state.seqs[i].seq[pos] || (typeof GENEDOC_FILLER !== 'undefined' ? GENEDOC_FILLER : '-');
+            if (typeof isGeneDocGapChar === 'function') {
+                if (!isGeneDocGapChar(ch)) { allGap = false; break; }
+            } else if (ch !== '-' && ch !== '.') {
+                allGap = false;
+                break;
+            }
+        }
+        if (allGap) n++;
+    }
+    return n;
+}
+
+function _trimVar(x) {
+    return '<span class="trim-var">' + x + '</span>';
+}
+
+function _trimButtonTooltipHtml() {
+    const general = 'Apply the Keep range. Hard deletes those end columns; Soft only hides them from grouping.';
+    const b = state.trimBoundaries;
+    const len = _trimAlnLen();
+    if (!b || !len) {
+        return '<div class="trim-tip-gen">' + general + '</div>'
+            + '<div class="trim-tip-dyn">Run Preview first, or type Keep / drag the coloured Consensus edges.</div>';
+    }
+    const params = getTrimParameters();
+    const leftN = b.leftTrimEnd + 1;
+    const rightN = Math.max(0, len - b.rightTrimStart);
+    const lp = Math.round((params.leftGapThresh || 0) * 100);
+    const rp = Math.round((params.rightGapThresh || 0) * 100);
+    const w = params.edgeWindow;
+    const whyL = state.trimManualLeft ? 'moved by hand' : ('≥' + _trimVar(lp + '%') + ' gaps, window ' + _trimVar(w));
+    const whyR = state.trimManualRight ? 'moved by hand' : ('≥' + _trimVar(rp + '%') + ' gaps, window ' + _trimVar(w));
+    const parts = [];
+    if (leftN > 0) parts.push('left cols ' + _trimVar('1') + '–' + _trimVar(String(leftN)) + ' (' + whyL + ')');
+    if (rightN > 0) parts.push('right cols ' + _trimVar(String(b.rightTrimStart + 1)) + '–' + _trimVar(String(len)) + ' (' + whyR + ')');
+    let dyn;
+    if (!parts.length) dyn = 'Ends are already below the gap %. Nothing to cut.';
+    else dyn = 'Will remove ' + parts.join('; ') + '.';
+    const gaps = _gapOnlyColumnCount();
+    if (gaps > 0) dyn += ' ' + _trimVar(String(gaps)) + ' all-gap column' + (gaps === 1 ? '' : 's') + ' remain — Empty cols drops them.';
+    return '<div class="trim-tip-gen">' + general + '</div><div class="trim-tip-dyn">' + dyn + '</div>';
+}
+
+function _syncTrimKeepInputs() {
+    const fromEl = el('trimKeepFrom');
+    const toEl = el('trimKeepTo');
+    const len = _trimAlnLen();
+    const b = state.trimBoundaries;
+    if (!fromEl || !toEl) return;
+    if (!b || !len) {
+        if (!fromEl.matches(':focus')) fromEl.value = '';
+        if (!toEl.matches(':focus')) toEl.value = '';
+        return;
+    }
+    const { from, to } = _trimKeepRange(b, len);
+    if (!fromEl.matches(':focus')) fromEl.value = String(from);
+    if (!toEl.matches(':focus')) toEl.value = String(to);
+}
+
+function _clampTrimBounds(leftTrimEnd, rightTrimStart, len) {
+    let L = Math.max(-1, Math.min(leftTrimEnd, len - 2));
+    let R = Math.max(1, Math.min(rightTrimStart, len));
+    if (L + 1 >= R) {
+        if (L >= 0) L = R - 2;
+        if (L + 1 >= R) R = L + 2;
+    }
+    return { leftTrimEnd: L, rightTrimStart: R };
+}
+
+function _setTrimBounds(leftTrimEnd, rightTrimStart, side) {
+    const len = _trimAlnLen();
+    if (!len) return;
+    state.trimBoundaries = _clampTrimBounds(leftTrimEnd, rightTrimStart, len);
+    if (side === 'left' || side === true) state.trimManualLeft = true;
+    if (side === 'right' || side === true) state.trimManualRight = true;
+    _paintTrimClassesLive();
+    _syncTrimKeepInputs();
+}
+
+function _applyKeepColsFromInputs() {
+    const len = _trimAlnLen();
+    if (!len) return;
+    const from = parseInt(el('trimKeepFrom')?.value, 10);
+    const to = parseInt(el('trimKeepTo')?.value, 10);
+    if (!Number.isFinite(from) || !Number.isFinite(to)) return;
+    const f = Math.max(1, Math.min(from, len));
+    const t = Math.max(f, Math.min(to, len));
+    const prev = state.trimBoundaries ? _trimKeepRange(state.trimBoundaries, len) : null;
+    let side = true;
+    if (prev) {
+        if (f !== prev.from && t === prev.to) side = 'left';
+        else if (t !== prev.to && f === prev.from) side = 'right';
+    }
+    _setTrimBounds(f === 1 ? -1 : f - 2, t, side);
+}
+
+function _paintTrimClassesLive() {
+    const b = state.trimBoundaries;
+    const len = _trimAlnLen();
+    if (!b || !len) return;
+    document.querySelectorAll('.consensus-line .seq-data span[data-pos]').forEach(span => {
+        const pos = parseInt(span.dataset.pos, 10);
+        if (Number.isNaN(pos)) return;
+        const left = pos <= b.leftTrimEnd;
+        const right = pos >= b.rightTrimStart;
+        span.classList.toggle('trim-left', left);
+        span.classList.toggle('trim-right', right);
+        span.classList.toggle('trim-edge-left', pos === b.leftTrimEnd && b.leftTrimEnd >= 0);
+        span.classList.toggle('trim-edge-right', pos === b.rightTrimStart && b.rightTrimStart < len);
+        if (left) span.title = 'Will be removed (left end). Drag to move this border.';
+        else if (right) span.title = 'Will be removed (right end). Drag to move this border.';
+        else span.removeAttribute('title');
+    });
+}
+
+function _ensureConsensusVisible() {
+    const cb = el('showConsensus');
+    if (cb && !cb.checked) cb.checked = true;
+}
+
+function _clearTrimPreview() {
+    state.trimBoundaries = null;
+    state.trimManualLeft = false;
+    state.trimManualRight = false;
+    _syncTrimKeepInputs();
+}
+
+let _trimDragSide = null;
+
+function handleTrimEdgeMouseDown(e) {
+    if (e.button !== 0) return false;
+    if (!state.trimBoundaries) return false;
+    const span = closestFromEvent(e, '.consensus-line .seq-data span[data-pos]');
+    if (!span) return false;
+    const painted = span.classList.contains('trim-left') || span.classList.contains('trim-right')
+        || span.classList.contains('trim-edge-left') || span.classList.contains('trim-edge-right');
+    if (!painted) return false;
+    _trimDragSide = (span.classList.contains('trim-left') || span.classList.contains('trim-edge-left')) ? 'left' : 'right';
+    e.preventDefault();
+    e.stopPropagation();
+    if (typeof e.stopImmediatePropagation === 'function') e.stopImmediatePropagation();
+    document.body.style.cursor = 'ew-resize';
+    document.body.style.userSelect = 'none';
+    return true;
+}
+
+function _onTrimDragMove(e) {
+    if (!_trimDragSide || !state.trimBoundaries) return;
+    if (e.buttons === 0) { _endTrimDrag(); return; }   // released outside the window
+    let pos;
+    // no spans: the column under the pointer, in the band under it (Block; without clientY it read the band at the top of the view)
+    if (isCanvasMode()) {
+        // Block: only over a band's lines (consensus, rows), as the DOM needs a residue span under the pointer. Over
+        // the gap below a band the border kept following the pointer, and over the next band's ruler it leapt a
+        // band's width (GLM audit cb34 #9 #31); the DOM Block holds it there.
+        if (_canvasState.layout) {
+            const P = _canvasLocal(e.clientX, e.clientY), m = _canvasState.metrics, cb = _canvasState.consBand;
+            const lineTop = cb && cb.y < m.headerH ? cb.y : m.headerH;   // the consensus on top, else the first row
+            if (P.y === 1e9 || P.y < lineTop) return;
+        }
+        pos = _canvasColFromClientX(e.clientX, e.clientY);
+    }
+    else {
+        const hit = document.elementFromPoint(e.clientX, e.clientY);
+        const span = hit && hit.closest && hit.closest('.seq-data span[data-pos]');
+        if (!span) return;
+        pos = parseInt(span.dataset.pos, 10);
+    }
+    if (!(pos >= 0)) return;
+    if (Number.isNaN(pos)) return;
+    const b = state.trimBoundaries;
+    if (_trimDragSide === 'left') _setTrimBounds(pos, b.rightTrimStart, 'left');
+    else _setTrimBounds(b.leftTrimEnd, pos, 'right');
+}
+
+function _endTrimDrag() {
+    if (!_trimDragSide) return;
+    _trimDragSide = null;
+    document.body.style.cursor = '';
+    document.body.style.userSelect = '';
+    debounceRender();
+}
+
+function previewTrimming() {
+    if (state.seqs.length < 1) {
+        showMessage("No sequences loaded.", 3000);
+        return;
+    }
+
+    const sequences = state.seqs.map((seq, idx) => ({
+        id: seq.header || `Seq${idx+1}`,
+        seq: seq.seq
+    }));
+
+    const params = getTrimParameters();
+    const trimBounds = getTrimBoundaries(sequences, params);
+    state.trimBoundaries = _clampTrimBounds(trimBounds.leftTrimEnd, trimBounds.rightTrimStart, _trimAlnLen());
+    state.trimManualLeft = false;
+    state.trimManualRight = false;
+    _ensureConsensusVisible();
+    _syncTrimKeepInputs();
+    debounceRender();
+    showMessage('Preview on Consensus: coloured columns will be removed. Drag edges or edit Keep.', 3500);
+}
+
+function executeTrimming() {
+    if (state.seqs.length < 1) {
+        showMessage("No sequences loaded.", 3000);
+        return;
+    }
+
+    if (!state.trimBoundaries) {
+        showMessage("Run Preview first to set trim boundaries.", 3000);
+        return;
+    }
+
+    const trimMode = document.querySelector('input[name="trimMode"]:checked')?.value || 'hard';
+    const leftTrimEnd = state.trimBoundaries.leftTrimEnd;
+    const rightTrimStart = state.trimBoundaries.rightTrimStart;
+    const alnLen = state.seqs[0].seq.length;
+    const leftRemoved = leftTrimEnd + 1;
+    const rightRemoved = alnLen - rightTrimStart;
+
+    if (trimMode === 'soft') {
+        // Soft trim: mark columns as excluded without deleting them
+        state.softTrimBoundaries = { leftTrimEnd, rightTrimStart };
+        // the alignment is unchanged: a hard trim done before stays undoable (Trim Undo)
+        const clearBtn = document.getElementById('clearSoftTrimButton');
+        if (clearBtn) clearBtn.style.display = '';
+        const status = `Soft trim: ${leftRemoved} left + ${rightRemoved} right marked for clustering. Alignment unchanged.`;
+        showMessage(status, 3000);
+        _clearTrimPreview();
+        debounceRender();
+        return;
+    }
+
+    // Hard trim: actually delete columns (an undo step like any other column edit: without one, Ctrl+Z went
+    // back past the trim to the step before it)
+    pushUndo('trim');
+    state.trimBackupColState = _snapshotColumnState();
+    {
+        const dead = [];
+        for (let c = 0; c <= leftTrimEnd; c++) dead.push(c);
+        for (let c = rightTrimStart; c < alnLen; c++) dead.push(c);
+        applyColumnEdit({ type: 'delete', cols: dead }, 'all');
+    }
+    _clusterFeaturesToAbsolute();
+    state.softTrimBoundaries = null;
+    state.trimBackup = state.seqs.map(seq => ({
+        header: seq.header,
+        fullHeader: seq.fullHeader,
+        seq: seq.seq,
+        gaplessPositions: seq.gaplessPositions
+    }));
+
+    const trimStart = leftTrimEnd + 1;
+    const trimEnd = rightTrimStart;
+
+    for (let i = 0; i < state.seqs.length; i++) {
+        const seq = state.seqs[i].seq;
+        state.seqs[i].seq = seq.substring(trimStart, trimEnd);
+        state.seqs[i].gaplessPositions = calculateGaplessPositions(state.seqs[i].seq);
+    }
+
+    const newLen = trimEnd - trimStart;
+    const status = `Hard trim: ${leftRemoved} left + ${rightRemoved} right = ${leftRemoved + rightRemoved} cols. New length: ${newLen}`;
+    showMessage(status, 3000);
+    _clearTrimPreview();
+    debounceRender();
+}
+
+function clearSoftTrimming() {
+    _clusterFeaturesToAbsolute();
+    state.softTrimBoundaries = null;
+    if (state.clusterResults) _rebuildClusterCharMap();
+    const clearBtn = document.getElementById('clearSoftTrimButton');
+    if (clearBtn) clearBtn.style.display = 'none';
+    showMessage('Soft trim boundaries removed.', 2000);
+    debounceRender();
+}
+
+function undoTrimming() {
+    if (!state.trimBackup) {
+        showMessage("No trimming to undo.", 3000);
+        return;
+    }
+
+    // Itself undoable: it puts back the pre-trim copy, dropping any edit made since the trim
+    // (it used to do that silently, with no way back to those edits)
+    pushUndo('undo-trim');
+    state.seqs = state.trimBackup.map(seq => ({...seq}));
+    state.trimBackup = null;
+    if (state.trimBackupColState) { _restoreColumnState(state.trimBackupColState); state.trimBackupColState = null; }
+    state.softTrimBoundaries = null;
+    _clearTrimPreview();
+
+    showMessage('Trimming reverted - original alignment restored', 3000);
+    debounceRender();
+}
+
+// Sequences as the clusterer wants them, respecting soft trim if active. Shared with the
+// clusterability probe so the two can never disagree about what was clustered.
+// Clustering > "Selected columns only" (owner 2026-10-28): the columns of the column selection, else of the selected
+// residues (a block), first to last; null when the option is off or nothing is selected
+function _clusterSelectedColumnRange() {
+    if (!el('clusterSelColsOnly')?.checked) return null;
+    let lo = Infinity, hi = -1;
+    state.selectedColumns.forEach(c => { if (c < lo) lo = c; if (c > hi) hi = c; });
+    if (hi < 0) state.selectedNucs.forEach((set) => { if (!set) return; set.forEach(c => { if (c < lo) lo = c; if (c > hi) hi = c; }); });   // the consensus row too
+    return hi >= 0 ? { lo, hi } : null;
+}
+// Clustering > "Selected rows only" (owner 2026-10-28, "only on selected columns or rectangle"): the selected
+// sequences, else the rows of the selected residues (a rectangle), in alignment order; null when off or none
+function _clusterSelectedRows() {
+    if (!el('clusterSelRowsOnly')?.checked) return null;
+    let rows = [...state.selectedRows].filter(r => state.seqs[r]);
+    if (!rows.length) rows = [...state.selectedNucs.keys()].filter(r => r >= 0 && state.seqs[r] && state.selectedNucs.get(r)?.size);
+    return rows.length ? rows.sort((a, b) => a - b) : null;
+}
+// A run on a row subset numbered its sequences 0..n-1: give them their alignment rows back
+function _clusterRemapRows(results, rows) {
+    if (!rows || !results) return results;
+    const fix = q => { if (q && q.index != null && rows[q.index] != null) { q.index = rows[q.index]; if ('obj' in q) q.obj = state.seqs[q.index]; } };
+    (results.clusters || []).forEach(c => (c.sequences || []).forEach(fix));
+    (results.unassigned || []).forEach(fix);
+    return results;
+}
+// A "Selected rows only" run keeps the groups of the other rows (membership, colour, name; their diagnostic columns
+// came from another run, so they are dropped). New groups get names and colours the kept ones do not use.
+// Returns a note when a selected name also names an unselected row (groups are keyed by name: it shares the colour).
+function _clusterKeepOutside(results, rows) {
+    if (!rows || !results) return '';
+    const inSub = new Set(rows.map(r => state.seqs[r]?.header));
+    const rowSet = new Set(rows);
+    let dup = 0;
+    state.seqs.forEach((q, i) => { if (!rowSet.has(i) && inSub.has(q.header)) dup++; });
+    const prev = state.clusterResults;
+    const kept = [];
+    if (prev) {
+        (prev.clusters || []).forEach(c => {
+            const seqs = (c.sequences || []).filter(q => !inSub.has(q.id));
+            if (seqs.length) kept.push(Object.assign({}, c, { sequences: seqs, size: seqs.length, nPerfect: 0, perfectFeatures: [], cloudyFeatures: [], motifRuns: [] }));
+        });
+        (prev.unassigned || []).forEach(q => { if (!inSub.has(q.id)) results.unassigned.push(q); });
+    }
+    if (kept.length) {
+        const usedNames = new Set(kept.map(c => c._typeName)), usedColors = new Set(kept.map(c => c.color));
+        const palette = SINEClusterer.getClusterColors().filter(c => !usedColors.has(c));
+        let n = 1, pi = 0;
+        results.clusters.forEach(c => {
+            while (usedNames.has('Group ' + n)) n++;
+            c._typeName = 'Group ' + n; usedNames.add(c._typeName);
+            if (pi < palette.length) c.color = palette[pi++];
+        });
+        results.clusters = results.clusters.concat(kept);
+        if (results.summary) {
+            const nAs = results.clusters.reduce((a, c) => a + (c.sequences || []).length, 0);
+            Object.assign(results.summary, { nClusters: results.clusters.length, nAssigned: nAs, nUnassigned: results.unassigned.length, nTotal: nAs + results.unassigned.length });
+        }
+    }
+    return dup ? `${dup} unselected row${dup === 1 ? ' has' : 's have'} the same name as a selected one and share${dup === 1 ? 's' : ''} its group colour.` : '';
+}

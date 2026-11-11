@@ -1,0 +1,371 @@
+[styles.css lines 3618-3987 of ViewAlign fd8b8e4]
+body.codon-mode span.codon-synmulti {
+    text-decoration: underline dashed;
+    text-decoration-color: #2e9d57;
+    text-underline-offset: 2px;
+}
+body.codon-mode span.codon-nonsyn {
+    text-decoration: underline;
+    text-decoration-color: #d93025;
+    text-decoration-thickness: 2px;
+    text-underline-offset: 2px;
+}
+
+/* Sequence rows get 2px of shaded headroom above the bases: the translation row above is
+   white, and where the font's capitals reach the top of a 1em box (Courier New as Windows
+   hints it at ~12px) white bases on dark shading lost their tops against it and looked
+   shifted up from the names. The name moves down with them. */
+body.codon-mode .seq-line[data-seq-index]:not([data-seq-index="-1"]) {
+    height: calc(1em + 2px);
+}
+body.codon-mode .seq-line[data-seq-index]:not([data-seq-index="-1"]) > .seq-data > span {
+    padding-top: 2px;
+}
+body.codon-mode .seq-line[data-seq-index]:not([data-seq-index="-1"]) > .seq-name {
+    padding-top: 2px;
+}
+
+/* AA only: the first translation row moves up over its sequence row (same height as the
+   row, so the row pitch is the translation's), whose bases are hidden; the name stays the
+   sequence row's own, so clicking, dragging and renaming work as usual. Rows without a
+   translation (a block with no CDS) keep their bases. */
+body.codon-mode.aa-only .seq-line[data-seq-index]:not([data-seq-index="-1"]):has(+ .aa-row) > .seq-data {
+    visibility: hidden;
+}
+body.codon-mode.aa-only .seq-line[data-seq-index]:not([data-seq-index="-1"]) + .aa-row {
+    margin-top: calc(-1em - 2px);
+}
+body.codon-mode.aa-only .seq-line[data-seq-index] + .aa-row > .aa-name {
+    visibility: hidden;
+}
+body.codon-mode.aa-only .seq-line[data-seq-index]:not([data-seq-index="-1"]):has(+ .aa-row) > .seq-name {
+    padding-top: 4px;   /* level with the amino-acid letters, which sit in taller boxes */
+}
+.codon-panel-btn[aria-pressed="true"] {
+    background: #2e7d32;
+    color: #fff;
+    border-color: #1b5e20;
+}
+
+/* Translation track - must match .seq-line font metrics for column alignment */
+body.codon-mode .aa-row {
+    display: flex;
+    align-items: flex-start;
+    font-family: 'Courier New', monospace;
+    font-size: inherit;
+    line-height: 1.0;
+    color: #222;
+    background: #fff;
+    padding: 1px 0 3px;   /* air above the boxes (they touched the bases) and below them */
+    margin: 0;
+    min-height: 1em;
+    white-space: nowrap;
+    min-width: max-content;
+}
+/* The codon boxes are a little taller than the letters, so the amino acid has room */
+body.codon-mode .aa-data > span {
+    display: inline-block;
+    line-height: 1.3;
+}
+
+body.codon-mode .aa-name {
+    flex: 0 0 auto;
+    box-sizing: border-box;   /* as .seq-name, or the padding is added to the width and the track shifts right */
+    min-width: calc(var(--nameLen) * 1ch + 16px + var(--name-gap));
+    width: calc(var(--nameLen) * 1ch + 16px + var(--name-gap));
+    max-width: calc(var(--nameLen) * 1ch + 16px + var(--name-gap));
+    text-align: right;
+    padding: 0 calc(4px + var(--name-gap)) 0 12px;
+    margin-right: 0;
+    margin-left: -12px;
+    overflow: hidden;
+    white-space: nowrap;
+    font-size: inherit;   /* the column width is in ch: keep the font, shrink only .aa-tag */
+    font-weight: normal;
+    color: #9aa0a6;
+    background: #fff;
+    position: sticky;
+    left: -15px;
+    z-index: 45;
+    /* The row's full height: empty (single frame) it was 0px tall in a flex-start row, so the
+       amino acids scrolled under it showed through the name column */
+    align-self: stretch;
+}
+
+body.codon-mode .aa-data {
+    flex: 1 1 auto;
+    display: inline-block;
+    white-space: nowrap;
+    margin: 0;
+    padding: 0;
+    line-height: 1.0;
+    font-size: inherit;
+    letter-spacing: 0;
+}
+body.codon-mode .aa-row:empty { display: none; }
+body.codon-mode .aa-name .aa-tag { font-size: 0.75em; font-style: italic; }
+
+/* Codon boxes, coloured by amino-acid class (pastel, Clustal-like groups) */
+.aa-data > span.aa-c { font-weight: bold; }
+.aa-data > .aa-first { box-shadow: inset 1px 0 #fff; border-radius: 3px 0 0 3px; }
+.aa-data > .aa-last { box-shadow: inset -1px 0 #fff; border-radius: 0 3px 3px 0; }
+.aa-data > .aa-hyd { background: #d6e6fb; color: #1d4f91; }
+.aa-data > .aa-aro { background: #c9ecec; color: #0f6363; }
+.aa-data > .aa-pos { background: #fad2d2; color: #9b1c1c; }
+.aa-data > .aa-neg { background: #ead6f6; color: #6b2394; }
+.aa-data > .aa-pol { background: #d5f0d2; color: #22662b; }
+.aa-data > .aa-gly { background: #fde3c3; color: #8a4b08; }
+.aa-data > .aa-pro { background: #fbf1b8; color: #6d5d00; }
+.aa-data > .aa-unk { background: #e8e8e8; color: #555; }
+.aa-data > .aa-stop { background: #d93025; color: #fff; }
+.aa-data > .aa-fs { color: #d93025; font-weight: bold; background: #fdecea; }
+
+/* Three-frame view: coloured frame labels; the best frame's label is bold */
+body.codon-mode .aa-row-f0 .aa-tag { color: #3b6fd6; }
+body.codon-mode .aa-row-f1 .aa-tag { color: #2a8a44; }
+body.codon-mode .aa-row-f2 .aa-tag { color: #c27800; }
+body.codon-mode .aa-row-best .aa-name { font-weight: bold; color: #444; }
+
+/* Recent files dropdown */
+.recent-item:hover { background: #e8f0fe; }
+.recent-item:last-of-type { border-bottom: none !important; }
+
+/* Variable sites only — hide fully-conserved columns */
+body.var-sites-only .seq-data > span[data-pos]:not(.diff-highlight) { display: none !important; }
+/* Variable sites only: a ruler number is one whole label on its own column, running left over the hidden ones */
+body.var-sites-only .seq-data > span.scale-lab { position: relative; }
+body.var-sites-only .seq-data > span.scale-lab > .scale-num { position: absolute; right: 0; top: 0; font-style: normal; white-space: pre; }
+body.var-sites-only .seq-data > span[data-pos]:not(.diff-highlight).var-site-hidden { display: none !important; }
+
+/* Variable sites — breakpoint markers */
+.col-breakpoint {
+    display: inline-block;
+    width: 0.6em;
+    min-width: 8px;
+    text-align: center;
+    background-color: var(--brk-bg, #d0d0d0);
+    color: #666;
+    font-size: 0.85em;
+    cursor: default;
+    user-select: none;
+    -webkit-user-select: none;
+    border-left: 1px solid #b0b0b0;
+    border-right: 1px solid #b0b0b0;
+    line-height: 1.2;
+    filter: brightness(1);
+}
+.col-breakpoint:hover {
+    filter: brightness(0.9);
+    color: #333;
+}
+body.var-sites-only.hide-breakpoints .col-breakpoint { display: none !important; }
+/* .consensus-line .seq-data span forces background-color:transparent !important
+   (avoids double-shading conflicts with base-colour classes on that row) -
+   this more specific selector is needed to let the marker's own colour win there too. */
+.consensus-line .seq-data span.col-breakpoint { background-color: var(--brk-bg, #d0d0d0) !important; }
+
+/* Keyboard shortcut displays — key column must not wrap */
+#infoModal > div strong,
+#shortcuts-controls strong {
+    white-space: nowrap;
+}
+
+/* Recent Files "Max" count now has its own explicit up/down buttons
+   (visible, sized, and testable in headless Chrome, unlike native OS
+   spin-button chrome) - hide the native WebKit spinner so there's only
+   one set of arrows, not two overlapping ones. */
+#historyMaxInput::-webkit-inner-spin-button,
+#historyMaxInput::-webkit-outer-spin-button {
+    -webkit-appearance: none;
+    margin: 0;
+}
+
+/* Alignment Statistics: pairwise matrices */
+.stats-mx-scroll { overflow: auto; max-height: 55vh; border: 1px solid #ddd; }
+table.stats-mx { border-collapse: separate; border-spacing: 0; font: 10px/1.35 'Courier New', monospace; }
+table.stats-mx td { width: var(--cw); min-width: var(--cw); padding: 1px 3px; text-align: right; border-right: 1px solid #f0f0f0; border-bottom: 1px solid #f0f0f0; white-space: nowrap; }
+table.stats-mx td.dg { background: #f3f3f3; color: #999; }
+table.stats-mx td:hover { background: #fff3b0; }
+table.stats-mx td.pad, table.stats-mx th.pad { border: none; padding: 0; }
+table.stats-mx td.csp { width: auto; min-width: 0; padding: 0; border: none; }   /* stands in for the columns outside the window */
+table.stats-mx td.csp:hover { background: none; }
+table.stats-mx thead th { position: sticky; top: 0; z-index: 2; background: #fff; font-weight: normal; border-bottom: 1px solid #bbb; }
+table.stats-mx th.rn { position: sticky; left: 0; z-index: 1; background: #fff; text-align: left; font-weight: normal; white-space: nowrap; padding: 1px 6px 1px 3px; border-right: 1px solid #bbb; border-bottom: 1px solid #f0f0f0; }
+table.stats-mx th.corner { left: 0; z-index: 3; border-right: 1px solid #bbb; }
+table.stats-mx th.rn .ix { color: #999; display: inline-block; min-width: 3ch; text-align: right; }
+table.stats-mx th.c { padding: 1px 0; text-align: center; vertical-align: bottom; }
+table.stats-mx th.c.v > div { writing-mode: vertical-rl; transform: rotate(180deg); white-space: nowrap; margin: 0 auto; padding: 3px 0; }
+table.stats-mx th.c.a { padding: 0; }
+table.stats-mx th.c.a > div { position: relative; width: var(--cw); }
+table.stats-mx th.c.a span { position: absolute; left: 50%; bottom: 4px; transform-origin: 0 100%; transform: rotate(-45deg); white-space: nowrap; }
+table.stats-mx th.hl, table.stats-mx th.hl span { background: #fff3b0; color: #000; font-weight: bold; }
+.stats-mx-key { margin-top: 6px; font: 10px 'Courier New', monospace; display: flex; flex-wrap: wrap; gap: 2px 14px; max-height: 18vh; overflow: auto; }
+
+/* ── Window title bars and close buttons, shared by every dialog ──
+   A grey strip across the top of the window (it cancels the window's own padding,
+   set per window as --win-pad), title at 14px, close button 26px square centred in
+   the strip with a red hover. Before this, windows had a bare 20px "x" floating in
+   the top-right corner, above the title's centre line. */
+.win-titlebar {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    margin: calc(-1 * var(--win-pad, 16px)) calc(-1 * var(--win-pad, 16px)) 10px;
+    padding: 6px 8px 6px var(--win-pad, 16px);
+    background: #f5f6f8;
+    border-bottom: 1px solid #e2e5e8;
+    border-radius: 8px 8px 0 0;
+    flex-shrink: 0;
+}
+/* Tree window: fits the screen and scrolls inside, the title bar (with Close) staying on top */
+#treeBuilderDialog > .win-titlebar {
+    position: sticky;
+    top: calc(-1 * var(--win-pad, 16px));
+    z-index: 3;
+}
+.win-titlebar h2, .win-titlebar h3 { margin: 0; font-size: 14px; font-weight: 650; color: #222; }
+.win-close {
+    width: 26px; height: 26px; padding: 0; margin: 0; border: none; border-radius: 5px;
+    background: transparent; color: #555; font-size: 18px; line-height: 1; cursor: pointer;
+    display: inline-flex; align-items: center; justify-content: center; flex-shrink: 0;
+}
+.win-close:hover { background: #e24b4b; color: #fff; }
+.ge-window-btns .win-close { width: 26px; height: 26px; }
+
+/* ── Alignment Statistics window ── */
+.stats-win {
+    position: fixed;
+    z-index: 10000;
+    background: #fff;
+    border: 1px solid #c9ced4;
+    border-radius: 8px;
+    box-shadow: 0 6px 24px rgba(0,0,0,0.25);
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+    min-width: 320px;
+}
+.stats-win .stats-titlebar { margin: 0; cursor: move; user-select: none; }
+.stats-content { flex: 1; min-height: 0; display: flex; flex-direction: column; padding: 8px 10px 6px; font-size: 12px; }
+#statsSummaryTab { flex: 1; min-height: 0; display: flex; flex-direction: column; }
+.stats-foot { flex-shrink: 0; margin-top: 6px; font-size: 10px; color: #999; }
+/* The attribution of the statistics to Easel / HMMER (Sean R. Eddy): distinct, not a footnote (owner, 2026-10-24) */
+.stats-credit { font-size: 11px; color: #444; border-top: 1px solid #e3e6ea; padding-top: 5px; line-height: 1.4; }
+.stats-stale { flex-shrink: 0; margin-bottom: 6px; padding: 5px 8px; font-size: 12px; color: #6b4a00; background: #fff6d6; border: 1px solid #f0d78a; border-radius: 4px; }
+.stats-stale button { margin-left: 6px; font-size: 12px; padding: 1px 8px; }
+.stats-credit b { color: #222; }
+.stats-credit a { color: #2a6fb0; }
+.stats-win.stats-docked {
+    z-index: 90;          /* under the menu bar (100), so its menus open over the panel */
+    border-radius: 0;
+    border-width: 0 0 0 1px;
+    box-shadow: -2px 0 8px rgba(0,0,0,0.08);
+}
+.stats-win.stats-docked .stats-titlebar { border-radius: 0; cursor: default; }
+.stats-win.stats-docked > [title="Drag to resize"], .stats-win.stats-docked .stats-min-btn { display: none; }
+.stats-dock-resizer { display: none; position: absolute; left: -3px; top: 0; bottom: 0; width: 6px; cursor: ew-resize; }
+.stats-win.stats-docked .stats-dock-resizer { display: block; }
+.stats-dock-resizer:hover { background: rgba(74,144,226,0.35); }
+
+.stats-cards { display: flex; flex-wrap: wrap; gap: 8px; align-items: flex-start; flex-shrink: 0; }
+.stats-card { border: 1px solid #dde1e5; border-radius: 5px; padding: 5px 10px 6px; background: #fbfbfc; }
+.stats-card b { font-size: 11px; color: #333; }
+.stats-card table { border-collapse: collapse; font-size: 11px; margin-top: 2px; }
+.stats-card td { padding: 1px 0; vertical-align: top; }
+.stats-card td:first-child { padding-right: 12px; }
+.stats-card .tip { border-bottom: 1px dotted #999; cursor: help; }
+.stats-card .pair { color: #555; }
+.stats-card .pair a { color: #1a5aa0; cursor: pointer; text-decoration: none; }
+.stats-card .pair a:hover { text-decoration: underline; }
+.stats-card .more { color: #888; cursor: help; border-bottom: 1px dotted #aaa; }
+
+.stats-mx-toolbar { display: flex; flex-wrap: wrap; align-items: center; gap: 5px 10px; margin: 8px 0 5px; font-size: 11px; flex-shrink: 0; }
+.stats-mx-toolbar label, .stats-mx-toolbar .lbl { color: #555; }
+.stats-mx-toolbar select, .stats-mx-toolbar input, .stats-mx-toolbar button { font-size: 11px; }
+.stats-seg { display: inline-flex; border: 1px solid #b8c0c8; border-radius: 5px; overflow: hidden; }
+.stats-seg button { border: none; background: #fff; padding: 2px 10px; cursor: pointer; color: #333; }
+.stats-seg button + button { border-left: 1px solid #b8c0c8; }
+.stats-seg button.on { background: #3d7cc9; color: #fff; }
+.stats-find { width: 120px; height: 20px; padding: 0 5px; border: 1px solid #c3c9cf; border-radius: 10px; }
+.stats-find.nomatch { border-color: #e24b4b; background: #fff3f3; }
+.stats-mx-toolbar .sp { flex: 1; }
+.stats-mx-body { flex: 1; min-height: 120px; display: flex; flex-direction: column; }
+.stats-mx-body .stats-mx-scroll { flex: 1; min-height: 0; max-height: none; }
+table.stats-mx td.focus { background: #ffd54f !important; color: #000; font-weight: bold; }
+table.stats-mx th.fx, table.stats-mx th.fx span { background: #ffe082; color: #000; font-weight: bold; }
+/* BLAST dialogs use the same title-bar look as .win-titlebar */
+.blast-text-title-bar { background: #f5f6f8; border-bottom-color: #e2e5e8; padding: 6px 8px 6px 14px; border-radius: 8px 8px 0 0; }
+.blast-text-title-bar > span:first-child { font-size: 14px !important; font-weight: 650 !important; color: #222; }
+.tree-distance-warning { color: #b3261e; font-weight: bold; cursor: help; }
+.aa-data > .aa-fs-at { box-shadow: inset 2px 0 #d93025; }
+
+/* ── Statistics window, round 3: labels without underlines, documented tooltips, edge
+   resizing, maximize, column selection, pair filter ── */
+.stats-card .tip { border-bottom: none; cursor: help; }
+.stats-card .tip:hover { color: #1a5aa0; }
+.stats-card .src { font-weight: normal; color: #7a8591; font-size: 10px; margin-left: 4px; }
+.stats-card td.extra { color: #555; }
+.stats-tipcard {
+    position: absolute; z-index: 20; max-width: 420px; padding: 8px 10px;
+    background: #fff; border: 1px solid #b9c2cb; border-radius: 6px;
+    box-shadow: 0 6px 18px rgba(0,0,0,0.18); font-size: 11.5px; line-height: 1.4; color: #222;
+    pointer-events: none;
+}
+.stats-tipcard .sum { font-weight: 600; }
+.stats-tipcard .doc { margin-top: 6px; padding-top: 6px; border-top: 1px solid #e3e7eb; color: #3c4650; font-style: italic; }
+.stats-tipcard .from { font-style: normal; color: #7a8591; font-size: 10.5px; margin-bottom: 2px; }
+
+/* Resize from every edge (4px) and corner (12px); hidden when docked or maximized */
+.stats-rz { position: absolute; z-index: 5; }
+.stats-rz[data-dir="n"] { top: -3px; left: 10px; right: 10px; height: 6px; cursor: ns-resize; }
+.stats-rz[data-dir="s"] { bottom: -3px; left: 10px; right: 10px; height: 6px; cursor: ns-resize; }
+.stats-rz[data-dir="e"] { right: -3px; top: 10px; bottom: 10px; width: 6px; cursor: ew-resize; }
+.stats-rz[data-dir="w"] { left: -3px; top: 10px; bottom: 10px; width: 6px; cursor: ew-resize; }
+.stats-rz[data-dir="ne"] { top: -3px; right: -3px; width: 12px; height: 12px; cursor: nesw-resize; }
+.stats-rz[data-dir="nw"] { top: -3px; left: -3px; width: 12px; height: 12px; cursor: nwse-resize; }
+.stats-rz[data-dir="se"] { bottom: -3px; right: -3px; width: 12px; height: 12px; cursor: nwse-resize; }
+.stats-rz[data-dir="sw"] { bottom: -3px; left: -3px; width: 12px; height: 12px; cursor: nesw-resize; }
+.stats-win.stats-docked .stats-rz, .stats-win.stats-max .stats-rz { display: none; }
+.stats-win > [title="Drag to resize"] { display: none; }   /* the shared corner grip; the edge handles replace it */
+.stats-win { overflow: visible; }
+.stats-win > .stats-content { overflow: hidden; border-radius: 0 0 8px 8px; }
+.stats-win.stats-max { border-radius: 6px; }
+
+/* Column selection */
+table.stats-mx thead th[data-c] { cursor: pointer; }
+table.stats-mx thead th.cs, table.stats-mx thead th.cs span { background: #cfe0f7; color: #0d3b75; font-weight: bold; }
+table.stats-mx td.cs { background: #e3eefb; }
+table.stats-mx td.cs.dg { background: #d3dfef; }
+.stats-chip { display: inline-flex; align-items: center; gap: 4px; padding: 1px 4px 1px 8px; border-radius: 10px; background: #e3eefb; color: #0d3b75; font-size: 11px; }
+.stats-x { border: none; background: transparent; color: #666; cursor: pointer; font-size: 14px; line-height: 1; padding: 0 3px; border-radius: 3px; }
+.stats-x:hover { background: #e24b4b; color: #fff; }
+
+/* Pair filter */
+.stats-filter { display: flex; flex-wrap: wrap; align-items: center; gap: 5px 8px; margin: 0 0 6px; font-size: 11px; flex-shrink: 0; }
+.stats-filter .lbl { color: #555; }
+.stats-filter #statsFilterKind { font-size: 11px; }
+.stats-legend { font-size: 11px; color: #333; white-space: nowrap; }
+.stats-legend b { color: #3d7cc9; font-weight: normal; }
+.stats-filter input[type="number"] { width: 70px; font-size: 11px; }
+.stats-filter select, .stats-filter button { font-size: 11px; }
+.stats-filter .count { color: #1a5aa0; font-weight: 600; min-width: 10ch; }
+table.stats-mx.filtering td.hit { background: #d9f2d6; color: #0f4d17; font-weight: bold; }
+table.stats-mx.filtering td.miss { color: #b5bcc3; }
+table.stats-mx.filtering td.hit.cs { background: #bfe3c6; }
+.stats-menu-wrap { position: relative; display: inline-block; }
+.stats-menu { position: absolute; z-index: 30; top: calc(100% + 2px); left: 0; min-width: 250px; background: #fff; border: 1px solid #b9c2cb; border-radius: 6px; box-shadow: 0 6px 18px rgba(0,0,0,0.18); padding: 4px 0; display: flex; flex-direction: column; }
+.stats-menu[hidden] { display: none; }
+.stats-menu button { border: none; background: none; text-align: left; padding: 5px 12px; cursor: pointer; font-size: 11.5px; white-space: nowrap; }
+.stats-menu button:hover { background: #e8f0fb; }
+table.stats-pairs { border-collapse: collapse; font: 11px/1.4 'Courier New', monospace; width: 100%; }
+table.stats-pairs th { position: sticky; top: 0; background: #f5f6f8; text-align: left; padding: 3px 8px; border-bottom: 1px solid #bbb; font-family: system-ui, sans-serif; }
+table.stats-pairs td { padding: 2px 8px; border-bottom: 1px solid #f0f0f0; white-space: nowrap; }
+table.stats-pairs td:nth-child(n+4), table.stats-pairs th:nth-child(n+4), table.stats-pairs td:first-child { text-align: right; }
+table.stats-pairs tbody tr { cursor: pointer; }
+table.stats-pairs tbody tr:hover { background: #fff3b0; }
+.stats-empty, .stats-note { color: #777; font-size: 11.5px; padding: 10px 4px; }
+.stats-note { padding: 4px; }
+.stats-win { box-sizing: border-box; }   /* sizes set in JS are the outer size, as read back by getBoundingClientRect */
+.stats-chip[hidden], .stats-x[hidden] { display: none !important; }
+.stats-menu-right { left: auto; right: 0; min-width: 190px; }

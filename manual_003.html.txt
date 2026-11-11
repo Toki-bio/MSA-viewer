@@ -1,0 +1,409 @@
+[manual.html lines 743-1150 of ViewAlign fd8b8e4]
+    files. The Block and Canvas view modes (and the hidden Full) are restored; a snapshot taken in Reads mode
+    reopens in Canvas. Presets saved in Canvas reopen in Canvas.
+  </p>
+  <ul>
+    <li><strong>Save Preset</strong> (<kbd>Ctrl+Shift+S</kbd>) - saves the current view settings (shading
+    thresholds and colours, zoom, view mode, block size, name length and No limit, consensus settings, colour scheme,
+    Sticky Names) in the browser's <code>localStorage</code>. There is one preset; saving again replaces
+    it. It holds no alignment data.</li>
+    <li><strong>Load Preset</strong> (<kbd>Ctrl+O</kbd>) - applies the saved preset</li>
+    <li>The snapshot dropdown lists snapshot files offered by the server (<code>/api/snapshots</code>) or,
+    on GitHub Pages, listed in <code>snapshots/index.json</code>; pick one and click <strong>Open</strong>
+    (<strong>Refresh</strong> reloads the list). <strong>Open Path</strong> opens a snapshot file by its path
+    (as <code>?snapshotFile=</code> does)</li>
+    <li><strong>Create</strong> downloads the current state as a JSON snapshot and as a standalone HTML page,
+    and copies a <code>?snapshot=</code> URL to the clipboard</li>
+  </ul>
+  <p>Snapshots themselves are files (JSON, or a standalone HTML page); they are not kept in
+  <code>localStorage</code>.</p>
+  <p>
+    On GitHub Pages, snapshot listing is loaded from <code>snapshots/index.json</code>. If no
+    shared snapshots are available, the viewer shows an empty list instead of a failed request.
+  </p>
+
+  <h3 id="in-saveload">2.7 Save / Export Alignment</h3>
+  <p>
+    Save the current alignment as FASTA with the <strong>Save</strong> button in the toolbar (next to
+    Input); <strong>SVG</strong>, <strong>RTF</strong>, <strong>Full SVG</strong> and <strong>Create</strong>
+    (JSON + standalone HTML snapshot) are in the Input menu; Newick comes from the Tree window (see §9.10).
+    Supported output formats: FASTA, RTF, SVG, Newick (<code>.nwk</code>), and standalone HTML snapshots.
+    MSF is supported for input only; save as FASTA and convert if you need MSF output.
+  </p>
+</section>
+
+<!-- ════════════════════════════════════════ -->
+<section id="alignment-menu">
+  <h2>3. Alignment Menu</h2>
+  <p>
+    The Alignment menu contains tools for realignment, sequence addition, BLAST retrieval,
+    and degapping.
+  </p>
+
+  <h3 id="al-real-time">3.1 Real-Time Alignment</h3>
+  <p>
+    Two alignment engines are available. The Alignment menu's <strong>Realign All</strong>,
+    <strong>Realign Selected</strong>, and <strong>Realign Block</strong> buttons all honour
+    the options in §3.2, including <em>Reorder only (no alignment)</em>.
+  </p>
+  <ul>
+    <li>
+      <strong>In the browser (MAFFT WASM)</strong> - the Realign buttons run MAFFT v7.525's
+      <code>disttbfast</code> program, compiled to WebAssembly, in a background worker. No server is
+      needed. This is MAFFT's progressive FFT-NS strategy; the iterative strategies (G-INS-i, L-INS-i,
+      E-INS-i) are not available in the browser. Above 250,000 residues in total the viewer asks before
+      aligning, and above 500,000 it offers to switch to the fast strategy.
+    </li>
+    <li>
+      <strong>On the optional server</strong> - <code>server.js</code> also exposes
+      <code>POST /api/mafft</code>, which runs the native MAFFT binary with whitelisted options
+      (§11.2). The viewer's buttons do not call it; it is there for scripts and other clients.
+    </li>
+  </ul>
+
+  <h3 id="al-advanced">3.2 Advanced MAFFT Options</h3>
+  <p>The Alignment menu options below apply to in-browser MAFFT WASM.</p>
+  <table>
+    <tr><th>Option</th><th>Effect</th></tr>
+    <tr><td>Seq Type</td><td>Nucleotide, Protein (BLOSUM62) or Protein (JTT 200PAM) scoring (MAFFT's <code>--bl 62</code> / <code>--jtt 200</code>), or Coding sequence (§3.2.2)</td></tr>
+    <tr><td>Gap Open</td><td>Cost of opening a gap (default 1.53, MAFFT's <code>--op</code>)</td></tr>
+    <tr><td>Gap Ext</td><td>Gap extension penalty / offset (default 0.0, MAFFT's <code>--ep</code>)</td></tr>
+    <tr><td>Speed</td><td>How many times the guide tree is built (MAFFT's <code>--retree</code>): <strong>Fast</strong> = 1 (FFT-NS-1), <strong>Standard</strong> = 2 (FFT-NS-2, MAFFT's default), <strong>Extra</strong> = 3</td></tr>
+    <tr><td>Adjust direction</td><td>Detect sequences whose orientation disagrees with the first (6-mer voting, nucleotide only) and reverse-complement them before aligning. With Realign Block, you are asked whether to apply that to the <em>full</em> sequences (default Yes; suppressible)</td></tr>
+    <tr><td>Reorder by similarity</td><td>Order rows by a k-mer UPGMA guide tree (k is set next to the Reorder options, 3&ndash;12, default 6; it is the same setting as k in Clustering &gt; Group by k-mer) (the viewer's analogue of MAFFT <code>--reorder</code>, not a MAFFT flag during WASM alignment). Realign All applies this to the whole MSA. Realign Block computes the tree from the selected region and asks before applying it to all rows (default No; suppressible)</td></tr>
+    <tr><td>Reorder only (no alignment)</td><td>Skip MAFFT. Realign All permutes the loaded rows by the whole-MSA tree. Realign Block permutes by the selected region and still asks before applying (if you answer No, nothing changes)</td></tr>
+    <tr><td>Don't ask (full-seq RC)</td><td>Remember the full-sequence reverse-complement answer for Realign Block (stored default: Yes)</td></tr>
+    <tr><td>Don't ask (apply order)</td><td>Remember whether region order is applied to the whole MSA (stored default: No)</td></tr>
+  </table>
+
+  <h3 id="al-realign-block">3.2.1 Realign Block</h3>
+  <p>
+    <strong>Realign Block</strong> (<kbd>Ctrl+Shift+R</kbd>) realigns only the selected
+    columns and splices the result back, leaving unselected columns unchanged. With a
+    rectangle of residues selected instead (drag across rows, &sect;10.3) it realigns only those
+    rows within those columns: the other rows are untouched, and the alignment stays rectangular
+    (when the realigned piece is wider than the span the other rows get gaps right after it;
+    when it is narrower the block rows get gaps after the piece). Undo puts everything back.
+    With column spans, each
+    contiguous run of two or more selected columns is extracted, degapped, sent to MAFFT
+    independently, and written back in one rebuild, so selecting several disjoint blocks
+    does not pull the intervening columns into the alignment and later blocks are not
+    shifted by earlier inserts.
+  </p>
+  <ul>
+    <li>A run of a single isolated column is ignored. You need at least one span of two or more columns.</li>
+    <li><strong>Adjust direction</strong> votes on the concatenated selected residues. Yes (recommended) reverse-complements each flagged <em>row</em> and remaps the selected columns to the mirrored positions on that row; No reverse-complements only the selected slices and keeps the original flanks.</li>
+    <li><strong>Reorder by similarity</strong> builds the guide tree from the selected region (after any strand correction, before MAFFT). Applying that order to the whole MSA is off unless you say Yes.</li>
+    <li>This is not clustering's local-only paint: when you accept the order prompt, Realign Block <em>does</em> write a new row order.</li>
+  </ul>
+
+  <h3 id="al-codon-align">3.2.2 Codon-aware alignment of coding sequences</h3>
+  <p>
+    Setting <strong>Sequence type</strong> to <strong>Coding sequence (codon, frameshift-aware)</strong> replaces MAFFT
+    with a built-in aligner for protein-coding nucleotide sequences, run in a worker (the
+    <strong>Codon alignment (MACSE)…</strong> button of the Alignment menu, or <strong>MACSE…</strong> in the Codon bar,
+    sets it). It applies to
+    <strong>Realign All</strong>, <strong>Realign Selected</strong> and <strong>Add &amp; Align</strong>, and honours
+    <strong>Adjust direction</strong> (reverse-complemented coding sequences are flipped first). Sequences must be
+    nucleotide CDS (DNA or RNA, upper or lower case, IUPAC codes allowed) in frame at their first nucleotide; protein
+    input is refused with a message. <strong>Realign Block</strong> is refused in this mode: a column span cuts each row
+    at a different codon position, so a block cannot be codon-aligned on its own (switch Sequence type to Nucleotide to
+    realign a block).
+  </p>
+  <p>
+    The alignment is built from codon columns. In every column a sequence contributes a whole codon, a gap
+    (<code>---</code>) or a <em>frameshifted codon</em>: one or two real nucleotides, with the missing bases written as
+    <code>-</code>, so the result is a plain nucleotide alignment and <a href="#di-codons">Codon analysis</a> marks the
+    frameshifts and stop codons. (MACSE writes the missing bases as <code>!</code>; the viewer treats only <code>-</code>
+    and <code>.</code> as gaps, so <code>!</code> is not used here.) The Codon alignment settings offer two methods.
+  </p>
+  <p>
+    <strong>MACSE v2.07 (exact)</strong>, the default, is a JavaScript port of the <code>alignSequences</code> program of
+    MACSE v2.07 (Ranwez et al. 2011, 2018), file <code>macse-align.js</code>. It was ported class by class from the
+    MACSE v2.07 release and gives the same alignment as <code>java -jar macse_v2.07.jar -prog alignSequences</code> with the
+    same settings: on 2,636 four-species mammalian BUSCO genes every row of every alignment was identical to MACSE's output,
+    including the position of every frameshift. The algorithm is MACSE's: distances from maximal exact matches in the
+    three reading frames, a guide tree, progressive alignment of profiles nucleotide by nucleotide (codons scored with
+    BLOSUM62 as sums over all pairs of sequences, frameshift and stop-codon costs, gap openings counted from codon
+    patterns), then refinement by cutting the tree and realigning the two parts until the score stops improving.
+    The settings are MACSE's <code>-fs</code> (internal frameshift, default 30) and <code>-stop</code> (internal stop
+    codon, default 50); the other options keep MACSE's defaults (gap opening 7, extension 1, terminal gap opening 6.3 and
+    extension 0.9, terminal frameshift 10, standard genetic code). The port computes exactly what MACSE computes, but
+    faster: its innermost loop runs as WebAssembly, and it uses several processor cores (up to 8). Steps of MACSE that do
+    not depend on each other run at the same time, refinement steps that MACSE would try next are computed ahead and used
+    in MACSE's order, and large pairwise profile alignments are split into tiles computed in parallel. The worker threads
+    are kept for the next codon alignment (for two minutes), so later alignments start faster. On one computer, for 24
+    four-species genes of 0.4 to 3.6 kb, a first alignment took 0.6 to 3.9 s per gene, 9 times faster than MACSE
+    overall (up to 14 times for the longest gene); later ones took 0.14 to 2.9 s, 17 times faster (median 17); on one
+    core it is 4.7 times faster. The final version was checked against MACSE on
+    the 2,636 genes and on 260 random sets of 2 to 24 sequences: every alignment identical. The busy indicator shows
+    the stage. MACSE reads U and IUPAC codes other than R, Y and N as N;
+    the viewer aligns U as T and puts each sequence's own letters back into the result. Sequence names do not affect the
+    alignment (internal names are used, so commas, brackets and repeated names are safe). Alignments that would need
+    more than about 500 MB of memory are refused with a message. <code>macse-align.js</code> is distributed under
+    MACSE's CeCILL 2.1 licence (file <code>LICENSE-MACSE</code>).
+  </p>
+  <p>
+    <strong>fast (approximate)</strong> is written for this viewer (<code>codon-align.js</code>, from the published method
+    description, no MACSE code) and is much faster on long or many sequences. One <strong>reference</strong> sequence
+    defines the reading frame of the columns: the name typed in its settings, or else the first row (as displayed) among
+    the sequences being aligned. The other sequences are aligned to it pairwise (banded Gotoh dynamic programming) and
+    merged centre-star fashion. Codon pairs are scored with BLOSUM62 plus a small nucleotide-identity bonus; gaps are affine
+    (open 10, extension 1); every frameshifted codon costs 40 and every internal stop codon 50. A first pass with a free
+    reference frame finds frameshifts that belong to the reference itself: a reference frameshift supported by at least half
+    of the other sequences (at least two when there are three or more sequences) is fixed into the reference before the final
+    pass. Pick a complete, clean coding sequence as reference. On the 2,636 BUSCO genes it reproduces 98.9% of MACSE's
+    homologous nucleotide pairs (median 99.7%) in a median 0.7 s per gene; differences are concentrated in poorly conserved
+    regions and in the attribution of compensating frameshifts. Pairs that would need more than about 300 MB of working
+    memory are refused with a message; trim them first.
+  </p>
+  <p>
+    After alignment the status line reports the number of frameshifted codons and internal stops (details in the browser
+    console); with the fast method it also names the reference and warns if a typed reference name was not found.
+  </p>
+  <h3 id="al-addseq">3.3 Adding Sequences</h3>
+  <p>
+    Click the <strong>+</strong> button beside Input, or <strong>Add &amp; Align…</strong> in the
+    Alignment menu, to open the "Add Sequences" modal. Paste one or more FASTA sequences, or
+    <strong>Browse Files</strong> for sequence files (any format in 1.3, including AB1). Options:
+  </p>
+  <ul>
+    <li><strong>Just Add</strong> - append sequences padded with gaps at the end</li>
+    <li><strong>Add &amp; Align</strong> - remove all gaps and realign every sequence, old and new, with MAFFT (the existing columns are not kept; use Align to consensus to keep them)</li>
+    <li><strong>Align to consensus</strong> - align new sequences against the existing consensus before adding</li>
+    <li><strong>Place at top</strong> - insert new sequences at position 1 instead of the bottom</li>
+  </ul>
+
+  <h3 id="al-blast">3.4 BLAST Search</h3>
+  <p>
+    Run a similarity search directly from the viewer. Right-click a sequence name and select
+    <strong>BLAST Search</strong> (there is no button for it in the menus).
+  </p>
+  <p>
+    Search runs in the browser. The dialog lists the databases registered on the optional
+    local server (<code>GET /api/blast-db</code>); each database is served as a plain FASTA
+    URL, which a Web Worker downloads and caches in IndexedDB, so the first query against a
+    database is slower than subsequent ones. Scoring uses <strong>Smith-Waterman local
+    alignment</strong> - a standard algorithm that finds the best-matching sub-region between
+    your query and each database sequence, rather than requiring the two to align end-to-end.
+    Batch search against every registered database at once is also supported.
+  </p>
+  <ul>
+    <li><strong>Not NCBI BLAST</strong> - the search always runs in the browser worker; the viewer
+        never queries <code>blastn</code>. Adding a database from the viewer (§3.5) stores its FASTA on the server; when the
+        NCBI BLAST+ suite is installed the server also runs <code>makeblastdb</code> on it, but the viewer's search does not need that</li>
+    <li><strong>Server required</strong> - BLAST needs the Node.js server running. On the
+        static GitHub Pages deployment the dialog reports
+        &quot;Server not available - no BLAST databases&quot;</li>
+  </ul>
+  <p>Results appear in the same dialog as a ranked list, each with a short preview of the
+    matched region aligned against your query; click a result to add that sequence to your
+    alignment.</p>
+
+  <h3 id="al-blast-db">3.5 BLAST Database Management</h3>
+  <p>
+    The BLAST dialog dynamically fetches database lists from the server. Click
+    <strong>+ Manage Databases</strong> to open a management modal:
+  </p>
+  <ul>
+    <li><strong>List databases</strong> - view all configured databases with availability status</li>
+    <li><strong>Add database</strong> - upload a FASTA file, set a name and description; the server stores it and, when BLAST+ is installed, runs <code>makeblastdb</code> to index it</li>
+    <li><strong>Delete database</strong> - remove a database and its BLAST index files (<code>.nhr</code>, <code>.nin</code>, <code>.nsq</code>, etc.)</li>
+  </ul>
+  <p>
+    Database metadata is stored in <code>blast_dbs.json</code> and FASTA files/indexes in
+    <code>blast_dbs/</code>. Unavailable databases are shown greyed out.
+  </p>
+
+  <h3 id="al-degap">3.6 Degap Alignment</h3>
+  <p>
+    The <strong>Degap</strong> button (toolbar, next to Edit) removes all gap-only columns from the alignment.
+    This is useful for extracting ungapped sequence blocks for downstream analysis.
+    The operation is undoable (<kbd>Ctrl+Z</kbd>). In the Alignment menu, <strong>Degap block ←</strong> /
+    <strong>Degap block →</strong> remove the gaps inside the selected column block only and pack the
+    residues to the left or to the right.
+  </p>
+
+  <h3 id="al-realign-consensus">3.7 Re-align Against Consensus</h3>
+  <p>
+    Right-click a sequence and select <strong>Re-align against consensus</strong> to
+    realign that single sequence against the alignment's consensus profile using MAFFT.
+    This is useful for re-positioning a sequence that may have drifted or been misplaced
+    without re-aligning the entire dataset. Requires the server or WASM MAFFT.
+  </p>
+</section>
+
+<!-- ════════════════════════════════════════ -->
+<section id="clustering-menu">
+  <h2>4. Clustering Menu</h2>
+  <p>
+    The Clustering menu is for finding which sequences belong together, and
+    where on the alignment that evidence sits. It is built around three
+    instruments that answer different questions. They share the same panel
+    but do not all paint the same layer:
+  </p>
+  <table>
+    <tr><th>Instrument</th><th>Button</th><th>What it does</th><th>Row order</th></tr>
+    <tr>
+      <td><strong>k-mer groups</strong></td>
+      <td>Group by k-mer</td>
+      <td>Overall resemblance (same k-mer tree as Reorder by similarity). Every sequence is assigned.</td>
+      <td>Unchanged</td>
+    </tr>
+    <tr>
+      <td><strong>Diagnostic SNPs</strong></td>
+      <td>Find SNP groups</td>
+      <td>Exclusive SNP columns the rest of the alignment does not share. Sequences without such SNPs stay unassigned.</td>
+      <td>Unchanged</td>
+    </tr>
+    <tr>
+      <td><strong>2D analysis</strong></td>
+      <td>Show 2D</td>
+      <td>Rectangles over stretches where a subset of rows share a local pattern. Overlay only.</td>
+      <td>Unchanged until you Alt+click a rectangle or press Group rows</td>
+    </tr>
+  </table>
+  <p>
+    Trim first if the ends are gappy. Load the
+    <a href="https://toki-bio.github.io/MSA-viewer/?url=https://toki-bio.github.io/MSA-viewer/examples/svk_k4.fa&amp;title=SVK%20SINE%20(K1–K4)">starter SINE alignment</a>
+    to try the three buttons on a known four-group example.
+  </p>
+
+  <h3 id="cl-trim">4.1 Trimming</h3>
+  <p>
+    Trim ragged alignment ends before grouping so gap-heavy edges do not
+    inflate scores:
+  </p>
+  <table>
+    <tr><th>Parameter</th><th>Default</th><th>Meaning</th></tr>
+    <tr><td>Left %</td><td>50</td><td>If the sliding window at the left edge has >= this % gaps, those columns are candidates to cut</td></tr>
+    <tr><td>Right %</td><td>80</td><td>Same for the right edge (more permissive by default, since right ends are often ragged)</td></tr>
+    <tr><td>Window</td><td>15</td><td>Number of consecutive columns averaged at each edge</td></tr>
+    <tr><td>Keep</td><td>—</td><td>1-based first and last column to keep. Filled by Preview from the gap-% windows; you can type new values or drag the coloured Consensus edges</td></tr>
+  </table>
+  <p>
+    Use <strong>Preview</strong> to paint the columns the gap-% windows would
+    cut. Left % / Right % / Window choose that automatic cut; the resulting
+    1-based <strong>Keep</strong> range is filled in so you can see (and type)
+    the exact columns that would remain. Hover <strong>Trim</strong> for a
+    live summary of which columns will go. Coloured Consensus residues are the
+    ones that will be removed — drag those inner borders to adjust, then
+    <strong>Trim</strong>. <strong>Empty cols</strong> deletes columns that are
+    a gap in every sequence.
+  </p>
+  <p>
+    <strong>Hard</strong> permanently deletes the trimmed columns (Undo reverses it).
+    <strong>Soft</strong> only hides those columns from SNP grouping and Clusterability;
+    the alignment itself is unchanged. Show 2D currently uses the full sequences,
+    including soft-trimmed columns. <strong>Clear Soft</strong> appears while a
+    soft trim is active.
+  </p>
+  <div class="tip">
+    <strong>Recommendation:</strong> Always trim before SNP grouping. Gap-heavy edges
+    inflate diagnostic scores with artefacts.
+  </div>
+
+  <h3 id="cl-kmer">4.2 k-mer groups</h3>
+  <p>
+    <strong>Group by k-mer</strong> cuts the same oligonucleotide-similarity tree
+    used by Alignment → Reorder by similarity. Sequences that fall in a group
+    smaller than <em>Min size</em> are left unassigned (set Min size to 1 to give
+    every sequence a group). It does not look for diagnostic SNP columns and it does not reorder
+    the alignment. Names and distinctive bases are coloured.
+  </p>
+  <table>
+    <tr><th>Parameter</th><th>Default</th><th>Meaning</th></tr>
+    <tr><td>Method</td><td>tree cut</td><td><em>Tree cut</em> splits the similarity tree at the height that fits best (the settings below). <em>Peel (diagnostic columns)</em> is for alignments of chunk consensi or subfamilies: it repeatedly takes the group that differs most clearly from the rest (the most diagnostic columns, where the group is almost fixed for one base that almost no other sequence has), sets it aside, continues with the rest, then looks inside each peeled group. Peel needs an alignment (all rows the same length; otherwise the tree cut is used) and groups of at least 3. While peel is selected, Distance, Linkage, ignore strand and Groups/auto are disabled; Min size still applies</td></tr>
+    <tr><td>Min diagnostic columns</td><td>2</td><td>Peel only (the box next to Method, 1–50): the smallest number of diagnostic columns a group needs. Lower finds more, weaker groups (2 is the loosest sensible value); higher keeps only well-supported groups</td></tr>
+    <tr><td>Distance</td><td>aligned columns</td><td><em>Aligned columns</em> compares two sequences by the differences in the alignment columns where both have a base. It uses the alignment, does not depend on k, and is not thrown off by sequences that cover different parts of the alignment (chunks, truncated copies). <em>k-mer</em> compares shared words of length k without the alignment (the same tree as Reorder by similarity)</td></tr>
+    <tr><td>k</td><td>6</td><td>Oligonucleotide length for the k-mer distance (3–12); greyed out for aligned columns. A very short k cannot tell sequences apart and a very long k leaves diverged sequences with no words in common: the explorer says so</td></tr>
+    <tr><td>Linkage</td><td>average</td><td>How groups grow. <em>Average</em>: a sequence joins a group when it is close to the group on average (compact groups). <em>Chain</em> (single linkage): it joins when it is close to <em>any</em> member, so fragments or chunks that cover different parts of one element are linked through the ones between them (best for chunk consensi on aligned columns; can join groups through a single close pair)</td></tr>
+    <tr><td>ignore strand</td><td>off</td><td>k-mer distance only: a word and its reverse complement count as the same, so a sequence and its reverse-complemented copy group together. Leave off for same-strand data (with a very short k it can blur real differences); greyed out for aligned columns</td></tr>
+    <tr><td>Groups</td><td>auto</td><td>The <em>auto</em> box (ticked) lets the tree choose how many groups: the number that stays the same over the widest range of the tree (not the largest single jump). The explorer shows how stable it is and which other counts are also stable. Type a number, or untick auto, to ask for that many groups; tick auto again to go back</td></tr>
+    <tr><td>Min size</td><td>2</td><td>Find the requested number of groups that each have <em>at least</em> this many sequences. Smaller groups (a lone sequence, a pair...) are not counted: their sequences are listed as unassigned. If the tree has fewer such groups than asked for, you are told how many exist</td></tr>
+  </table>
+  <p>
+    Use this when you want a first split by overall resemblance (a first split of
+    the starter file by subfamily: with the default settings it gives three groups,
+    because K1 and K2 are close and are not separated by a tree cut; Auto also lists
+    4 as an alternative count). Use Diagnostic SNPs when you care which
+    columns actually distinguish those groups, or to separate groups the tree keeps together. <strong>Clear</strong> next to
+    this button removes the shared name/letter colour layer (same layer as SNP
+    grouping). 2D rectangles stay.
+  </p>
+
+  <h3 id="cl-snp">4.3 Diagnostic SNPs</h3>
+  <p>
+    <strong>Find SNP groups</strong> looks for exclusive SNP columns: positions
+    where a subset of sequences share a base the rest of the alignment does not.
+    Sequences without such SNPs stay unassigned. Names and exclusive/shared
+    letters are coloured. Row order is unchanged.
+  </p>
+  <div class="tip">
+    <strong>Check small groups against chance.</strong> Find SNP groups reports
+    no significance. With the default settings (Min Size 3, Min Features 5) it
+    also splits <em>random</em> sequences into groups of three: on uniformly
+    random DNA, 12 sequences gave 4 groups at 150, 500 and 2,000 bp, and
+    20 sequences of 2,000 bp gave 6. Columns where three sequences share a
+    base by chance become more frequent as the alignment gets longer, and
+    raising <strong>Min Features</strong> does not remove them reliably
+    (12 random sequences of 2,000 bp still gave 4 groups with Min Features 15).
+    Treat groups of three or four sequences as suggestions, and run the same
+    settings on a copy of the alignment with the residues of each column
+    shuffled between sequences: any group found there is noise, and a group in
+    the real alignment is only convincing if it is clearly stronger than those.
+  </div>
+  <p>
+    <strong>Split existing groups</strong> (off by default) does not add extra
+    groups on top. When checked, Find SNP groups looks for exclusive SNPs
+    <em>inside</em> each current group instead of scanning the whole alignment.
+    Groups that have none stay as they are. If sequences are selected, only the
+    group(s) those rows belong to are split; with nothing selected, every
+    current group is tried.
+  </p>
+  <p>
+    <strong>Selected columns only</strong> (off by default): Find SNP groups and k-mer grouping read only the
+    selected columns, or the columns of a selected block of residues, from the first to the last; every row is
+    grouped. The range is kept with the result, so positions in the group list stay alignment columns after the
+    selection changes. With nothing selected the whole alignment is used.
+  </p>
+  <p>
+    <strong>Selected rows only</strong> (off by default): Find SNP groups and k-mer grouping group only the selected
+    sequences, or the rows of a selected block of residues; the other rows keep the groups they had (without their
+    diagnostic columns, which came from the earlier run). New groups get names and colours of their own. With both options on, a
+    rectangle groups its own rows by its own columns. It needs at least 3 rows, and is not used with
+    <strong>Split existing groups</strong>, which splits the current groups as they are.
+  </p>
+  <p>
+    Open <strong>Thresholds</strong> for the knobs below. They apply to SNP
+    grouping and Clusterability, and Show 2D also reads Min Size / Min Features
+    when it decides which local patterns are worth boxing.
+  </p>
+  <h4 id="cl-basic">Basic</h4>
+  <table>
+    <tr><th>Parameter</th><th>Default</th><th>Meaning</th></tr>
+    <tr><td>Min Size</td><td>3</td><td>Groups smaller than this are discarded</td></tr>
+    <tr><td>Min Features</td><td>5</td><td>Minimum exclusive SNP columns that survive quality scoring</td></tr>
+    <tr><td>Max Iter</td><td>10</td><td>Rounds with progressively relaxed quality thresholds. More iterations recover smaller families</td></tr>
+  </table>
+
+  <h4 id="cl-quality">4.3.1 Quality, breakpoints, presets</h4>
+  <p>
+    Quality thresholds control how many group members must share a nucleotide
+    pattern for it to count as a diagnostic feature. Higher values = stricter,
+    fewer but cleaner groups.
+  </p>
+  <table>
+    <tr><th>Parameter</th><th>Default</th><th>Applies To</th></tr>
+    <tr><td>Small &lt;11</td><td>80%</td><td>Groups below the Small→Med breakpoint</td></tr>
+    <tr><td>Medium 11–19</td><td>70%</td><td>Groups between the two breakpoints</td></tr>
+    <tr><td>Large >=20</td><td>60%</td><td>Groups at or above the Med→Large breakpoint</td></tr>
+  </table>
+  <p id="cl-breakpoints">
+    Size breakpoints are the sequence counts at which the quality tier changes.
+    <strong>Min Occur</strong> (default 3) is a raw floor: how many (position, base)
+    hits a pattern needs before scoring. Min Features is how many of those survive
+    as exclusive SNPs. They are not two names for the same knob.
+  </p>
+  <p id="cl-presets">
+    Under <strong>Presets</strong>: <strong>Save</strong> stores current parameters

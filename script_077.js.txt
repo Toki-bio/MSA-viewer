@@ -1,0 +1,451 @@
+[script.js lines 34310-34759 of ViewAlign fd8b8e4]
+// ============================================================================
+// RE-ALIGN AGAINST CONSENSUS
+// ============================================================================
+
+async function realignSequenceAgainstConsensus(index) {
+    if (!state.seqs || state.seqs.length < 2) {
+        showMessage('Need at least 2 sequences for consensus', 2000);
+        return;
+    }
+    const gappedCons = computeConsensusForSequences(state.seqs.map(s => s.seq));
+    if (!gappedCons) {
+        showMessage('Could not compute consensus', 2000);
+        return;
+    }
+    try {
+        const { args: extraArgs, seqType } = getMafftExtraArgs();
+        const consensusArgs = [...extraArgs];
+
+        showMessage('Re-aligning sequence against consensus...', 0);
+        const startSeqs = state.seqs, startFp = _seqsFingerprint();
+        const alignedProfile = await alignSequenceToConsensusProfile(state.seqs[index].seq, gappedCons, consensusArgs);
+        // no busy overlay here: the rows may have changed meanwhile (audit 2026-11-10, H2)
+        if (state.seqs !== startSeqs || _seqsFingerprint() !== startFp) {
+            showMessage('The alignment changed while the sequence was being re-aligned, so the result was not used. Run it again.', 7000);
+            return;
+        }
+
+        pushUndo('realign-to-consensus');
+        state.seqs = state.seqs.map((seqObj, seqIndex) => {
+            const nextSeq = seqIndex === index
+                ? alignedProfile.seq
+                : _rebuildSequenceWithInsertedProfileColumns(seqObj.seq, alignedProfile.layout, alignedProfile.extraColumnsPerSlot);
+            return {
+                ...seqObj,
+                seq: nextSeq,
+                gaplessPositions: calculateGaplessPositions(nextSeq)
+            };
+        });
+
+        renderAlignment();
+        showMessage(`Re-aligned "${state.seqs[index].header}" against consensus`, 2200);
+    } catch (err) {
+        console.error('Consensus realign failed:', err);
+        showMessage(`Consensus realign failed: ${err.message}`, 4000);
+    }
+}
+
+// ============================================================================
+// DOT-PLOT (integrated from Doter)
+// ============================================================================
+
+let _dotPlotWorker = null;
+let _dotPlotState = {
+    matchMap: null,
+    spinMode: true,
+    seqA: '', seqB: '', nameA: '', nameB: '',
+    sourceSeqA: '', sourceSeqB: '',
+    scores: null, rows: 0, cols: 0,
+    scoreMin: 0, scoreMax: 1,
+    threshold: 0.55, windowSize: 9, zoom: 1,
+    dotImage: null, overview: null, overviewBin: 1, computing: false,
+    lastRow: -1, lastCol: -1,
+    pinnedRow: -1, pinnedCol: -1,
+    meta: null,
+    alignMapA: null,
+    alignMapB: null,
+    rowIndexA: -1,
+    rowIndexB: -1,
+    // A typed / selected range: the plot holds residues offA..offA+rows-1 of the full ungapped sequence A (0-based) and
+    // offB.. of B; dispOffB is B's offset in the PLOTTED orientation (with RevComp B the plot runs backwards from the
+    // other end of the range). fullLenA/B are the full lengths. Every A number shown to the user is index + offA; every B
+    // number is the B ROW's own forward residue number (1-based, ungapped), made by _dotBNum from the plotted index
+    // (dispOffB + index): with RevComp B it simply runs down along the axis. dispOffB itself is internal (the stored
+    // stretches of presets and the collection use it) and is never shown.
+    offA: 0, offB: 0, dispOffB: 0, fullLenA: 0, fullLenB: 0,
+    regions: [],
+    _copyRegion: null,
+    _frozen: false,
+    _frozenRow: -1,
+    _frozenCol: -1
+};
+const DOT_AXIS_PAD = 50;
+// Largest plot computed (cells = length A x length B). The score matrix is
+// held in memory, so this bounds memory at about 200 MB (Dotter) / 100 MB (SPIN).
+const DOT_MAX_CELLS = 100_000_000;
+// Side of the cached overview image. Larger plots are max-pooled into it, and
+// zooming in past its resolution draws the visible cells straight from the data.
+const DOT_OVERVIEW_MAX = 4096;
+// Word lengths (SPIN) and window lengths (Dotter) accepted by the input
+const DOT_WORD_RANGE = [2, 20];
+const DOT_WINDOW_RANGE = [1, 61];
+
+// Ungapped position -> 1-based alignment column
+function _buildUngappedToAlignMap(alignedSeq) {
+    if (!alignedSeq) return null;
+    const map = [];
+    for (let i = 0; i < alignedSeq.length; i++) {
+        const ch = alignedSeq[i];
+        if (ch !== '-' && ch !== '.' && ch !== ' ') map.push(i + 1);   // same characters the plotted sequences drop
+    }
+    return map;
+}
+
+function _dotSeqContext(seq, pos0, radius = 8) {
+    if (!seq || pos0 < 0 || pos0 >= seq.length) return '';
+    const start = Math.max(0, pos0 - radius);
+    const end = Math.min(seq.length, pos0 + radius + 1);
+    const left = seq.substring(start, pos0);
+    const center = seq[pos0] || 'N';
+    const right = seq.substring(pos0 + 1, end);
+    return `${left}[${center}]${right}`;
+}
+
+// Dotter scores are identical-residue counts over the window; identity is that
+// count over the full window length (a window clipped at a sequence end is not
+// scaled up, so a few chance matches at the plot edge cannot read as 100%).
+// Settings and data for a cell. A self-plot can use its own settings below the diagonal
+// (S.lower); everything else, and the diagonal itself, uses the main settings in S.
+function _dotHalf(row, col) {
+    const S = _dotPlotState;
+    return (S.lower && S.lower.ready && row > col) ? S.lower : S;
+}
+function _dotIdentityAt(i) {
+    const S = _dotPlotState;
+    const row = Math.floor(i / (S.cols || 1)), H = _dotHalf(row, i - row * S.cols);
+    return H.scores ? H.scores[i] / (H.windowSize || 1) : 0;
+}
+
+function _dotIsDot(row, col) {
+    const S = _dotPlotState, H = _dotHalf(row, col);
+    const i = row * S.cols + col;
+    if (H.spinMode && H.matchMap) return H.matchMap[i] === 1;
+    return !!H.scores && H.scores[i] / (H.windowSize || 1) >= H.threshold;
+}
+
+function _dotNormAt(row, col) {
+    const S = _dotPlotState, H = _dotHalf(row, col);
+    if (H.spinMode && H.matchMap) return H.matchMap[row * S.cols + col];
+    return _dotIdentityAt(row * S.cols + col);
+}
+
+// Residues that never match, so runs of unknown bases do not draw solid blocks. Protein: X, * and ?; N is asparagine.
+// Judged on the whole sequences (and the alignment's type when the rows come from it), not on the plotted part: a part
+// of a protein with no letter outside the nucleotide codes (N, K, A, G, D ...) was taken as DNA and its N's lost their dots.
+function _dotUnknownChars(seqA, seqB, proteinHint) {
+    // Letters that exist in protein but not in nucleotide IUPAC codes
+    const protein = !!proteinHint || /[EFIJLOPQZ*]/.test(seqA) || /[EFIJLOPQZ*]/.test(seqB);
+    return protein ? 'X*?' : 'NX';
+}
+
+const _dotWorkerJobs = {};   // file -> reject function of the job in flight
+function _dotRunWorker(file, message) {
+    // One job per worker: a new job stops the one in flight (its result would be for old settings)
+    if (_dotWorkerJobs[file]) {
+        const cancel = _dotWorkerJobs[file];
+        if (file === 'word') { _dotWordWorker?.terminate(); _dotWordWorker = null; }
+        else { _dotPlotWorker?.terminate(); _dotPlotWorker = null; }
+        cancel(new Error('cancelled'));
+    }
+    return new Promise((res, rej) => {
+        // plain assignments: ||= (ES2021) does not parse in Chrome/Edge 80-84, and the whole script then fails
+        if (file === 'word' && !_dotWordWorker) _dotWordWorker = new Worker('doter-word-worker.js?v=' + BUILD_TAG.replace(/^v/, ''));
+        if (file !== 'word' && !_dotPlotWorker) _dotPlotWorker = new Worker('doter-worker.js?v=' + BUILD_TAG.replace(/^v/, ''));
+        const w = file === 'word' ? _dotWordWorker : _dotPlotWorker;
+        const done = () => { w.removeEventListener('message', ok); w.removeEventListener('error', no);
+            if (_dotWorkerJobs[file] === no) delete _dotWorkerJobs[file]; };
+        const ok = (e) => { done(); if (e.data.error) { rej(new Error(e.data.error)); return; } res(e.data); };
+        const no = (e) => { done(); rej(e instanceof Error ? e : new Error(e.message || 'worker error')); };
+        _dotWorkerJobs[file] = no;
+        w.addEventListener('message', ok);
+        w.addEventListener('error', no);
+        w.postMessage(message);
+    });
+}
+let _dotWordWorker = null;
+
+// --- Mode toggle: each mode has its own valid length range ---
+function _dotOnModeChange() {
+    const S = _dotPlotState;
+    const spinRadio = document.querySelector('input[name="dotPlotMode"][value="spin"]');
+    S.spinMode = spinRadio ? spinRadio.checked : true;
+    _dotSyncSliderRow(S.spinMode, 'dotPlotWindow', 'dotPlotWindowLabel', 'dotPlotWindowVal', 'dotPlotThreshWrap', 'dotPlotThreshold', 'dotPlotThreshVal');
+    _dotSyncColourInputs();   // an unset dot / background colour shows this method's default (white on black for SPIN, black on white for Dotter)
+}
+// One wide slider for the word (SPIN) or window (Dotter) length: its range, label and title follow the mode;
+// the identity-threshold slider is shown in Dotter mode only (it used to sit greyed out as "N/A").
+// (owner, 2026-10-23)
+function _dotSyncSliderRow(spin, winId, labelId, valId, threshWrapId, threshId, threshValId) {
+    const win = document.getElementById(winId), label = document.getElementById(labelId), val = document.getElementById(valId);
+    const [lo, hi] = spin ? DOT_WORD_RANGE : DOT_WINDOW_RANGE;
+    if (win) {
+        win.min = lo; win.max = hi; win.step = 1;
+        const v = parseInt(win.value, 10);
+        if (!(v >= lo && v <= hi)) win.value = spin ? 6 : 11;
+        win.title = spin
+            ? `Word length for SPIN exact matches (${lo}-${hi}). Shorter words find more, and noisier, matches`
+            : `Sliding window length for Dotter (${lo}-${hi}). Longer windows smooth over single mismatches`;
+        if (val) val.textContent = win.value;
+    }
+    if (label) label.textContent = spin ? 'Word length' : 'Window';
+    const wrap = document.getElementById(threshWrapId);
+    if (wrap) wrap.hidden = spin;
+    const th = document.getElementById(threshId), tv = document.getElementById(threshValId);
+    if (th && tv) tv.textContent = th.value + '%';
+}
+
+let _dotLiveTimer = 0;
+function _dotLive() { return document.getElementById('dotPlotLive')?.checked !== false; }
+function _dotMarkDirty(on) {
+    const b = document.getElementById('dotPlotRecalc');
+    if (!b) return;
+    b.classList.toggle('dot-dirty', !!on);
+    b.title = on ? 'Settings changed: press to recalculate the plot' : 'Rerun the dot plot with the current settings';
+}
+function _dotRecalculate() {
+    clearTimeout(_dotLiveTimer);
+    _dotMarkDirty(false);
+    const S = _dotPlotState;
+    const modal = document.getElementById('dotPlotModal');
+    if (modal && modal.style.display === 'none') return;                               // closed meanwhile
+    if (S.computing) { _dotLiveTimer = setTimeout(_dotRecalculate, 250); return; }   // one run at a time
+    if (S.sourceSeqA && S.sourceSeqB) openDotPlot(S.sourceSeqA, S.sourceSeqB, S.nameA, _dotPlotNameB(), S.meta);
+}
+
+// Floating window frame: drag by the title bar, resize from 8 handles (.win-rz with data-dir),
+// maximize / restore with a button or a double-click on the title bar.
+function _initWindowFrame(win, bar, maxBtn, opts = {}) {
+    if (!win || win._frameBound) return;
+    win._frameBound = true;
+    const MIN_W = opts.minW || 360, MIN_H = opts.minH || 240;
+    const rect = () => { const r = win.getBoundingClientRect(); return { left: r.left, top: r.top, width: r.width, height: r.height }; };
+    const setRect = (r) => {
+        win.style.left = Math.round(r.left) + 'px'; win.style.top = Math.round(r.top) + 'px';
+        win.style.width = Math.round(r.width) + 'px'; win.style.height = Math.round(r.height) + 'px';
+    };
+    let drag = null, preMax = null;
+    const setMax = (on) => {
+        if (on === win.classList.contains('win-maximized')) return;
+        if (on) {
+            preMax = rect();
+            win.classList.add('win-maximized');
+            setRect({ left: 6, top: 6, width: window.innerWidth - 12, height: window.innerHeight - 12 });
+        } else {
+            win.classList.remove('win-maximized');
+            if (preMax) setRect(preMax);
+        }
+        if (maxBtn) {
+            maxBtn.innerHTML = on ? '&#10064;' : '&#9633;';
+            maxBtn.title = on ? 'Restore the previous size (or double-click the title bar)' : 'Maximize (or double-click the title bar)';
+        }
+    };
+    if (maxBtn) maxBtn.addEventListener('click', (e) => { e.stopPropagation(); setMax(!win.classList.contains('win-maximized')); });
+    bar.addEventListener('dblclick', (e) => { if (!e.target.closest('button')) setMax(!win.classList.contains('win-maximized')); });
+    window.addEventListener('resize', () => {
+        if (win.classList.contains('win-maximized')) setRect({ left: 6, top: 6, width: window.innerWidth - 12, height: window.innerHeight - 12 });
+    });
+    const start = (e, dir) => {
+        if (e.button !== 0 || win.classList.contains('win-maximized')) return;
+        e.preventDefault(); e.stopPropagation();
+        drag = { dir, x: e.clientX, y: e.clientY, r: rect() };
+        document.body.style.userSelect = 'none';
+        if (dir === 'move') win.classList.add('win-dragging');   // semi-transparent while it moves
+    };
+    const end = () => { if (!drag) return; drag = null; document.body.style.userSelect = ''; win.classList.remove('win-dragging'); };
+    window.addEventListener('blur', end);
+    bar.addEventListener('mousedown', (e) => { if (!e.target.closest('button')) start(e, 'move'); });
+    win.querySelectorAll('.win-rz').forEach(h => h.addEventListener('mousedown', (e) => start(e, h.dataset.dir)));
+    document.addEventListener('mousemove', (e) => {
+        if (!drag) return;
+        const dx = e.clientX - drag.x, dy = e.clientY - drag.y, r = drag.r, d = drag.dir;
+        let { left, top, width, height } = r;
+        if (d === 'move') {
+            left = Math.min(Math.max(r.left + dx, 120 - r.width), window.innerWidth - 120);
+            top = Math.min(Math.max(r.top + dy, 0), window.innerHeight - 40);
+        } else {
+            if (d.includes('e')) width = Math.max(MIN_W, Math.min(window.innerWidth - r.left, r.width + dx));
+            if (d.includes('s')) height = Math.max(MIN_H, Math.min(window.innerHeight - r.top, r.height + dy));
+            if (d.includes('w')) { width = Math.max(MIN_W, r.width - dx); left = Math.max(0, r.left + r.width - width); width = r.left + r.width - left; }
+            if (d.includes('n')) { height = Math.max(MIN_H, r.height - dy); top = Math.max(0, r.top + r.height - height); height = r.top + r.height - top; }
+        }
+        setRect({ left, top, width, height });
+    });
+    document.addEventListener('mouseup', end);
+}
+
+function _dotViewport() {
+    const vp = document.getElementById('dotPlotViewport');
+    return { vp, vw: vp ? vp.clientWidth : 600, vh: vp ? vp.clientHeight : 400 };
+}
+
+function _dotSetSpacer() {
+    const S = _dotPlotState;
+    const sp = document.getElementById('dotPlotSpacer');
+    if (!sp) return;
+    sp.style.width = (DOT_AXIS_PAD + Math.ceil(S.cols * S.zoom) + 1) + 'px';
+    sp.style.height = (DOT_AXIS_PAD + Math.ceil(S.rows * S.zoom) + 1) + 'px';
+}
+
+function _dotMinZoom() {
+    const S = _dotPlotState;
+    const { vw, vh } = _dotViewport();
+    const fit = Math.min((vw - DOT_AXIS_PAD - 12) / (S.cols || 1), (vh - DOT_AXIS_PAD - 12) / (S.rows || 1));
+    return Math.max(0.001, Math.min(0.5, fit));
+}
+
+function _dotApplyZoom(factor, anchorX, anchorY) {
+    const S = _dotPlotState;
+    const { vp } = _dotViewport();
+    if (!vp || (!S.scores && !S.matchMap)) return;
+    const r = vp.getBoundingClientRect();
+    const ax = (anchorX != null ? anchorX : r.left + vp.clientWidth / 2) - r.left - DOT_AXIS_PAD;
+    const ay = (anchorY != null ? anchorY : r.top + vp.clientHeight / 2) - r.top - DOT_AXIS_PAD;
+    const col = (ax + vp.scrollLeft) / S.zoom;
+    const row = (ay + vp.scrollTop) / S.zoom;
+    const z = S.zoom * factor;
+    S.zoom = Math.max(_dotMinZoom(), Math.min(24, z >= 1 ? Math.round(z * 10) / 10 : Math.round(z * 1000) / 1000));
+    S._autoFit = false; // the user chose a zoom: resizing no longer refits
+    _dotSetSpacer();
+    vp.scrollLeft = col * S.zoom - ax;
+    vp.scrollTop = row * S.zoom - ay;
+    _dotRender();
+    if (S.lastRow >= 0) {
+        _dotDrawOverlay(S.lastRow, S.lastCol);
+        _dotUpdateHoverInfo(S.lastRow, S.lastCol, { force: S._frozen });
+    }
+}
+
+function _dotBindPlotWheel(el) {
+    if (!el || el._dotWheelBound) return;
+    el._dotWheelBound = true;
+    el.addEventListener('wheel', (e) => {
+        const S = _dotPlotState;
+        if ((!S.scores && !S.matchMap)) return;
+        e.stopPropagation();
+        // The wheel zooms at the pointer (owner 2026-10-28; it scrolled, Ctrl+wheel zoomed). Shift+wheel, or a
+        // sideways trackpad swipe, pans; a drag on the plot pans too.
+        const vp = document.getElementById('dotPlotViewport');
+        if (e.shiftKey || Math.abs(e.deltaX) > Math.abs(e.deltaY)) {
+            if (!vp) return;
+            e.preventDefault();
+            const k = e.deltaMode === 1 ? 16 : e.deltaMode === 2 ? vp.clientHeight : 1;   // lines (Firefox) or pages
+            vp.scrollLeft += (e.shiftKey && !e.deltaX ? e.deltaY : e.deltaX) * k;
+            if (!e.shiftKey) vp.scrollTop += e.deltaY * k;
+            return;
+        }
+        if (!e.deltaY) return;
+        e.preventDefault();
+        const factor = e.deltaY < 0 ? 1.15 : 1 / 1.15;
+        _dotApplyZoom(factor, e.clientX, e.clientY);
+    }, { passive: false });
+}
+
+// Two residues count as the same for the guide line only when neither is unknown
+function _dotSame(a, b) {
+    const S = _dotPlotState;
+    return a === b && a !== ' ' && !(S.unknown || 'N').includes(a);
+}
+
+function _dotUpdateHoverInfo(row, col, options = {}) {
+    var S = _dotPlotState;
+    var hoverEl = document.getElementById('dotPlotHover');
+    var panelEl = document.getElementById('dotPlotAlignPanel');
+    var metaEl = document.getElementById('dotPlotAlignMeta');
+    const force = options.force === true;
+
+    if (S._frozen && !force) {
+        const frozenRow = S._frozenRow >= 0 ? S._frozenRow : S.pinnedRow;
+        const frozenCol = S._frozenCol >= 0 ? S._frozenCol : S.pinnedCol;
+        if (hoverEl && frozenRow >= 0 && frozenCol >= 0) {
+            hoverEl.textContent = `Frozen at A:${_dotShownA(frozenRow)}/${S.fullLenA}  B:${_dotShownB(frozenCol)}/${S.fullLenB}`;
+        }
+        if (panelEl) {
+            panelEl.style.boxShadow = 'inset 0 0 0 1px #4a9eff'; panelEl.style.borderColor = '#4a9eff';
+            panelEl.style.background = '#f0f8ff';
+        }
+        return;
+    }
+
+    var norm = _dotNormAt(row, col);
+    var chA = S.seqA[row] || 'N', chB = S.seqB[col] || 'N';
+
+    // SPIN-style diagonal registration: column k shows A[row+k] above B[col+k]
+    var ctxRaw = parseInt(document.getElementById('dotPlotContextRadius')?.value, 10);
+    var ctx = Number.isFinite(ctxRaw) ? Math.min(500, Math.max(0, ctxRaw)) : 30;
+    var aLine = '', bLine = '', guide = '';
+    var aStart = Math.max(0, row - ctx);
+    var bStart = Math.max(0, col - ctx);
+    var aEnd = Math.min(S.seqA.length, row + ctx + 1);
+    var bEnd = Math.min(S.seqB.length, col + ctx + 1);
+
+    for (var k = -ctx; k <= ctx; k++) {
+        var ar = row + k;
+        var br = col + k;
+        var aCh = (ar >= 0 && ar < S.seqA.length) ? S.seqA[ar] : ' ';
+        var bCh = (br >= 0 && br < S.seqB.length) ? S.seqB[br] : ' ';
+        aLine += aCh;
+        bLine += bCh;
+        guide += _dotSame(aCh, bCh) ? '|' : ' ';
+    }
+
+    var cursorCol = ctx;
+    if (cursorCol >= 0 && cursorCol < guide.length) {
+        guide = guide.substring(0, cursorCol) + '^' + guide.substring(cursorCol + 1);
+    }
+
+    if (hoverEl) {
+        hoverEl.textContent = 'A:' + _dotShownA(row) + '/' + S.fullLenA + '  B:' + _dotShownB(col) + '/' + S.fullLenB + '  ' +
+            (_dotHalf(row, col).spinMode ? 'match=' + norm : 'identity=' + Math.round(norm * 100) + '%') + '  ' + chA + ' vs ' + chB +
+            '  A[' + _dotSpanA(aStart, aEnd) + '] B[' + _dotSpanB(bStart, bEnd) + ']';
+    }
+    // Where this point sits in the loaded alignment
+    if (metaEl) {
+        if (!S._editStale && !_dotRowsUnchanged()) _dotCheckEdits();   // an edit made while the pointer stayed in the window: the fast check costs microseconds
+        const colA = !S._editStale && S.alignMapA && S.alignMapA[row];   // rows edited since the plot: no columns are claimed
+        const colB = !S._editStale && S.alignMapB && S.alignMapB[col];
+        metaEl.textContent = (colA || colB)
+            ? `Alignment columns: A ${colA || '-'}, B ${colB || '-'}`
+            : '';
+    }
+
+    if (panelEl) {
+        panelEl.style.borderColor = S._frozen ? '#4a9eff' : '#d8d8d8';
+        panelEl.style.boxShadow = S._frozen ? 'inset 0 0 0 1px #4a9eff' : 'none';
+        panelEl.style.background = S._frozen ? '#f0f8ff' : '#f7f7f7';
+
+        var aLabel = _dotShownA(Math.max(0, row - ctx));
+        var bLabel = _dotShownB(Math.max(0, col - ctx));
+        panelEl.textContent =
+            'A ' + String(aLabel).padStart(5) + '  ' + aLine + '\n' +
+            ' '.repeat(9) + guide + '\n' +
+            'B ' + String(bLabel).padStart(5) + '  ' + bLine;
+        _dotStripExtras(panelEl, row, col, ctx);
+
+        // the pair the panel shows: A[row+k] above B[col+k], only where both exist (cutting A and B
+        // independently gave two records of different length, not aligned to each other)
+        const diag = _dotDiagonalSlices(S.seqA, S.seqB, row, col, ctx);
+        S._copyRegion = {
+            aSlice: diag.a,
+            bSlice: diag.b,
+            aStart: diag.aStart,
+            bStart: diag.bStart,
+            nameA: S.nameA,
+            nameB: S.nameB
+        };
+    }
+
+    if (panelEl) panelEl.style.display = 'block';
+}
+
+

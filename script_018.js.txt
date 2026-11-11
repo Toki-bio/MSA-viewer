@@ -1,0 +1,516 @@
+[script.js lines 7579-8093 of ViewAlign fd8b8e4]
+                    ctx.fillStyle = sn === 'nonsyn' ? '#d93025' : '#2e9d57';
+                    const th = sn === 'nonsyn' ? 2 * CSS1 : CSS1;
+                    const uy = Math.min(y + CHAR_H - th, y + Math.round((m.ascent + 2) * dpr) / dpr);
+                    if (sn === 'synmulti') {   // dashed, like the DOM's text-decoration-style: dashed
+                        const dash = Math.max(CSS1, Math.round(2 * dpr) / dpr);
+                        for (let dx = 0; dx < CHAR_W; dx += 2 * dash) ctx.fillRect(x + dx, uy, Math.min(dash, CHAR_W - dx), th);
+                    } else ctx.fillRect(x, uy, CHAR_W, th);
+                }
+                // Decorations: underline (TSD bold style), overline (covered repeat), line-through (trim)
+                const deco = ov ? ov.deco : null;
+                if ((deco && deco.length) || trimmed) {
+                    ctx.fillStyle = (ov && ov.decoColor) || textFill;
+                    if (deco?.includes('underline')) ctx.fillRect(x, y + CHAR_H - 2, CHAR_W, 1.5);
+                    if (deco?.includes('overline')) ctx.fillRect(x, y, CHAR_W, 1.5);
+                    if (trimmed) { ctx.fillStyle = textFill; ctx.fillRect(x, y + CHAR_H / 2, CHAR_W, 1); }
+                }
+            }
+            if (dimmed) { dimmed = false; ctx.globalAlpha = 1; }
+
+            // The translation track (codon analysis), as Full/Block draw it: a box per codon over
+            // its bases coloured by amino-acid class, the bold letter over the middle base, white
+            // seams between boxes, a red edge where a frameshift starts on a base of the codon,
+            // a red "!" where it starts on a gap, "frame N" tags with Frame: All 3.
+            if (codonRows && codonRows.length) {
+                for (let frIdx = 0; frIdx < codonRows.length; frIdx++) {
+                    const spec = codonRows[frIdx];
+                    const aaY = y + (basesHidden ? 0 : CHAR_H) + frIdx * aaRowH;
+                    const boxY = aaY + AA_PAD_T;
+                    const aaData = spec.aaData;
+                    if (!aaData) continue;
+                    const fsStart = new Map();
+                    for (const f of spec.frameShifts || []) if (f.type === 'indel' && f.runStart != null && !fsStart.has(f.runStart)) fsStart.set(f.runStart, f);
+                    ctx.textAlign = 'center';
+                    ctx.textBaseline = 'middle';
+                    ctx.font = aaFontStr;
+                    for (const entry of aaData) {
+                        const cols = entry.cols;
+                        if (!cols || cols.length === 0) continue;
+                        // the slots of the codon's shown columns (Variable sites only hides some)
+                        let sA = posSlot(cols[0]), sB = posSlot(cols[cols.length - 1]);
+                        if (slotOf) {
+                            sA = Infinity; sB = -1;
+                            for (const c of cols) { const sc = slotOf[c]; if (sc >= 0) { if (sc < sA) sA = sc; if (sc > sB) sB = sc; } }
+                            if (sB < 0) continue;
+                        }
+                        const x0 = NAME_W + sA * CHAR_W - ox, x1 = NAME_W + (sB + 1) * CHAR_W - ox;
+                        if (x1 < 0 || x0 > w) continue;
+                        const cls = entry.aa === '*' ? 'stop' : (_AA_CLASS[entry.aa] || 'unk');
+                        const colr = aaPal[cls] || aaPal.unk;
+                        const firstShown = !slotOf || slotOf[cols[0]] === sA, lastShown = !slotOf || slotOf[cols[cols.length - 1]] === sB;
+                        // The box: rounded ends (.aa-first / .aa-last, 3 px) come from cached images, the
+                        // middle is a plain rectangle. An antialiased path fill under the strip clip can
+                        // differ by one unit from the same fill unclipped, so a path here would make
+                        // the scroll frame copy differ from a full redraw; image blits are exact.
+                        const oneCell = x1 - x0 <= CHAR_W;
+                        let xm0 = x0, xm1 = x1;
+                        if (firstShown || lastShown) {
+                            const side = oneCell ? ((firstShown ? 'l' : '') + (lastShown ? 'r' : '')) : null;
+                            if (side) { ctx.drawImage(_boxEnd(colr.bg, side), x0, boxY, CHAR_W, AA_BOX_H); xm0 = x1; }
+                            else {
+                                if (firstShown) { ctx.drawImage(_boxEnd(colr.bg, 'l'), x0, boxY, CHAR_W, AA_BOX_H); xm0 = x0 + CHAR_W; }
+                                if (lastShown) { ctx.drawImage(_boxEnd(colr.bg, 'r'), x1 - CHAR_W, boxY, CHAR_W, AA_BOX_H); xm1 = x1 - CHAR_W; }
+                            }
+                        }
+                        if (xm1 > xm0) { ctx.fillStyle = colr.bg; ctx.fillRect(xm0, boxY, xm1 - xm0, AA_BOX_H); }
+                        if (fsStart.size) for (const c of cols) if (fsStart.has(c)) { const sc = posSlot(c); if (sc >= 0) { ctx.fillStyle = aaPal.fs.fg; ctx.fillRect(NAME_W + sc * CHAR_W - ox, boxY, 2 * CSS1, AA_BOX_H); } }   // .aa-fs-at
+                        const sm = posSlot(cols[Math.floor(cols.length / 2)]);
+                        ctx.fillStyle = colr.fg; ctx.fillText(entry.aa, sm >= 0 ? NAME_W + sm * CHAR_W - ox + CHAR_W / 2 : (x0 + x1) / 2, boxY + AA_BOX_H / 2);   // middle column hidden: the box's centre
+                    }
+                    if (fsStart.size) {   // a frameshift starting on a gap: no codon box there, a red "!" on a pale cell (.aa-fs)
+                        const covered = new Set();
+                        for (const e of aaData) if (e.cols) for (const c of e.cols) covered.add(c);
+                        for (const c of fsStart.keys()) {
+                            if (covered.has(c)) continue;
+                            const sc = posSlot(c);
+                            if (sc < 0) continue;
+                            const xc = NAME_W + sc * CHAR_W - ox;
+                            if (xc + CHAR_W < 0 || xc > w) continue;
+                            ctx.fillStyle = aaPal.fs.bg; ctx.fillRect(xc, boxY, CHAR_W, AA_BOX_H);
+                            ctx.fillStyle = aaPal.fs.fg; ctx.fillText('!', xc + CHAR_W / 2, boxY + AA_BOX_H / 2);
+                        }
+                    }
+                    // The name column of the track row: white backing (sticky names cover scrolled
+                    // cells), and with Frame: All 3 the frame tag, right-aligned, the best frame bold
+                    if (stickyNames || ox < NAME_W) {
+                        const nx = stickyNames ? 0 : -ox;
+                        ctx.save();
+                        ctx.beginPath(); ctx.rect(nx, aaY, NAME_W, aaRowH); ctx.clip();
+                        ctx.fillStyle = '#fff';
+                        ctx.fillRect(nx, aaY, NAME_W, aaRowH);
+                        if (spec.tag) {
+                            ctx.font = (spec.best && aaPal.bestBold ? 'bold ' : '') + aaTagFont;
+                            ctx.fillStyle = aaPal.tag[spec.frame] || '#666';
+                            ctx.textAlign = 'right';
+                            ctx.fillText(spec.tag, nx + NAME_W - 4, boxY + AA_BOX_H / 2);
+                        }
+                        ctx.restore();
+                    }
+                    ctx.textAlign = 'start';
+                    ctx.textBaseline = 'top';
+                    ctx.font = fontStr;
+                }
+            }
+        }
+
+        // Length badges after the last column (only content coordinates: a strip and a full
+        // redraw give the same pixels)
+        const badgeX = NAME_W + nSlots * CHAR_W + BADGE_GAP - ox;
+        const drawBadge = (n, y) => {
+            ctx.fillStyle = '#ccc';
+            ctx.fillRect(badgeX, y + HAIR, BADGE_W, CHAR_H - 2 * HAIR);
+            ctx.fillStyle = '#f0f0f0';
+            ctx.fillRect(badgeX + HAIR, y + 2 * HAIR, BADGE_W - 2 * HAIR, CHAR_H - 4 * HAIR);
+            ctx.fillStyle = '#666';
+            ctx.textAlign = 'center';
+            ctx.fillText(String(n), badgeX + BADGE_W / 2, y + 1);
+            ctx.textAlign = 'start';
+        };
+        const badgesVisible = _bLast && badgeX < cx1 && badgeX + BADGE_W > cx0;
+        if (badgesVisible) {
+            ctx.font = BADGE_FONT;
+            for (let i = firstRow; i <= lastRow; i++) drawBadge(_gaplessLen(state.seqs[i]), HEADER_H + i * rowPitch - oy);
+            ctx.font = fontStr;
+        }
+
+        // Names, one pass for all rows: a ctx.font switch is not free and the
+        // residue loop above never changes it.
+        if (withNames) {
+            ctx.font = nameFontStr;
+            // Two passes: every row's name box first, then every name. A name's underscores and
+            // descenders hang about a pixel below its 13 px row (Courier New on Windows), as in Full;
+            // painted row by row, the next row's box covered them ('Sb1_own_mtDNA' read 'Sb1 own mtDNA').
+            // The text pass starts one row above the region, so a strip drawn while scrolling gets the
+            // same pixels from that overhang as a full redraw.
+            const nameLook = new Map();
+            for (let i = firstRow; i <= lastRow; i++) {
+                const y = HEADER_H + i * rowPitch - oy;
+                const look = nameCellLook(i);
+                nameLook.set(i, look);
+                const nameX0 = stickyNames ? 0 : -ox;
+                if (stickyNames) {
+                    ctx.fillStyle = look?.bg || '#fff';
+                    ctx.fillRect(0, y, NAME_W, CHAR_H);
+                    if (look?.stripe) { ctx.fillStyle = look.stripe; ctx.fillRect(0, y, 6, CHAR_H); }
+                } else if (ox < NAME_W) {
+                    ctx.save();
+                    ctx.beginPath(); ctx.rect(0, y, NAME_W, CHAR_H); ctx.clip();
+                    if (look?.bg) { ctx.fillStyle = look.bg; ctx.fillRect(nameX0, y, NAME_W, CHAR_H); }
+                    if (look?.stripe) { ctx.fillStyle = look.stripe; ctx.fillRect(nameX0, y, 6, CHAR_H); }
+                    ctx.restore();
+                }
+            }
+            ctx.textBaseline = 'alphabetic';
+            for (let i = Math.max(0, firstRow - 1); i <= lastRow; i++) {
+                if (!stickyNames && ox >= NAME_W) break;
+                const y = HEADER_H + i * rowPitch - oy;
+                const name = state.seqs[i].header || ('Seq' + (i + 1));
+                const displayName = _truncName(name, nameLen);
+                const look = nameLook.has(i) ? nameLook.get(i) : nameCellLook(i);
+                ctx.fillStyle = look?.bg ? look.fg : '#333';
+                ctx.save();
+                ctx.beginPath(); ctx.rect(0, 0, stickyNames ? NAME_W : Math.max(0, NAME_W - ox), h); ctx.clip();   // the name column only
+                ctx.fillText(displayName, stickyNames ? 4 : 4 - ox, y + _canvasTextBaseline(CHAR_H));
+                ctx.restore();
+            }
+            ctx.textBaseline = 'top';
+            ctx.font = fontStr;
+        }
+
+        // Consensus row (top: between ruler and rows; bottom: after the last row), scrolling
+        // with the content like the DOM row. Bold #555 letters, no background; upper case
+        // where the column's majority reaches the consensus threshold, lower case otherwise
+        // (consensusDisplayBase); trim preview colours as in the DOM row.
+        if (consInfo) {
+            const cons = _canvasState.consensus;
+            // Edits recompute the consensus into state.consensusCache without a re-render
+            const live = state.consensusCache?.len === len ? state.consensusCache.values : cons.values;
+            if (live && cons.values !== live) { cons.values = live; cons.caseCache = null; }
+            const consY = consTop ? TRACK_H + SCALE_H - oy : HEADER_H + nSeqs * rowPitch - oy;
+            const textY = consTop ? consY : consY + CONS_GAP;
+            if (consY + CONS_H > cy0 && consY < cy1) {
+                ctx.fillStyle = '#ccc';
+                ctx.fillRect(stickyNames ? NAME_W : Math.max(0, NAME_W - ox), consTop ? consY + CHAR_H : consY, w, HAIR);
+                if (cons.values) {
+                    if (!cons.caseCache) cons.caseCache = new Uint8Array(len);   // 0 unknown, 1 upper, 2 lower
+                    const trim = state.trimBoundaries;
+                    const soft = !trim && state.softTrimBoundaries;
+                    for (let sI = firstCol; sI <= lastCol; sI++) {
+                        const x = NAME_W + sI * CHAR_W - ox;
+                        const p = slotPos(sI);
+                        if (p < 0) { drawMarker(x, textY, sI); continue; }
+                        let ch = cons.values[p] || '-';
+                        if (ch !== '-' && ch !== '.') {
+                            if (!cons.caseCache[p]) cons.caseCache[p] = _canvasConsensusUpper(ch, p, cons.threshold) ? 1 : 2;
+                            ch = cons.caseCache[p] === 1 ? ch.toUpperCase() : ch.toLowerCase();
+                        }
+                        let bg = null, fg = 'rgba(85,85,85,0.9)';
+                        if (trim && p <= trim.leftTrimEnd) { bg = '#ff6b6b'; fg = '#fff'; }
+                        else if (trim && p >= trim.rightTrimStart) { bg = '#4ecdc4'; fg = '#fff'; }
+                        else if (soft && (p <= soft.leftTrimEnd || p >= soft.rightTrimStart)) { bg = '#f0f0f0'; fg = 'rgba(85,85,85,0.35)'; }
+                        if (hdCols) {
+                            const dim = !hdCols.has(p);
+                            if (dim !== dimmed) { dimmed = dim; ctx.globalAlpha = dim ? 0.4 : 1; }
+                        }
+                        ctx.drawImage(_makeGlyph(ch, bg, fg, 'b'), x, textY, CHAR_W, CHAR_H);
+                    }
+                    if (dimmed) { dimmed = false; ctx.globalAlpha = 1; }
+                    if (badgesVisible) {
+                        let n = 0; for (let p = 0; p < cons.values.length; p++) { const c = cons.values[p]; if (c && c !== '-' && c !== '.') n++; }
+                        ctx.font = BADGE_FONT; drawBadge(n, textY); ctx.font = fontStr;
+                    }
+                }
+                if (withNames) {
+                    ctx.font = nameFontStr;
+                    ctx.textBaseline = 'alphabetic';
+                    const nx = stickyNames ? 0 : -ox;
+                    if (stickyNames || ox < NAME_W) {
+                        ctx.save();
+                        ctx.beginPath(); ctx.rect(stickyNames ? 0 : nx, textY, NAME_W, CHAR_H); ctx.clip();
+                        ctx.fillStyle = '#fff';
+                        ctx.fillRect(nx, textY, NAME_W, CHAR_H);
+                        ctx.fillStyle = '#555';
+                        ctx.fillText('Consensus', nx + 4, textY + _canvasTextBaseline(CHAR_H));
+                        ctx.restore();
+                    }
+                    ctx.textBaseline = 'top';
+                    ctx.font = fontStr;
+                }
+            }
+        }
+
+        // (No line between the names and the sequences: Full and Block have none, and the owner did not want it.)
+    }
+    // The frame as SVG: the viewport SVG export (Canvas and Block) and printing Block draw the same frame
+    // with the same code into SVG recorders put in place of ctx / octx (_makeSvgRecorder). region: a
+    // rectangle of the content { ox, oy, w, h } (CSS px), by default the viewport as it is now; idPrefix
+    // keeps the clip ids of several SVGs in one page apart. Returns { width, height, parts, unknownImages }:
+    // parts are the cells layer, then the overlay layer (selections), for _svgDocument.
+    _canvasState.drawToSvg = (region = {}, idPrefix = 'v') => {
+        const w = region.w ?? _cssW(), h = region.h ?? _cssH();
+        const ox = region.ox ?? _canvasState.offsetX, oy = region.oy ?? _canvasState.offsetY;
+        const rec = _makeSvgRecorder(dpr, { idPrefix }), orec = _makeSvgRecorder(dpr, { overlay: true, idPrefix: idPrefix + 'o' });
+        const ctx0 = ctx, octx0 = octx;
+        // Pointer state is not part of the picture: a row drag in progress (tinted names, drop bar) and the gap
+        // tool's hovered cell were drawn into the file and into every printed band (GLM audit cb5 #21)
+        const rowDrag0 = _canvasState.rowDrag, gapHover0 = _canvasState.gapHover;
+        _canvasState.rowDrag = null; _canvasState.gapHover = null;
+        ctx = rec; octx = orec;
+        try {
+            clearWhite(ctx, 0, 0, w, h);
+            if (!blockLayout && stickyNames && ox > 0) {
+                // Canvas strip scrolled sideways: the canvas draws the cells that scrolled under the fixed names and
+                // covers them with the name column; in an SVG they would stay as hidden text. Draw the data area,
+                // then the name column without its cells, each clipped to its part (as draw() clips its strips).
+                // A pane no wider than the name column has no data area (it took the single pass and wrote every
+                // cell under the names into the file: GLM audit cb5 #19).
+                if (w > NAME_W) {
+                    ctx.save(); ctx.beginPath(); ctx.rect(NAME_W, 0, w - NAME_W, h); ctx.clip();
+                    drawArea(ox, oy, w, h, NAME_W, 0, w, h);
+                    ctx.restore();
+                }
+                const nw = Math.min(NAME_W, w);
+                ctx.save(); ctx.beginPath(); ctx.rect(0, 0, nw, h); ctx.clip();
+                rec.skipImages = true;
+                drawArea(ox, oy, w, h, 0, 0, nw, h);
+                rec.skipImages = false;
+                ctx.restore();
+            } else drawArea(ox, oy, w, h, 0, 0, w, h);
+            drawOverlay(ox, oy, w, h);
+        } finally {
+            ctx = ctx0; octx = octx0;
+            _canvasState.rowDrag = rowDrag0; _canvasState.gapHover = gapHover0;
+            clearBand();
+        }
+        return { width: w, height: h, parts: [rec.finish(), orec.finish()], unknownImages: rec.unknownImages + orec.unknownImages };
+    };
+    // Block: each band's rectangle of the content, for printing every band ({ oy, h, w, c0, c1 }: c0..c1 the
+    // band's columns, 0-based, end exclusive). null in the Canvas strip.
+    _canvasState.svgBandRegions = () => {
+        if (!blockLayout) return null;
+        let wMax = 0;
+        for (let b = 0; b < nBands; b++) wMax = Math.max(wMax, bandRight(b));
+        return Array.from({ length: nBands }, (_, b) => { const [c0, c1] = bandColRange(b); return { ox: 0, oy: bandTop[b], h: bandBody[b], w: Math.ceil(wMax + 2), c0, c1 }; });
+    };
+    resize(true);
+    draw();
+
+    // Scroll handling. A mouse-wheel notch (100-120 px) eases out to its target over 150 ms, as the browser's
+    // own scrollers do; applied as one jump per frame it looked jerky (owner, 2026-10-23). A notch during the
+    // animation extends the target and restarts the 150 ms from the current position. Small deltas (a touchpad,
+    // which sends them at frame rate with its own inertia) apply at once, as does everything under a
+    // reduced-motion preference. Each frame moves the pixels already drawn (the frame copy in draw()).
+    // _canvasState.wheelAnimating tells tests and other callers that the view is still on its way.
+    const WHEEL_EASE_MS = 150;
+    let _wheelAnim = null;
+    const _reducedMotion = () => !!(window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches);
+    function _wheelTo(dx, dy) {
+        scrollbarInsets();
+        const w = (_cssW()) - _insetR, h = (_cssH()) - _insetB;
+        const ox = _canvasState.offsetX, oy = _canvasState.offsetY;
+        // a running animation continues from its own position; a view moved by other code since starts afresh
+        const a = (_wheelAnim && _wheelAnim.lastX === ox && _wheelAnim.lastY === oy) ? _wheelAnim
+            : { x: ox, y: oy, tx: ox, ty: oy, lastX: ox, lastY: oy, raf: 0 };
+        a.x0 = a.x; a.y0 = a.y; a.t0 = performance.now();
+        a.tx = Math.max(0, Math.min(a.tx + dx, totalContentW - w));
+        a.ty = Math.max(0, Math.min(a.ty + dy, totalContentH - h));
+        if (!a.raf) a.raf = requestAnimationFrame(_wheelStep);
+        _wheelAnim = a; _canvasState.wheelAnimating = true;
+    }
+    function _wheelStep(now) {
+        const a = _wheelAnim;
+        if (!a || !_isCurrent()) { if (_isCurrent()) _canvasState.wheelAnimating = false; return; }
+        a.raf = 0;
+        if (a.lastX !== _canvasState.offsetX || a.lastY !== _canvasState.offsetY) { _wheelAnim = null; _canvasState.wheelAnimating = false; return; }   // moved by other code: give way
+        const p = Math.min(1, Math.max(0, now - a.t0) / WHEEL_EASE_MS), e = 1 - Math.pow(1 - p, 3);   // ease-out (a frame's timestamp can precede the wheel event)
+        a.x = p >= 1 ? a.tx : a.x0 + (a.tx - a.x0) * e;
+        a.y = p >= 1 ? a.ty : a.y0 + (a.ty - a.y0) * e;
+        const q = v => Math.round(v * dpr) / dpr;
+        _canvasState.offsetX = a.lastX = q(a.x);
+        _canvasState.offsetY = a.lastY = q(a.y);
+        scheduleDraw();
+        if (p < 1) a.raf = requestAnimationFrame(_wheelStep); else { _wheelAnim = null; _canvasState.wheelAnimating = false; }
+    }
+    canvas.addEventListener('wheel', (e) => {
+        if (e.ctrlKey) return;   // the browser's zoom, as in Full/Block
+        e.preventDefault();
+        const k = e.deltaMode === 1 ? 16 : e.deltaMode === 2 ? _cssH() : 1;   // lines (Firefox) or pages
+        const dx = blockLayout ? 0 : e.deltaX * k, dy = e.deltaY * k;   // Block layout: the bands fit the width
+        if (_reducedMotion() || (Math.abs(dy) < 40 && Math.abs(dx) < 40)) {
+            _wheelAnim = null; _canvasState.wheelAnimating = false;
+            _canvasState.offsetX += dx;
+            _canvasState.offsetY += dy;
+            scheduleDraw();
+        } else _wheelTo(dx, dy);
+    }, { passive: false });
+
+    // Touch/drag pan
+    let dragging = false, dragStartX, dragStartY, dragOx, dragOy;
+    canvas.addEventListener('mousedown', (e) => {
+        if (e.button !== 0) return;
+
+        // Trim borders: a press on a consensus cell that will be removed drags that border
+        if (state.trimBoundaries && !isCtrlModifier(e) && !isAltModifier(e) && !e.shiftKey) {
+            const tc = _canvasHitTestConsensus(e.clientX, e.clientY);
+            const t = state.trimBoundaries;
+            if (tc >= 0 && (tc <= t.leftTrimEnd || tc >= t.rightTrimStart)) {
+                _trimDragSide = tc <= t.leftTrimEnd ? 'left' : 'right';
+                e.preventDefault(); e.stopPropagation(); hideTooltip();
+                document.body.style.cursor = 'ew-resize';
+                document.body.style.userSelect = 'none';
+                return;
+            }
+        }
+
+        // Fold marker (hidden columns): a plain click shows the run again
+        if (_canvasState.foldBefore && !isCtrlModifier(e) && !isAltModifier(e) && !e.shiftKey) {
+            const fh = _canvasHitTest(e.clientX, e.clientY) || _canvasHitTestRuler(e.clientX, e.clientY);
+            if (fh && fh.fold) { e.preventDefault(); hideTooltip(); _foldReveal(fh.fold); return; }
+        }
+
+        // Annotation track: a click selects the feature's columns (Shift adds)
+        if (!isCtrlModifier(e) && !isAltModifier(e)) {
+            const annotHit = _canvasHitTestAnnot(e.clientX, e.clientY);
+            if (annotHit) {
+                _annotSelectFeature(annotHit.d.id, e.shiftKey);
+                e.preventDefault();
+                return;
+            }
+        }
+
+        // GeneDoc edit mode: handle edit tool clicks (mirrors handleGeneDocEditMouseDown)
+        if (state.editModeActive && !isCtrlModifier(e) && !isAltModifier(e)) {
+            const tool = state.editTool;
+            if (GENEDOC_MOVE_TOOLS.has(tool)) {
+                const hit = _canvasHitTest(e.clientX, e.clientY);
+                if (hit && isGeneDocResidueChar(state.seqs[hit.row]?.seq[hit.col])) {
+                    hideTooltip();
+                    startGeneDocMoveDrag(e, hit.row, hit.col, tool, null);
+                    e.preventDefault();
+                    return;
+                }
+            } else if (GENEDOC_GAP_TOOLS.has(tool)) {
+                const hit = _canvasHitTest(e.clientX, e.clientY);
+                if (hit) {
+                    handleGeneDocGapToolClick(hit.row, hit.col, tool);
+                    e.preventDefault();
+                    return;
+                }
+            } else if (tool === 'residue') {
+                const hit = _canvasHitTest(e.clientX, e.clientY);
+                if (hit) {
+                    state.editCell = { row: hit.row, pos: hit.col };
+                    updateEditActiveCell();
+                    e.preventDefault();
+                    return;
+                }
+            } else if (tool === 'selectColumn') {
+                let col = -1;
+                const rulerHit = _canvasHitTestRuler(e.clientX, e.clientY);
+                if (rulerHit) {
+                    col = rulerHit.col;
+                } else {
+                    const dataHit = _canvasHitTest(e.clientX, e.clientY);
+                    if (dataHit) col = dataHit.col;
+                }
+                if (col >= 0) {
+                    startGeneDocColumnDrag(col);
+                    scheduleOverlay();
+                    e.preventDefault();
+                    return;
+                }
+            }
+        }
+
+        // Column selection: Ctrl+Alt+click (mirrors handleColumnSelectMouseDown)
+        if (isCtrlModifier(e) && isAltModifier(e)) {
+            let col = -1;
+            const rulerHit = _canvasHitTestRuler(e.clientX, e.clientY);
+            if (rulerHit) {
+                col = rulerHit.col;
+            } else {
+                const dataHit = _canvasHitTest(e.clientX, e.clientY);
+                if (dataHit) col = dataHit.col;
+            }
+            if (col >= 0) {
+                state.isDragging = true;
+                state.dragStartCol = col;
+                state.dragMode = 'col';
+                if (e.shiftKey && state.lastSelectedColumn !== null) {
+                    const s = Math.min(state.lastSelectedColumn, col);
+                    const en = Math.max(state.lastSelectedColumn, col);
+                    for (let p = s; p <= en; p++) state.selectedColumns.add(p);
+                } else if (state.selectedColumns.has(col)) {
+                    state.selectedColumns.delete(col);
+                } else {
+                    state.selectedColumns.add(col);
+                }
+                state.lastSelectedColumn = col;
+                hideTooltip();
+                scheduleOverlay();
+                return;
+            }
+        }
+
+        // Row selection: Ctrl+click on name column (mirrors handleRowSelectMouseDown)
+        if (isCtrlModifier(e) && !isAltModifier(e)) {
+            const nameHit = _canvasHitTestName(e.clientX, e.clientY);
+            if (nameHit) {
+                const index = nameHit.row;
+                state.isDragging = true;
+                state.dragStartRow = index;
+                state.dragMode = 'row';
+                state.selectedNucs.clear();
+                state.pendingNucStart = null;
+                scheduleNucSelectionRefresh();
+                toggleRowSelection(index);
+                state.dragRowRemove = !state.selectedRows.has(index);   // a drag from a selected row deselects
+                hideTooltip();
+                scheduleOverlay();
+                return;
+            }
+        }
+
+        // Row range selection: Shift+click on name column
+        if (e.shiftKey && state.lastSelectedIndex !== null) {
+            const nameHit = _canvasHitTestName(e.clientX, e.clientY);
+            if (nameHit) {
+                const index = nameHit.row;
+                _rowRangeSelect(state.lastSelectedIndex, index, state.selectedRows.has(index));
+                state.lastSelectedIndex = index;
+                // a residue click before this started a two-click range; it must not complete with that old anchor (as in Full/Block)
+                if (state.pendingNucStart) { state.pendingNucStart = null; scheduleNucSelectionRefresh(); }
+                updateRowSelections();
+                hideTooltip();
+                scheduleOverlay();
+                return;
+            }
+        }
+
+        // Show 2D: a typed block's rectangle takes the click (DOM: the SVG rect's click handler)
+        if (!isCtrlModifier(e) && !isAltModifier(e) && !e.shiftKey) {
+            const mr = _canvasBlockMaskHit(e.clientX, e.clientY);
+            if (mr) { e.preventDefault(); hideTooltip(); groupRowsByType(mr.typeRows); return; }
+        }
+
+        const hit = _canvasHitTest(e.clientX, e.clientY);
+        if (hit) {
+            // Selection: mirror handleNucleotideSelectMouseDown's state mutations
+            const idx = hit.row, pos = hit.col;
+            if (state.pendingNucStart === null) {
+                state.selectedNucs.clear();
+                state.pendingNucStart = { row: idx, pos };
+                state.isDragging = true;
+                state.dragStartRow = idx;
+                state.dragStartCol = pos;
+                state.dragMode = 'nuc';
+                state.selectedNucs.set(idx, new Set([pos]));
+            } else if (state.pendingNucStart.row === idx) {
+                state.selectedNucs.set(idx, buildNucSelectionSet(idx, state.pendingNucStart.pos, pos));
+                state.pendingNucStart = null;
+            } else if (state.pendingNucStart.row >= 0 && idx >= 0) {
+                // the second click on another row: the rectangle between the two cells (a drag from here replaces it)
+                _setNucRectangle(state.pendingNucStart.row, state.pendingNucStart.pos, idx, pos);
+                state.pendingNucStart = null;
+                state.isDragging = true;
+                state.dragStartRow = idx;
+                state.dragStartCol = pos;
+                state.dragMode = 'nuc';
+            } else {
+                state.selectedNucs.clear();
+                state.pendingNucStart = { row: idx, pos };
+                state.isDragging = true;
+                state.dragStartRow = idx;
+                state.dragStartCol = pos;
+                state.dragMode = 'nuc';

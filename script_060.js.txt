@@ -1,0 +1,426 @@
+[script.js lines 25706-26130 of ViewAlign fd8b8e4]
+// Windowed tables: once the first rows are laid out, measure a row and keep the tbody
+// holding only the rows near the viewport, with spacer rows standing in for the rest.
+function _attachStatsWindow(body, keep) {
+    const sc = body.querySelector('.stats-mx-scroll');
+    const table = sc?.querySelector('table.stats-mx');
+    if (!table) return;
+    _statsMarkFocus(table);
+    const ctx = _statsMatrixCtx(table.dataset.kind);
+    if (!ctx.windowed) { if (keep) { sc.scrollTop = keep.top; sc.scrollLeft = keep.left; } return; }
+    const tbody = table.tBodies[0];
+    const rowH = sc._rowH = tbody.rows[0].getBoundingClientRect().height || 16;
+    const hr = table.tHead.rows[0];
+    const nameW = hr.cells[0].getBoundingClientRect().width;
+    const r0cells = tbody.rows[0].cells;   // the cell pitch, measured on live cells (a th can be narrower than a td)
+    const cellW = (r0cells[2] && !r0cells[2].classList.contains('csp') ? r0cells[2].getBoundingClientRect().left - r0cells[1].getBoundingClientRect().left : r0cells[1].getBoundingClientRect().width) || 40;
+    ctx.cellW = cellW;
+    // The first rows came with the table; add the spacer for the rest now that a row is measured
+    if (+tbody.dataset.r1 < ctx.n) tbody.insertAdjacentHTML('beforeend', _statsSpacer(ctx, (ctx.n - +tbody.dataset.r1) * rowH));
+    // a re-render keeps its scroll position: restore it now that the table has its full height, so the
+    // window is placed once, for it (restoring before the spacer existed clamped it to the first rows)
+    if (keep) { sc.scrollTop = keep.top; sc.scrollLeft = keep.left; }
+    const place = () => {
+        const headH = table.tHead.getBoundingClientRect().height;
+        const first = Math.floor(Math.max(0, sc.scrollTop - headH) / rowH);
+        const last = Math.ceil((sc.scrollTop + sc.clientHeight) / rowH);
+        const cFirst = Math.floor(Math.max(0, sc.scrollLeft - nameW) / cellW);
+        const cLast = Math.ceil(Math.max(0, sc.scrollLeft + sc.clientWidth - nameW) / cellW);
+        const r0 = +tbody.dataset.r0, r1 = +tbody.dataset.r1, c0 = +tbody.dataset.c0, c1 = +tbody.dataset.c1;
+        if (first >= r0 && last <= r1 && cFirst >= c0 && cLast <= c1 && tbody.rows.length > 0 && tbody.dataset.placed) return;
+        const n0 = Math.max(0, first - STATS_MX_ROW_MARGIN), n1 = Math.min(ctx.n, last + STATS_MX_ROW_MARGIN);
+        const k0 = Math.max(0, cFirst - STATS_MX_COL_MARGIN), k1 = Math.min(ctx.n, cLast + STATS_MX_COL_MARGIN);
+        const live = _statsMatrixCtx(table.dataset.kind);   // selection / filter may have changed
+        live.cellW = cellW;
+        tbody.innerHTML = (n0 > 0 ? _statsSpacer(ctx, n0 * rowH) : '') + _statsMatrixRows(live, n0, n1, k0, k1) +
+            (n1 < ctx.n ? _statsSpacer(ctx, (ctx.n - n1) * rowH) : '');
+        tbody.dataset.r0 = n0; tbody.dataset.r1 = n1; tbody.dataset.c0 = k0; tbody.dataset.c1 = k1; tbody.dataset.placed = '1';
+        _statsMarkFocus(table);
+    };
+    place();
+    // one listener and one observer per scroll box: each fill used to add another pair
+    if (sc._statsPlace) sc.removeEventListener('scroll', sc._statsPlace);
+    if (sc._statsRO) sc._statsRO.disconnect();
+    sc._statsPlace = place;
+    sc.addEventListener('scroll', place, { passive: true });
+    if (typeof ResizeObserver !== 'undefined') { sc._statsRO = new ResizeObserver(place); sc._statsRO.observe(sc); }   // window resized taller
+}
+
+function _fillStatsMatrices(bodies) {
+    bodies.forEach(body => {
+        if (_statsView() === 'list') { _statsRenderPairList(body); body.dataset.built = '1'; return; }
+        const old = body.querySelector('.stats-mx-scroll');
+        const keep = old && old.querySelector('table.stats-mx') ? { top: old.scrollTop, left: old.scrollLeft } : null;
+        body.innerHTML = _buildStatsMatrixTable(body.dataset.kind);
+        body.dataset.built = '1';
+        _attachStatsWindow(body, keep);
+    });
+}
+
+function _renderOpenStatsMatrices() {
+    const body = document.querySelector('#statsSummaryTab .stats-mx-body');
+    if (body) _fillStatsMatrices([body]);
+}
+
+function _statsSetKind(kind) {
+    const body = document.querySelector('#statsSummaryTab .stats-mx-body');
+    if (!body || body.dataset.kind === kind) return;
+    _statsSaveLabelOpts({ kind });
+    document.querySelectorAll('#statsSummaryTab .stats-mx-toolbar .stats-seg button').forEach(b => b.classList.toggle('on', b.dataset.kind === kind));
+    body.dataset.kind = kind;
+    // A threshold means something different for the other matrix: clear it
+    const v = document.getElementById('statsFilterValue');
+    if (v) v.value = '';
+    state._statsFilter = null;
+    _statsUpdateFilterUI();
+    _statsUpdateHeatUI();
+    _fillStatsMatrices([body]);
+}
+
+function _statsSetIdMode(mode) {
+    const d = state._statsData;
+    if (!d || d.mode === mode) return;
+    d.mode = mode;
+    _statsSaveLabelOpts({ idMode: mode });
+    _statsBuildStrings();
+    _statsRenderIdCard();
+    _statsReadFilter();
+    _statsUpdateFilterUI();
+    _statsUpdateHeatUI();
+    _renderOpenStatsMatrices();
+}
+
+// ── Heatmap colouring of matrix cells ──
+// Palettes are colour stops sampled from ColorBrewer (YlOrRd, RdBu, Greens) and matplotlib
+// (viridis). Values map linearly from the range low..high (Auto = the matrix's own off-diagonal
+// min..max) onto the stops; Reverse flips the direction. Cell text turns white on dark colours.
+const STATS_HEAT_PALETTES = {
+    ylorrd: { label: 'Yellow – red', stops: ['#ffffcc', '#ffeda0', '#fed976', '#feb24c', '#fd8d3c', '#fc4e2a', '#e31a1c', '#b10026'] },
+    viridis: { label: 'Viridis', stops: ['#440154', '#482878', '#3e4989', '#31688e', '#26828e', '#1f9e89', '#35b779', '#6ece58', '#b5de2b', '#fde725'] },
+    rdbu: { label: 'Blue – white – red', stops: ['#2166ac', '#67a9cf', '#d1e5f0', '#f7f7f7', '#fddbc7', '#ef8a62', '#b2182b'] },
+    greens: { label: 'Greens', stops: ['#f7fcf5', '#c7e9c0', '#74c476', '#238b45', '#00441b'] },
+};
+
+function _statsHeatOpts() {
+    let h = null;
+    try { h = JSON.parse(localStorage.getItem('msaviewer_statsHeat') || 'null'); } catch (e) {}
+    h = h || {};
+    return {
+        on: !!h.on,
+        palette: STATS_HEAT_PALETTES[h.palette] ? h.palette : 'ylorrd',
+        reverse: !!h.reverse,
+        range: { identity: h.range?.identity || null, distance: h.range?.distance || null },   // null = Auto
+    };
+}
+
+function _statsSaveHeatOpts(patch) {
+    const h = { ..._statsHeatOpts(), ...patch };
+    try { localStorage.setItem('msaviewer_statsHeat', JSON.stringify(h)); } catch (e) {}
+    return h;
+}
+
+function _statsValue(kind, rawId) {
+    return kind === 'distance' ? 1 - rawId / 100 : rawId;
+}
+
+// Off-diagonal min and max of the shown matrix (the Auto range)
+function _statsAutoRange(kind) {
+    const d = state._statsData, n = d.n, pid = d.pid[d.mode];
+    const cacheKey = d.mode + ':' + kind;
+    if (d._autoRange && d._autoRange[cacheKey]) return d._autoRange[cacheKey];
+    let lo = Infinity, hi = -Infinity;
+    for (let i = 0; i < n; i++) for (let j = i + 1; j < n; j++) {
+        const v = _statsValue(kind, pid[i * n + j]);
+        if (v < lo) lo = v;
+        if (v > hi) hi = v;
+    }
+    const r = lo <= hi ? { lo, hi } : { lo: 0, hi: kind === 'distance' ? 1 : 100 };
+    (d._autoRange || (d._autoRange = {}))[cacheKey] = r;
+    return r;
+}
+
+function _hexRgb(h) {
+    const x = parseInt(h.slice(1), 16);
+    return [(x >> 16) & 255, (x >> 8) & 255, x & 255];
+}
+
+// Context for colouring one matrix: null when the heatmap is off
+function _statsHeatCtx(kind) {
+    const h = _statsHeatOpts();
+    if (!h.on || !state._statsData) return null;
+    const auto = _statsAutoRange(kind);
+    const r = h.range[kind];
+    const lo = r && Number.isFinite(r.lo) ? r.lo : auto.lo;
+    const hi = r && Number.isFinite(r.hi) ? r.hi : auto.hi;
+    const stops = STATS_HEAT_PALETTES[h.palette].stops.map(_hexRgb);
+    return { kind, lo, hi, auto, custom: !!r, reverse: h.reverse, palette: h.palette, stops };
+}
+
+function _statsHeatColour(hc, v) {
+    // hi === lo (a single threshold): below it the first colour, at or above it the last
+    let t = hc.hi > hc.lo ? (v - hc.lo) / (hc.hi - hc.lo) : (v >= hc.lo ? 1 : 0);
+    t = Math.max(0, Math.min(1, t));
+    if (hc.reverse) t = 1 - t;
+    const s = hc.stops, x = t * (s.length - 1), k = Math.min(s.length - 2, Math.floor(x)), f = x - k;
+    const c = [0, 1, 2].map(q => Math.round(s[k][q] + (s[k + 1][q] - s[k][q]) * f));
+    // Relative luminance (sRGB approximation): white text on dark colours
+    const lum = (0.2126 * c[0] + 0.7152 * c[1] + 0.0722 * c[2]) / 255;
+    return { bg: `rgb(${c[0]},${c[1]},${c[2]})`, fg: lum < 0.5 ? '#fff' : '#111' };
+}
+
+function _statsHeatGradient(hc, palette, reverse) {
+    const stops = hc ? hc.stops.map(c => `rgb(${c.join(',')})`) : STATS_HEAT_PALETTES[palette].stops;
+    const list = (hc ? hc.reverse : reverse) ? stops.slice().reverse() : stops;
+    return `linear-gradient(to right, ${list.join(', ')})`;
+}
+
+function _statsFmt(kind, v) {
+    return kind === 'distance' ? v.toFixed(2) : v.toFixed(1);
+}
+
+// Legend next to the Heatmap button, and the panel's controls
+function _statsUpdateHeatUI() {
+    const kind = _statsHeatKind();
+    const h = _statsHeatOpts();
+    const hc = _statsHeatCtx(kind);
+    const legend = document.getElementById('statsHeatLegend');
+    const btn = document.getElementById('statsHeatBtn');
+    if (btn) { btn.classList.toggle('on', !!hc); btn.querySelector('.txt').hidden = !!hc; }
+    if (legend) {
+        legend.hidden = !hc;
+        if (hc) legend.innerHTML = `<span>${_statsFmt(kind, hc.lo)}</span><i style="background:${_statsHeatGradient(hc)}"></i><span>${_statsFmt(kind, hc.hi)}${kind === 'identity' ? '%' : ''}</span>`;
+    }
+    const panel = document.getElementById('statsHeatPanel');
+    if (!panel) return;
+    panel.querySelector('#statsHeatOn').checked = h.on;
+    panel.querySelector('#statsHeatReverse').checked = h.reverse;
+    panel.querySelectorAll('.stats-heat-pal').forEach(b => {
+        b.classList.toggle('on', b.dataset.pal === h.palette);
+        b.querySelector('i').style.background = _statsHeatGradient(null, b.dataset.pal, h.reverse);
+    });
+    const auto = state._statsData ? _statsAutoRange(kind) : { lo: 0, hi: 100 };
+    const r = h.range[kind];
+    const lo = panel.querySelector('#statsHeatLo'), hi = panel.querySelector('#statsHeatHi');
+    if (document.activeElement !== lo) lo.value = r ? r.lo : '';
+    if (document.activeElement !== hi) hi.value = r ? r.hi : '';
+    lo.placeholder = _statsFmt(kind, auto.lo);
+    hi.placeholder = _statsFmt(kind, auto.hi);
+    const step = kind === 'distance' ? 0.01 : 0.5;
+    lo.step = hi.step = step;
+    panel.querySelector('#statsHeatUnit').textContent = kind === 'distance' ? 'distance' : 'identity %';
+    panel.querySelector('#statsHeatAuto').disabled = !r;
+}
+
+function _statsHeatPanelHtml() {
+    return `<span class="stats-menu-wrap"><button type="button" id="statsHeatBtn" class="stats-heat-btn" title="Heatmap: colour cells by value (click to change)"><span class="txt">Heatmap</span><span id="statsHeatLegend" class="stats-heat-legend" hidden></span> ▾</button>` +
+        `<div id="statsHeatPanel" class="stats-heat-panel" hidden>` +
+            `<label class="row"><input type="checkbox" id="statsHeatOn"> Colour cells by value</label>` +
+            `<div class="pals">` + Object.entries(STATS_HEAT_PALETTES).map(([k, p]) =>
+                `<button type="button" class="stats-heat-pal" data-pal="${k}" title="${p.label}"><i></i><span>${p.label}</span></button>`).join('') + `</div>` +
+            `<label class="row"><input type="checkbox" id="statsHeatReverse"> Reverse colours</label>` +
+            `<div class="row range"><span>Range of <span id="statsHeatUnit"></span></span>` +
+                `<input type="number" id="statsHeatLo" title="Value at the first colour (empty: the matrix minimum)"> – ` +
+                `<input type="number" id="statsHeatHi" title="Value at the last colour (empty: the matrix maximum)">` +
+                `<button type="button" id="statsHeatAuto" title="Use the matrix's own minimum and maximum">Auto</button></div>` +
+            `<div class="hint">Values outside the range take the end colours. Diagonal cells stay grey.</div>` +
+        `</div></span>`;
+}
+
+// Open a drop-down panel rightwards from its button if it fits in the window, else
+// leftwards, else against the window's left edge
+function _statsPlacePanel(panel) {
+    const box = document.getElementById('statsContent').getBoundingClientRect();
+    const wrap = panel.parentElement.getBoundingClientRect();
+    panel.style.left = '0'; panel.style.right = 'auto';
+    const w = panel.getBoundingClientRect().width;
+    if (wrap.left + w <= box.right - 4) return;
+    if (wrap.right - w >= box.left + 4) { panel.style.left = 'auto'; panel.style.right = '0'; return; }
+    panel.style.left = (box.left + 4 - wrap.left) + 'px';
+}
+
+function _statsHeatReadRange() {
+    const kind = _statsHeatKind();
+    const lo = parseFloat(document.getElementById('statsHeatLo')?.value);
+    const hi = parseFloat(document.getElementById('statsHeatHi')?.value);
+    const h = _statsHeatOpts();
+    if (!Number.isFinite(lo) && !Number.isFinite(hi)) h.range[kind] = null;
+    else {
+        const auto = _statsAutoRange(kind);
+        let a = Number.isFinite(lo) ? lo : auto.lo, b = Number.isFinite(hi) ? hi : auto.hi;
+        if (a > b) [a, b] = [b, a];   // typed the wrong way round: every cell used to get the middle colour
+        h.range[kind] = { lo: a, hi: b };
+    }
+    _statsSaveHeatOpts({ range: h.range });
+}
+
+function _statsHeatChanged() {
+    _statsUpdateHeatUI();
+    _renderOpenStatsMatrices();
+}
+
+// Column selection: click a column name; Ctrl/Cmd-click adds or removes, Shift-click takes a range
+function _statsClickColumn(j, ev) {
+    const sel = state._statsSelCols || (state._statsSelCols = new Set());
+    if (ev.shiftKey && sel.size) {
+        const anchor = state._statsSelAnchor ?? [...sel].pop();
+        const [a, b] = anchor < j ? [anchor, j] : [j, anchor];
+        for (let k = a; k <= b; k++) sel.add(k);
+    } else if (ev.ctrlKey || ev.metaKey) {
+        if (sel.has(j)) sel.delete(j); else sel.add(j);
+        state._statsSelAnchor = j;
+    } else {
+        const only = sel.size === 1 && sel.has(j);
+        sel.clear();
+        if (!only) sel.add(j);
+        state._statsSelAnchor = j;
+    }
+    _statsApplySelection();
+}
+
+function _statsApplySelection() {
+    const sel = state._statsSelCols || new Set();
+    const table = document.querySelector('#statsSummaryTab table.stats-mx');
+    if (table) {
+        [...table.tHead.rows[0].cells].forEach((th, k) => { if (k > 0 && th.dataset.c != null) th.classList.toggle('cs', sel.has(+th.dataset.c)); });
+        const tbody = table.tBodies[0];
+        for (const tr of tbody.rows) {
+            if (!tr.cells[0]?.dataset.r) continue;
+            for (let k = 1; k < tr.cells.length; k++) { const j = _statsColOf(tbody, tr.cells[k]); if (j >= 0) tr.cells[k].classList.toggle('cs', sel.has(j)); }
+        }
+    }
+    const chip = document.getElementById('statsSelChip');
+    const copy = document.getElementById('statsCopyBtn');
+    if (chip) {
+        chip.hidden = !sel.size;
+        chip.innerHTML = sel.size ? `${sel.size} column${sel.size > 1 ? 's' : ''} selected <button type="button" class="stats-x" data-clear-sel title="Clear the selection (Esc)">×</button>` : '';
+    }
+    if (copy) copy.textContent = sel.size ? `Copy ${sel.size} column${sel.size > 1 ? 's' : ''}` : 'Copy';
+}
+
+// Find a sequence by (part of) its name; Enter moves to the next match
+function _statsFind(input, axis, next) {
+    const names = state._statsData?.names;
+    const q = input.value.trim().toLowerCase();
+    input.classList.remove('nomatch');
+    if (!names || !q) return;
+    const edge = (n, at) => at >= n.length || !/[a-z0-9]/i.test(n[at]);
+    const rank = n => n === q ? 0 : n.startsWith(q) ? (edge(n, q.length) ? 1 : 2) : (edge(n, n.indexOf(q) + q.length) ? 3 : 4);
+    const hits = names.map((n, k) => [n.toLowerCase(), k]).filter(([n]) => n.includes(q))
+        .sort((a, b) => rank(a[0]) - rank(b[0]) || a[1] - b[1]).map(([, k]) => k);
+    if (!hits.length) { input.classList.add('nomatch'); input.title = 'No sequence name contains this'; return; }
+    input._at = next && input._q === q ? (input._at + 1) % hits.length : 0;
+    input._q = q;
+    const k = hits[input._at];
+    const f = state._statsFocus || { i: -1, j: -1 };
+    if (axis === 'row') _statsJumpTo(k, f.j); else _statsJumpTo(f.i, k);
+    input.title = `${names[k]} — match ${input._at + 1} of ${hits.length}${hits.length > 1 ? ' (Enter for next)' : ''}`;
+}
+
+function initStatsTabs() {
+    const summaryTab = document.getElementById('statsSummaryTab');
+    if (!summaryTab) return;
+    document.getElementById('statsDockBtn')?.addEventListener('click', (e) => {
+        e.stopPropagation();
+        if (document.getElementById('statsModal').classList.contains('stats-docked')) _statsUndock(); else _statsDock();
+    });
+    let filterTimer = null, heatTimer = null;   // one timer per field: an edit in one must not cancel the other's
+    summaryTab.addEventListener('click', (event) => {
+        const t = event.target;
+        const menus = [document.getElementById('statsFilterMenu'), document.getElementById('statsMatrixMenu')];
+        const toggle = { statsFilterSaveBtn: menus[0], statsMatrixSaveBtn: menus[1] }[t.id];
+        menus.forEach(m => { if (m && m !== toggle) m.hidden = true; });
+        const heatPanel = document.getElementById('statsHeatPanel');
+        const labelsPanel = document.getElementById('statsLabelsPanel');
+        for (const [btnId, panel] of [['#statsHeatBtn', heatPanel], ['#statsLabelsBtn', labelsPanel]]) {
+            if (t.closest?.(btnId)) {
+                [heatPanel, labelsPanel].forEach(q => { if (q && q !== panel) q.hidden = true; });
+                if (panel) { panel.hidden = !panel.hidden; if (!panel.hidden) _statsPlacePanel(panel); }
+                return;
+            }
+        }
+        [heatPanel, labelsPanel].forEach(q => { if (q && !q.hidden && !t.closest?.('.stats-heat-panel')) q.hidden = true; });
+        if (t.closest?.('.stats-heat-pal')) { _statsSaveHeatOpts({ palette: t.closest('.stats-heat-pal').dataset.pal, on: true }); _statsHeatChanged(); return; }
+        if (t.id === 'statsHeatAuto') { const h = _statsHeatOpts(); h.range[_statsHeatKind()] = null; _statsSaveHeatOpts({ range: h.range }); _statsHeatChanged(); return; }
+        if (toggle) { toggle.hidden = !toggle.hidden; return; }
+        if (t.closest?.('.stats-save')) { const b = t.closest('.stats-save'); saveStatsMatrix(b.dataset.fmt, b.dataset.kind); return; }
+        if (t.closest?.('.stats-menu button[data-out]')) { _statsSavePairs(t.closest('button').dataset.out); return; }
+        if (t.closest?.('.stats-view button')) { _statsSetView(t.closest('button').dataset.view); return; }
+        if (t.closest?.('.stats-mx-toolbar .stats-seg button')) { _statsSetKind(t.closest('button').dataset.kind); return; }
+        if (t.closest?.('[data-clear-sel]')) { state._statsSelCols = new Set(); _statsApplySelection(); return; }
+        if (t.id === 'statsFilterClear') {
+            document.getElementById('statsFilterValue').value = '';
+            state._statsFilter = null; _statsUpdateFilterUI(); _renderOpenStatsMatrices(); return;
+        }
+        if (t.id === 'statsCopyBtn') { copyStatsMatrix(); return; }
+        if (t.classList?.contains('stats-save')) { saveStatsMatrix(t.dataset.fmt); return; }
+        const th = t.closest?.('table.stats-mx thead th[data-c]');
+        if (th) { _statsClickColumn(+th.dataset.c, event); return; }
+        const pr = t.closest?.('table.stats-pairs tbody tr');
+        if (pr) { _statsJumpTo(+pr.dataset.i, +pr.dataset.j); return; }
+        const pair = t.closest?.('.pair a[data-i]');
+        if (pair) _statsJumpTo(+pair.dataset.i, +pair.dataset.j);
+    });
+    summaryTab.addEventListener('change', (event) => {
+        const id = event.target?.id;
+        if (id === 'statsIdMode') { _statsSetIdMode(event.target.value); return; }
+        if (id === 'statsHeatOn') { _statsSaveHeatOpts({ on: event.target.checked }); _statsHeatChanged(); return; }
+        if (id === 'statsHeatReverse') { _statsSaveHeatOpts({ reverse: event.target.checked }); _statsHeatChanged(); return; }
+        if (id === 'statsFilterOp' || id === 'statsFilterKind') { _statsReadFilter(); _statsUpdateFilterUI(); _renderOpenStatsMatrices(); return; }
+        if (id !== 'statsLabelStyle' && id !== 'statsLabelChars') return;
+        const style = document.getElementById('statsLabelStyle').value;
+        const chars = Math.max(3, Math.min(80, parseInt(document.getElementById('statsLabelChars').value, 10) || 20));
+        document.getElementById('statsLabelChars').value = chars;   // show the value the table uses
+        _statsSaveLabelOpts({ style, chars });
+        _renderOpenStatsMatrices();
+    });
+    summaryTab.addEventListener('input', (event) => {
+        const t = event.target;
+        if (t.id === 'statsFindRow') _statsFind(t, 'row', false);
+        if (t.id === 'statsFindCol') _statsFind(t, 'col', false);
+        if (t.id === 'statsHeatLo' || t.id === 'statsHeatHi') {
+            clearTimeout(heatTimer);
+            heatTimer = setTimeout(() => { _statsHeatReadRange(); _statsHeatChanged(); }, 300);
+        }
+        if (t.id === 'statsFilterValue') {
+            clearTimeout(filterTimer);
+            filterTimer = setTimeout(() => { _statsReadFilter(); _statsUpdateFilterUI(); _renderOpenStatsMatrices(); }, 250);
+        }
+    });
+    summaryTab.addEventListener('keydown', (event) => {
+        const t = event.target;
+        if (event.key !== 'Enter' || (t.id !== 'statsFindRow' && t.id !== 'statsFindCol')) return;
+        event.preventDefault();
+        _statsFind(t, t.id === 'statsFindRow' ? 'row' : 'col', true);
+    });
+    document.addEventListener('keydown', (event) => {
+        if (event.key !== 'Escape' || !(state._statsSelCols && state._statsSelCols.size)) return;
+        const w = document.getElementById('statsModal');
+        if (!w || w.style.display === 'none' || !w.contains(document.activeElement) && document.activeElement !== document.body) return;
+        state._statsSelCols = new Set();
+        _statsApplySelection();
+    });
+    // Hover a cell: highlight its row name and column label, and name the pair in the tooltip
+    let lit = [];
+    summaryTab.addEventListener('mouseover', (event) => {
+        const tip = event.target.closest?.('.tip[data-tip]');
+        if (tip) _statsTipShow(tip);
+        const td = event.target.closest?.('table.stats-mx td');
+        lit.forEach(el => el.classList.remove('hl')); lit = [];
+        if (!td || td.classList.contains('pad') || td.classList.contains('csp')) return;
+        const tr = td.parentElement, table = tr.closest('table');
+        const rn = tr.cells[0];
+        if (!rn?.dataset.r) return;
+        const j = _statsColOf(table.tBodies[0], td), i = +rn.dataset.r;
+        if (j < 0) return;
+        const ch = table.tHead.rows[0].cells[j + 1];
+        lit = [rn, ch]; lit.forEach(el => el.classList.add('hl'));
+        const names = state._statsData?.names;
+        if (names) td.title = `${names[i]}  ×  ${names[j]}: ${td.textContent}`;
+    });
+    summaryTab.addEventListener('mouseout', (event) => {
+        if (event.target.closest?.('.tip[data-tip]') && !event.relatedTarget?.closest?.('.tip[data-tip]')) _statsTipHide();
+    });
+    // The pointer leaving the tab fires no mouseover inside it: clear the highlight here
+    summaryTab.addEventListener('mouseleave', () => { lit.forEach(el => el.classList.remove('hl')); lit = []; });
+}
+

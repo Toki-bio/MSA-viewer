@@ -1,0 +1,445 @@
+[script.js lines 8503-8946 of ViewAlign fd8b8e4]
+// NEXUS format parser (DATA or CHARACTERS block with MATRIX). Bracketed
+// [comments] are removed first; quoted taxon names ('...' with '' for a
+// literal quote) are single names that may contain spaces and brackets; and
+// '_' equals a space in a name, so an interleaved block may spell the same
+// taxon either way.
+function _nexusStripComments(text) {
+    let out = '', depth = 0, quoted = false;
+    for (let i = 0; i < text.length; i++) {
+        const c = text[i];
+        if (depth > 0) {
+            if (c === '[') depth++;
+            else if (c === ']') depth--;
+            continue;
+        }
+        if (quoted) {
+            out += c;
+            if (c === "'") {
+                if (text[i + 1] === "'") { out += "'"; i++; } else quoted = false;
+            }
+            continue;
+        }
+        if (c === "'") { quoted = true; out += c; continue; }
+        if (c === '[') { depth = 1; continue; }
+        out += c;
+    }
+    return out;
+}
+
+// Reads NEXUS FORMAT/DIMENSIONS settings from the text of one block
+function _nexusBlockSettings(blockText) {
+    const opt = (re) => { const m = blockText.match(re); return m ? m[1] : null; };
+    const sym = (key) => {
+        const m = blockText.match(new RegExp('\\b' + key + '\\s*=\\s*(\'[^\']\'|"[^"]"|\\S)', 'i'));
+        if (!m) return null;
+        const v = m[1];
+        return v.length === 3 ? v[1] : v;
+    };
+    const ntax = opt(/\bNTAX\s*=\s*(\d+)/i);
+    const nchar = opt(/\bNCHAR\s*=\s*(\d+)/i);
+    return {
+        ntax: ntax ? parseInt(ntax, 10) : null,
+        nchar: nchar ? parseInt(nchar, 10) : null,
+        datatype: (opt(/\bDATATYPE\s*=\s*(\w+)/i) || 'standard').toLowerCase(),
+        interleave: /\bFORMAT\b[^;]*\bINTERLEAVE\b(?!\s*=\s*NO\b)/i.test(blockText),
+        gap: sym('GAP'),
+        missing: sym('MISSING') || '?',
+        matchchar: sym('MATCHCHAR'),
+    };
+}
+
+// One-character code for a NEXUS polymorphism/uncertainty set {AG} or (AG)
+function _nexusSetCode(states, datatype) {
+    const up = states.toUpperCase().replace(/[\s,]/g, '');
+    if (datatype === 'dna' || datatype === 'rna' || datatype === 'nucleotide') return iupacFromBases(up.split(''));
+    if (datatype === 'protein') return _proteinAmbiguityCode(up.split(''));
+    return '?';
+}
+
+// NEXUS parser. Uses the DATA or CHARACTERS block (a TAXA/DISTANCES/TREES
+// MATRIX is never taken for the alignment) and honours its FORMAT settings:
+// INTERLEAVE, GAP, MISSING and MATCHCHAR (resolved against the first taxon).
+// {..}/(..) state sets count as one column: an IUPAC code for DNA/RNA, B/Z/J
+// or X for protein, '?' otherwise. A non-interleaved matrix may wrap a
+// sequence over several lines; NCHAR says where each one ends.
+function parseNexus(text) {
+    const t = _nexusStripComments(text.replace(/\r\n?/g, '\n'));
+    // Prefer the MATRIX inside a DATA or CHARACTERS block
+    let blockStart = -1;
+    const blockRe = /\bBEGIN\s+(DATA|CHARACTERS)\s*;/ig;
+    const bm = blockRe.exec(t);
+    if (bm) blockStart = bm.index;
+    const searchFrom = blockStart >= 0 ? blockStart : 0;
+    const relMatrix = t.slice(searchFrom).search(/\bMATRIX\b/i);
+    if (relMatrix < 0) return null;
+    const matrixIdx = searchFrom + relMatrix;
+    const settings = _nexusBlockSettings(t.slice(searchFrom, matrixIdx));
+    // The matrix ends at the first ';' outside a quoted name
+    let content = '', quoted = false;
+    for (let i = matrixIdx + 6; i < t.length; i++) {
+        const c = t[i];
+        if (c === "'") quoted = !quoted;
+        else if (c === ';' && !quoted) break;
+        content += c;
+    }
+
+    const notices = [];
+    const datatype = settings.datatype;
+    const digitsAreStates = !(datatype === 'dna' || datatype === 'rna' || datatype === 'nucleotide' || datatype === 'protein');
+    // Reads a taxon name at str[pos]; returns [name, nextPos] or null
+    const readName = (str, pos) => {
+        while (pos < str.length && /\s/.test(str[pos])) pos++;
+        if (pos >= str.length) return null;
+        if (str[pos] === "'") {
+            let name = '', i = pos + 1;
+            for (; i < str.length; i++) {
+                if (str[i] === "'") {
+                    if (str[i + 1] === "'") { name += "'"; i++; continue; }
+                    break;
+                }
+                name += str[i];
+            }
+            return [name, i + 1];
+        }
+        if (str[pos] === '"') {
+            const close = str.indexOf('"', pos + 1);
+            if (close < 0) return null;
+            return [str.slice(pos + 1, close), close + 1];
+        }
+        let i = pos;
+        while (i < str.length && !/\s/.test(str[i])) i++;
+        return [str.slice(pos, i).replace(/_/g, ' '), i];
+    };
+    // Reads up to `limit` columns from str[pos..]; returns [cols, nextPos]
+    const readChars = (str, pos, limit) => {
+        const cols = [];
+        while (pos < str.length && cols.length < limit) {
+            const c = str[pos];
+            if (/\s/.test(c)) { pos++; continue; }
+            if (c === '{' || c === '(') {
+                const close = str.indexOf(c === '{' ? '}' : ')', pos + 1);
+                if (close < 0) { pos = str.length; break; }
+                cols.push(_nexusSetCode(str.slice(pos + 1, close), datatype));
+                pos = close + 1;
+                continue;
+            }
+            cols.push(c);
+            pos++;
+        }
+        return [cols, pos];
+    };
+
+    const order = [];
+    const rows = new Map();
+    const display = new Map();
+    const append = (name, cols) => {
+        const key = name.replace(/_/g, ' ');
+        if (!rows.has(key)) { rows.set(key, []); display.set(key, key.replace(/ /g, '_')); order.push(key); }
+        const arr = rows.get(key);
+        for (const c of cols) arr.push(c);
+    };
+
+    if (!settings.interleave && settings.nchar) {
+        // Sequential: name, then exactly NCHAR columns, which may span lines
+        let pos = 0;
+        while (pos < content.length) {
+            const nm = readName(content, pos);
+            if (!nm || !nm[0]) break;
+            const [cols, next] = readChars(content, nm[1], settings.nchar);
+            append(nm[0], cols);
+            pos = next;
+        }
+    } else {
+        // Interleaved, or no NCHAR: one "name residues" pair per line
+        for (const line of content.split('\n')) {
+            const nm = readName(line, 0);
+            if (!nm || !nm[0]) continue;
+            const [cols] = readChars(line, nm[1], Infinity);
+            if (cols.length) append(nm[0], cols);
+        }
+    }
+    if (rows.size === 0) return null;
+
+    // Map the block's symbols onto the viewer's alphabet
+    const gapSym = settings.gap;
+    const matchSym = settings.matchchar;
+    const first = rows.get(order[0]);
+    const seqs = [];
+    for (const key of order) {
+        const cols = rows.get(key);
+        let out = '';
+        for (let i = 0; i < cols.length; i++) {
+            let c = cols[i];
+            if (matchSym && c === matchSym && key !== order[0]) c = first[i] || '?';
+            if (gapSym && c === gapSym) c = '-';
+            else if (c === settings.missing && !/[A-Za-z]/.test(c)) c = '?';
+            if (!/[A-Za-z?*\-.]/.test(c) && !(digitsAreStates && /[0-9]/.test(c))) continue;
+            out += c;
+        }
+        seqs.push({ header: display.get(key), fullHeader: key, seq: out, gaplessPositions: calculateGaplessPositions(out) });
+    }
+
+    if (settings.ntax && settings.ntax !== seqs.length) {
+        notices.push(`NEXUS header says NTAX=${settings.ntax} but the matrix has ${seqs.length} taxa`);
+    }
+    if (settings.nchar) {
+        const off = seqs.filter(q => q.seq.length !== settings.nchar);
+        if (off.length) notices.push(`NEXUS header says NCHAR=${settings.nchar} but ${off.length} taxon/taxa differ (e.g. '${off[0].header}' has ${off[0].seq.length})`);
+    }
+    if (notices.length) _parseNotice = notices.join('; ') + '.';
+    return seqs;
+}
+
+// Stockholm format parser (Pfam/HMMER/Rfam)
+function parseStockholm(text) {
+    const lines = text.split(/\r?\n/);
+    const rows = _interleavedRows();
+    let inAlign = false;
+    // Where blocks end (GLM check 2026-11-11, Q11b). A file that separates its blocks with blank lines: at the
+    // blank lines only (a "#=GC" line between two lines with one name does not split them). A file with no
+    // blank line between sequence lines: at a "#=GC" line, and where the first name of the block comes again
+    // after other names (such a file used to give one row per block line).
+    let seqSeen = false, blankPending = false, blankSeparated = false;
+    for (const l of lines) {
+        const t = l.trim();
+        if (t === '//') break;
+        if (!t) { if (seqSeen) blankPending = true; continue; }
+        if (t.startsWith('#')) continue;
+        if (blankPending) { blankSeparated = true; break; }
+        seqSeen = true;
+    }
+    let blockFirst = null, blockNames = new Set();
+    const endBlock = () => { rows.blockEnd(); blockFirst = null; blockNames = new Set(); };
+    for (let li = 0; li < lines.length; li++) {
+        const t = lines[li].trim();
+        if (t === '//') {
+            // A Stockholm file may hold several alignments; say that only the first is shown
+            const more = lines.slice(li + 1).filter(l => /^# STOCKHOLM\b/.test(l.trim())).length;
+            if (more) _parseNotice = `This Stockholm file holds ${more + 1} alignments; showing the first. Split the file to view the others.`;
+            break;
+        }
+        if (/^# STOCKHOLM\b/.test(t) || t.startsWith('#=GF')) { inAlign = true; continue; }
+        if (!t) { endBlock(); continue; }   // a blank line ends a block
+        if (t.startsWith('#=GC')) { if (!blankSeparated) endBlock(); continue; }   // per-column lines close a block where no blank lines do
+        if (t.startsWith('#')) continue;
+        if (!inAlign) continue;
+        const m = t.match(/^(\S+)\s+(.+)$/);
+        if (!m) continue;
+        if (!blankSeparated && m[1] === blockFirst && blockNames.size > 1) endBlock();
+        if (blockFirst === null) blockFirst = m[1];
+        blockNames.add(m[1]);
+        rows.add(m[1], m[2].replace(/\s/g, '').replace(/[.-]/g, '-'));
+    }
+    if (rows.size === 0) return null;
+    return rows.seqs();
+}
+
+const FASTA_NUCLEOTIDE_CHARS = /^[ACGTUNRYMKSWHBVD.-]+$/i;
+const FASTA_PROTEIN_ONLY_CHARS = /[EFILPQZXJO*]/i;
+
+function _isProteinFastaSequence(rawSeq) {
+    const seqType = el('mafftSeqType')?.value;
+    if (seqType === '0' || seqType === '1') return true;
+    const letters = String(rawSeq || '').replace(/[^A-Za-z*.-]/g, '');
+    if (!letters) return false; // empty sequence: don't classify as protein
+    return FASTA_PROTEIN_ONLY_CHARS.test(letters) || !FASTA_NUCLEOTIDE_CHARS.test(letters);
+}
+
+function _sanitizeFastaSequence(rawSeq, isProtein) {
+    const compact = String(rawSeq || '').replace(/\s+/g, '').replace(/\./g, '-');
+    if (isProtein) {
+        return compact.replace(/[^ACDEFGHIKLMNPQRSTVWYBXZJUO*?.-]/gi, 'X');
+    }
+    // "?" (missing data) is kept: it used to become N here, an asparagine in a protein row made
+    // of nucleotide-looking letters, and was lost from PHYLIP/NEXUS data on Save (audit M4, L12)
+    return compact.replace(/[^ACGTUNRYMKSWHBVD?.-]/gi, 'N');
+}
+
+// A record made only of digits, ?, - and . (and at least one digit) is a row of character states (a 0/1 or
+// morphological matrix saved from NEXUS), not letters with line numbers: its digits are the data. They used to be
+// deleted as layout, so such a matrix did not survive Save FASTA or a snapshot (audit 2026-11-10, H6).
+// A line of gap symbols only, with the position number some writers put at the line's end ("------ 12") or
+// start ("7 ------"): the number is layout. Without this an all-gap record written that way was taken for a
+// row of states and its numbers became residues (GLM check 2026-11-11, Q12). Only a number that fits the count
+// of residues so far is dropped, so a row of states such as "---- 0101" is not touched.
+function _dropGapLinePositionNumber(line, residuesBefore) {
+    let m = /^([-.?\s]*[-.?])\s+(\d+)$/.exec(line);
+    if (m && +m[2] === residuesBefore + m[1].replace(/\s/g, '').length) return m[1];
+    m = /^(\d+)\s+([-.?][-.?\s]*)$/.exec(line);
+    if (m && +m[1] === residuesBefore + 1) return m[2];
+    return line;
+}
+function _fastaStateRow(rawNoSpace) { return /\d/.test(rawNoSpace) && /^[0-9?.\-]+$/.test(rawNoSpace); }
+function _pushParsedFastaSequence(seqs, header, seq, raw) {
+    const cleanHeader = header.replace(/^>/, '').trim().replace(/\s+/g, ' ');
+    const displayHeader = cleanHeader.split(/\s+/)[0] || 'unnamed';
+    const states = raw !== undefined && _fastaStateRow(raw);
+    const processedSeq = states ? raw.replace(/\./g, '-') : _sanitizeFastaSequence(seq, _isProteinFastaSequence(seq));
+    const gaplessPositions = seqs.length * processedSeq.length < GAPLESS_TABLE_MAX_RESIDUES ? calculateGaplessPositions(processedSeq) : null;
+    seqs.push({ header: displayHeader, fullHeader: cleanHeader, seq: processedSeq, gaplessPositions: gaplessPositions });
+}
+
+/**
+ * Check if parsed sequences have mismatched lengths.
+ * Returns null if all same length, or { majorityLen, differing: [{name, length, diff}] }.
+ */
+function _checkLengthMismatch(seqs) {
+    if (!seqs || seqs.length < 2) return null;
+    const lengths = seqs.map(s => s.seq.length);
+    const maxLen = _maxOf(lengths);
+    const minLen = _minOf(lengths);
+    if (maxLen === minLen) return null;
+
+    // Find the majority length
+    const lenCounts = {};
+    for (const l of lengths) lenCounts[l] = (lenCounts[l] || 0) + 1;
+    let majorityLen = maxLen;
+    let majorityCount = 0;
+    for (const [l, count] of Object.entries(lenCounts)) {
+        if (count > majorityCount) {
+            majorityCount = count;
+            majorityLen = parseInt(l);
+        }
+    }
+
+    // Find sequences that differ from the majority
+    const differing = [];
+    for (let i = 0; i < seqs.length; i++) {
+        if (seqs[i].seq.length !== majorityLen) {
+            differing.push({
+                name: seqs[i].header,
+                length: seqs[i].seq.length,
+                diff: seqs[i].seq.length - majorityLen
+            });
+        }
+    }
+
+    return { majorityLen, differing };
+}
+
+/**
+ * Pad short sequences with gaps to match the longest sequence's length.
+ * Prevents downstream crashes from length-mismatched rows.
+ */
+function _normalizeSequenceLengths(seqs) {
+    if (!seqs || seqs.length === 0) return;
+    const maxLen = _maxOf(seqs, s => s.seq.length);
+    for (const s of seqs) {
+        if (s.seq.length < maxLen) {
+            s.seq = s.seq.padEnd(maxLen, '-');
+            s.gaplessPositions = calculateGaplessPositions(s.seq);
+        }
+    }
+}
+
+/**
+ * Read a File that may be plain FASTA/MSF text or a binary AB1 chromatogram.
+ * AB1 files are converted to a single-record FASTA block and their trace
+ * data is stashed in state.ab1Traces keyed by the FASTA header, so a
+ * "View Chromatogram" action can retrieve it later.
+ * Returns { text, header } where header is null for non-AB1 files.
+ */
+async function readSequenceFile(file) {
+    const looksAb1ByName = /\.ab1$/i.test(file.name);
+    const buf = await file.arrayBuffer();
+    if (looksAb1ByName || (typeof AB1Parser !== 'undefined' && AB1Parser.looksLikeAb1(buf))) {
+        let parsed = null;
+        try { parsed = typeof AB1Parser !== 'undefined' ? AB1Parser.parse(buf) : null; }
+        catch (e) { throw new Error(`${file.name} is not a readable AB1 trace (truncated or damaged file)`); }
+        if (parsed && parsed.sequence) {
+            // any extension: detected by content. Another trace under the same name (two runs saved as
+            // sample.ab1) gets its own name, so each row opens its own chromatogram
+            const base = file.name.replace(/\.[^.]+$/, '');
+            let header = base, k = 1;
+            while (state.ab1Traces[header] && state.ab1Traces[header].sequence !== parsed.sequence) header = base + '_' + (++k);
+            state.ab1Traces[header] = parsed;
+            return { text: `>${header}\n${parsed.sequence}\n`, header };
+        }
+    }
+    const bytes = new Uint8Array(buf);
+    if (bytes[0] === 0x1f && bytes[1] === 0x8b && typeof BamParser !== 'undefined') {
+        // gzip or BGZF: BamParser.decompressBAM handles both single- and multi-member files
+        return { text: _decodeTextBytes(await BamParser.decompressBAM(new Blob([bytes]))), header: null };
+    }
+    return { text: _decodeTextBytes(bytes), header: null };
+}
+
+// Text files may be UTF-8 (with or without BOM), UTF-16 with a BOM (Windows
+// "Unicode"), or a legacy single-byte encoding; names keep their accents.
+function _decodeTextBytes(bytes) {
+    if (bytes[0] === 0xFF && bytes[1] === 0xFE) return new TextDecoder('utf-16le').decode(bytes.subarray(2));
+    if (bytes[0] === 0xFE && bytes[1] === 0xFF) return new TextDecoder('utf-16be').decode(bytes.subarray(2));
+    try {
+        return new TextDecoder('utf-8', { fatal: true }).decode(bytes);
+    } catch (_) {
+        return new TextDecoder('windows-1252').decode(bytes);
+    }
+}
+
+function parseFasta(text) {
+    if (text.charCodeAt(0) === 0xFEFF) text = text.slice(1); // strip BOM
+    const lines = text.split(/\r\n|\r|\n/);
+    const seqs = [];
+    let seq = '', raw = '', header = '';   // raw: the record with only spaces removed (see _fastaStateRow)
+    // PIR/NBRF: '>P1;name' (or F1, DL, DC, RL, RC, N1, N3, XX) is followed by
+    // a free-text title line, and the sequence ends with '*'
+    const PIR_HEADER = /^>(P1|F1|DL|DC|RL|RC|N1|N3|XX);/;
+    let pirTitleNext = false, isPir = false;
+    try {
+        for (let line of lines) {
+            line = line.trim();
+            if (pirTitleNext) {
+                pirTitleNext = false;
+                header += line ? ' ' + line : '';
+                continue;
+            }
+            if (!line || line.startsWith(';')) continue; // ';' lines are comments in Pearson FASTA
+            if (line.startsWith('>')) {
+                if (header) {
+                    _pushParsedFastaSequence(seqs, header, isPir ? seq.replace(/\*$/, '') : seq, isPir ? undefined : raw);
+                }
+                seq = ''; raw = '';
+                isPir = PIR_HEADER.test(line);
+                header = isPir ? '>' + line.slice(4) : line;
+                pirTitleNext = isPir;
+            } else if (header) {
+                // Whitespace and digits are layout; any other symbol is a
+                // column (unknown symbols become N/X when sanitised, so the
+                // row keeps its length). '?' is missing data, not a gap.
+                line = _dropGapLinePositionNumber(line.replace(/[_~]/g, '-'), raw.length);
+                seq += line.replace(/[\s\d]/g, '');
+                raw += line.replace(/\s/g, '');
+            }
+        }
+        if (header) {
+            _pushParsedFastaSequence(seqs, header, isPir ? seq.replace(/\*$/, '') : seq, isPir ? undefined : raw);
+        }
+    } catch (err) {
+        console.error('Error in parseFasta:', err);
+        return null;
+    }
+    if (seqs.length && _looksLikeA3m(seqs)) {
+        const inserted = _expandA3mInsertions(seqs);
+        _parseNotice = `A3M detected: lowercase insertions expanded into ${inserted} insert column${inserted === 1 ? '' : 's'} so the rows line up.`;
+    }
+    return seqs.length ? seqs : null;
+}
+
+// A3M (HHsuite) leaves insert states as lowercase letters without padding
+// the other rows, so rows differ in length but have the same number of match
+// columns (uppercase letters and '-').
+function _looksLikeA3m(seqs) {
+    if (seqs.length < 2) return false;
+    if (!seqs.some(s => /[a-z]/.test(s.seq))) return false;
+    if (seqs.every(s => s.seq.length === seqs[0].seq.length)) return false;
+    // The first record of an A3M file is the query: it has no insert states. Soft-masked unaligned
+    // FASTA whose capitals happened to be equally many per record was re-gapped as A3M (audit L14).
+    if (/[a-z]/.test(seqs[0].seq)) return false;
+    // A3M match columns are capitals: an all-lowercase alignment is just ragged
+    if (!seqs.some(s => /[A-Z]/.test(s.seq))) return false;
+    const matchCols = s => s.seq.replace(/[a-z.]/g, '').length;
+    const m = matchCols(seqs[0]);
+    return m > 0 && seqs.every(s => matchCols(s) === m);
+}
+

@@ -1,0 +1,484 @@
+[script.js lines 31221-31703 of ViewAlign fd8b8e4]
+function geneDocMoveLeftString(seq, pos, amount) {
+    const chars = seq.split('');
+    if (amount <= 0 || pos < 0 || pos >= chars.length || !isGeneDocResidueChar(chars[pos])) {
+        return { seq, moved: 0 };
+    }
+
+    let remaining = amount;
+    let moved = 0;
+    let start = pos;
+    for (let scan = pos - 1; scan >= 0 && remaining > 0; scan--) {
+        if (isGeneDocGapChar(chars[scan])) {
+            remaining--;
+            moved++;
+            start = scan;
+        }
+    }
+    if (moved === 0) return { seq, moved: 0 };
+
+    const residues = [];
+    for (let i = start; i <= pos; i++) {
+        if (isGeneDocResidueChar(chars[i])) residues.push(chars[i]);
+    }
+
+    let write = start;
+    residues.forEach(char => {
+        chars[write++] = char;
+    });
+    while (write <= pos) {
+        chars[write++] = GENEDOC_FILLER;
+    }
+
+    return { seq: chars.join(''), moved: -moved };
+}
+
+function geneDocMoveTextString(seq, pos, amount) {
+    if (amount === 0) return { seq, moved: 0 };
+    if (amount < 0) return geneDocMoveLeftString(seq, pos, -amount);
+
+    let currentSeq = seq;
+    let currentPos = pos;
+    let movedTotal = 0;
+    for (let i = 0; i < amount; i++) {
+        const result = geneDocMoveStepString(currentSeq, currentPos, 1);
+        if (!result.moved) break;
+        currentSeq = result.seq;
+        currentPos += result.moved;
+        movedTotal += result.moved;
+    }
+    return { seq: currentSeq, moved: movedTotal };
+}
+
+function geneDocSlideTextString(seq, pos, amount) {
+    if (amount === 0) return { seq, moved: 0 };
+    const direction = Math.sign(amount);
+    let currentSeq = seq;
+    let currentPos = pos;
+    let movedTotal = 0;
+    for (let i = 0; i < Math.abs(amount); i++) {
+        const result = geneDocSlideStepString(currentSeq, currentPos, direction);
+        if (!result.moved) break;
+        currentSeq = result.seq;
+        currentPos += result.moved;
+        movedTotal += result.moved;
+    }
+    return { seq: currentSeq, moved: movedTotal };
+}
+
+function canGeneDocMove(rowIndex, pos, direction, tool) {
+    const seq = state.seqs[rowIndex]?.seq || '';
+    if (pos < 0 || pos >= seq.length || !isGeneDocResidueChar(seq[pos])) return false;
+    if (direction > 0) return true;
+    if (tool === 'moveNoGaps') {
+        for (let scan = pos - 1; scan >= 0; scan--) {
+            if (isGeneDocGapChar(seq[scan])) return true;
+        }
+        return false;
+    }
+    // Slide Keep Gaps falls through: it may only start a left move when the gap it would
+    // consume is immediately left of the grab, matching geneDocSlideStepString.
+    return pos > 0 && isGeneDocGapChar(seq[pos - 1]);
+}
+
+function applyGeneDocMoveAmount(rowIndex, pos, amount, tool) {
+    const s = state.seqs[rowIndex];
+    if (!s) return 0;
+    const result = tool === 'slideKeepGaps'
+        ? geneDocSlideTextString(s.seq, pos, amount)
+        : geneDocMoveTextString(s.seq, pos, amount);
+    if (result.moved) s.seq = result.seq;
+    return result.moved;
+}
+
+function getGeneDocCharWidth(span) {
+    const rect = span.getBoundingClientRect();
+    if (rect.width > 0) return rect.width;
+    const fontSize = parseFloat(getComputedStyle(span).fontSize) || 13;
+    return Math.max(6, fontSize * 0.62);
+}
+
+// ---- Drag overlay -------------------------------------------------------------------
+// Mutating a residue span costs ~20-35 ms because the browser re-rasterises the visible
+// grid, and that cost is nearly independent of how many spans changed. So during a drag
+// the DOM is left alone entirely: a canvas over the dragged row paints the repositioned
+// residues instead. Everything else stays transparent, so untouched columns keep showing
+// their real spans, correctly shaded and pixel-aligned. The DOM is reconciled on mouse-up.
+
+// Anything that changes the geometry or decoration of a row's spans breaks either the
+// fixed-pitch column arithmetic below or the illusion that the canvas matches the DOM.
+// In those cases the drag falls back to repainting spans.
+function canUseGeneDocDragOverlay(rowIndex) {
+    return isSpanRenderMode()
+        && !state.editLiveConservation
+        && !(state._brkBeforePos && state._brkBeforePos.size)   // breakpoints insert extra spans
+        && !_foldDomInfo()                                      // so do fold markers
+        && !(state._diffColumns && state._diffColumns.size)     // var-sites hides columns
+        && !(state.selectedColumns && state.selectedColumns.size)
+        && !(state.repeatHighlights && state.repeatHighlights.size)
+        && !(state.tsdMarks && state.tsdMarks.get(rowIndex)?.size)
+        // The canvas paints a residue's scheme colours only. Trim shading, nucleotide
+        // selection and row selection are drawn by CSS on the spans it hides, so a drag
+        // with any of them active made them vanish from the moved cells until mouse-up.
+        && !state.trimBoundaries
+        && !state.softTrimBoundaries
+        && !(state.selectedNucs && state.selectedNucs.size)
+        && !(state.selectedRows && state.selectedRows.size)
+        && !document.body.classList.contains('codon-mode');
+}
+
+function _firstNonTransparentBackground(startEl) {
+    for (let el = startEl; el && el !== document.documentElement; el = el.parentElement) {
+        const bg = getComputedStyle(el).backgroundColor;
+        if (bg && bg !== 'transparent' && !bg.startsWith('rgba(0, 0, 0, 0)')) return bg;
+    }
+    return '#ffffff';
+}
+
+// What is genuinely on screen: the alignment container clipped to the window. The
+// container itself is usually taller than the window, so testing against its rect alone
+// treats every wrapped block as visible.
+function visibleAlignmentRect() {
+    if (!alignmentContainer) return null;
+    const r = alignmentContainer.getBoundingClientRect();
+    const top = Math.max(r.top, 0);
+    const left = Math.max(r.left, 0);
+    const bottom = Math.min(r.bottom, window.innerHeight || document.documentElement.clientHeight);
+    const right = Math.min(r.right, window.innerWidth || document.documentElement.clientWidth);
+    if (bottom <= top || right <= left) return null;
+    return { top, left, bottom, right };
+}
+
+// Sample the real colours off the row rather than hard-coding them, so the canvas matches
+// whatever theme/colour scheme is in force.
+function _sampleGeneDocRowStyle(dataEl) {
+    const probe = document.createElement('span');
+    dataEl.appendChild(probe);
+    probe.className = 'other';
+    const cs = getComputedStyle(probe);
+    const font = cs.font || `${cs.fontSize} ${cs.fontFamily}`;
+    const fg = cs.color;
+    probe.className = 'gap';
+    const gapFg = getComputedStyle(probe).color;
+    probe.remove();
+    return { font, fg, gapFg, bg: _firstNonTransparentBackground(dataEl) };
+}
+
+function createGeneDocDragOverlay(drag) {
+    if (!alignmentContainer || !canUseGeneDocDragOverlay(drag.rowIndex)) return null;
+    const dataEls = document.querySelectorAll(`.seq-line[data-seq-index="${drag.rowIndex}"] .seq-data`);
+    if (!dataEls.length) return null;
+
+    const view = visibleAlignmentRect();
+    if (!view) return null;
+    const dpr = window.devicePixelRatio || 1;
+    const layers = [];
+    let style = null;
+
+    dataEls.forEach(dataEl => {
+        const r = dataEl.getBoundingClientRect();
+        if (r.bottom <= view.top || r.top >= view.bottom) return;      // block off-screen
+        const first = dataEl.firstElementChild;
+        const firstPos = first ? +first.getAttribute('data-pos') : NaN;
+        if (!Number.isInteger(firstPos)) return;
+        const left = Math.max(r.left, view.left);
+        const right = Math.min(r.right, view.right);
+        if (right - left < 1 || r.height < 1) return;
+
+        if (!style) style = _sampleGeneDocRowStyle(dataEl);
+        const canvas = document.createElement('canvas');
+        canvas.width = Math.ceil((right - left) * dpr);
+        canvas.height = Math.ceil(r.height * dpr);
+        canvas.style.cssText = `position:fixed;left:${left}px;top:${r.top}px;`
+            + `width:${right - left}px;height:${r.height}px;pointer-events:none;z-index:30;`;
+        document.body.appendChild(canvas);
+        const ctx = canvas.getContext('2d');
+        ctx.scale(dpr, dpr);
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.font = style.font;
+        layers.push({ canvas, ctx, firstPos, originX: r.left, left, right, width: right - left, height: r.height });
+    });
+
+    if (!layers.length) return null;
+    return { layers, style, scheme: getEffectiveColorScheme() };
+}
+
+function drawGeneDocDragOverlay(drag) {
+    const overlay = drag.overlay;
+    if (!overlay) return;
+    const seq = state.seqs[drag.rowIndex]?.seq || '';
+    const before = drag.originalSeq;
+    const cw = drag.charWidth;
+    const { fg, gapFg, bg } = overlay.style;
+    const monochrome = usesMonochromeShading(overlay.scheme);
+    // The spans under the overlay still carry the highlights of the row as it was when
+    // the drag began; any column whose highlight differs now must be painted over too.
+    const searching = state.searchHistory?.length > 0;
+    const nowHits = searching ? _getSearchHitsForRow(drag.rowIndex) : _EMPTY_HITS;
+    const startHits = drag.startHits || _EMPTY_HITS;
+
+    for (const L of overlay.layers) {
+        L.ctx.clearRect(0, 0, L.width, L.height);
+        const from = Math.max(0, Math.floor((L.left - L.originX) / cw) - 1);
+        const to = Math.ceil((L.right - L.originX) / cw) + 1;
+        for (let i = from; i <= to; i++) {
+            const pos = L.firstPos + i;
+            const ch = seq[pos];
+            if (ch === undefined) break;
+            const hit = nowHits.get(pos);
+            // Untouched column: leave it transparent so its real span shows through.
+            if (ch === (before[pos] === undefined ? GENEDOC_FILLER : before[pos]) && hit === startHits.get(pos)) continue;
+            const x = L.originX + i * cw - L.left;
+            const scheme = monochrome ? null : getResidueSchemeStyle(ch, overlay.scheme);
+            L.ctx.fillStyle = hit ? (hit.color || '#ffcc00') : ((scheme && scheme.bg) || bg);
+            L.ctx.fillRect(x, 0, cw, L.height);
+            L.ctx.fillStyle = hit ? '#000' : ((scheme && scheme.fg) || (isGeneDocResidueChar(ch) ? fg : gapFg));
+            L.ctx.fillText(ch, x + cw / 2, L.height / 2);
+        }
+    }
+}
+
+// syncDom: the DOM is stale wherever the overlay has been painting, so bring the row back
+// in step whenever the overlay goes away mid-drag (a scroll moves it out of position).
+function destroyGeneDocDragOverlay(drag, syncDom) {
+    if (!drag || !drag.overlay) return;
+    drag.overlay.layers.forEach(L => L.canvas.remove());
+    drag.overlay = null;
+    if (syncDom) refreshSequenceRowDom(drag.rowIndex, null, drag.originalSeq);
+}
+
+function handleGeneDocEditMouseDown(e) {
+    if (e.button !== 0) return;
+    if (isCtrlModifier(e)) return;
+    if (isCanvasMode()) return; // Canvas mode handles edit clicks in its own mousedown handler
+    const span = closestFromEvent(e, '.seq-data > span[data-pos]');
+    if (!span) return;
+    const seqLine = span.closest('.seq-line');
+    if (!seqLine || seqLine.classList.contains('consensus-line') || seqLine.classList.contains('scale-ruler-line')) return;
+    const rowIndex = parseInt(seqLine.dataset.seqIndex, 10);
+    const pos = parseInt(span.dataset.pos, 10);
+    if (!Number.isInteger(rowIndex) || !Number.isInteger(pos) || !state.seqs[rowIndex]) return;
+
+    // A plain click no longer auto-enters GeneDoc edit mode (it now starts a
+    // nucleotide-selection drag instead, see handleNucleotideSelectMouseDown —
+    // this handler is only reached at all when edit mode is already active).
+    // Entering edit mode is now double-click (see the dblclick listener below)
+    // or the explicit Edit toggle button, same as it always was before a plain
+    // click was ever wired to auto-enter it.
+    if (!state.editModeActive) return;
+
+    const tool = state.editTool;
+    if (!GENEDOC_MOVE_TOOLS.has(tool) && !GENEDOC_GAP_TOOLS.has(tool) && tool !== 'residue' && tool !== 'selectColumn') return;
+
+    e.preventDefault();
+    e.stopImmediatePropagation();
+    hideTooltip();
+
+    if (GENEDOC_MOVE_TOOLS.has(tool)) {
+        startGeneDocMoveDrag(e, rowIndex, pos, tool, span);
+    } else if (GENEDOC_GAP_TOOLS.has(tool)) {
+        handleGeneDocGapToolClick(rowIndex, pos, tool);
+    } else if (tool === 'residue') {
+        state.editCell = { row: rowIndex, pos };
+        updateEditActiveCell();
+    } else if (tool === 'selectColumn') {
+        startGeneDocColumnDrag(pos);
+    }
+}
+
+function startGeneDocMoveDrag(e, rowIndex, pos, tool, span) {
+    if (!isGeneDocResidueChar(state.seqs[rowIndex].seq[pos])) {
+        showMessage('Start a GeneDoc drag on a residue.', 1800);
+        return;
+    }
+    clearGeneDocEditDrag();
+    // The drag paints over this row's spans, so they must show its current state
+    if (_staleRows.has(rowIndex)) {
+        _repaintRowCols(rowIndex, _staleRows.get(rowIndex), Infinity, _staleRepaintContext());
+        _staleRows.delete(rowIndex);
+    }
+    const canvasMode = isCanvasMode();
+    const charWidth = canvasMode
+        ? (_canvasState.metrics?.charW || 8)
+        : getGeneDocCharWidth(span);
+    state.editDrag = {
+        type: 'move',
+        rowIndex,
+        anchorPos: pos,
+        tool,
+        lastClientX: e.clientX,
+        charWidth,
+        originalSeq: state.seqs[rowIndex].seq,
+        // what the DOM row shows now, for the overlay's "unchanged cell" test
+        startHits: state.searchHistory?.length ? _computeSearchHitsForSeq(state.seqs[rowIndex].seq) : new Map(),
+        originalAlignmentLength: _maxOf(state.seqs, seqObj => seqObj.seq.length),
+        moved: 0,
+        visiblePositions: null,
+        visibleComputedAtMoved: 0,
+        rafPending: false,
+        pendingClientX: e.clientX,
+        isCanvas: canvasMode
+    };
+    state.editCell = { row: rowIndex, pos };
+    updateEditActiveCell();
+    document.body.style.cursor = 'default';
+    document.addEventListener('mousemove', handleGeneDocEditDragMove);
+    document.addEventListener('mouseup', handleGeneDocEditDragEnd);
+    alignmentContainer?.addEventListener('scroll', invalidateGeneDocDragVisiblePositions, { passive: true });
+}
+
+function startGeneDocColumnDrag(pos) {
+    clearGeneDocEditDrag();
+    state.editDrag = {
+        type: 'selectColumn',
+        startPos: pos,
+        lastPos: pos
+    };
+    setGeneDocColumnRange(pos, pos);
+    document.body.style.cursor = 'default';
+    document.addEventListener('mousemove', handleGeneDocEditDragMove);
+    document.addEventListener('mouseup', handleGeneDocEditDragEnd);
+}
+
+function setGeneDocColumnRange(startPos, endPos) {
+    const start = Math.min(startPos, endPos);
+    const end = Math.max(startPos, endPos);
+    state.selectedColumns.clear();
+    for (let pos = start; pos <= end; pos++) {
+        state.selectedColumns.add(pos);
+    }
+    updateColumnSelections();
+}
+
+function handleGeneDocEditDragMove(e) {
+    const drag = state.editDrag;
+    if (!drag) return;
+    e.preventDefault();
+
+    if (drag.type === 'selectColumn') {
+        if (isCanvasMode()) {
+            const col = _canvasColFromClientX(e.clientX, e.clientY);   // Block: the band under the pointer (it read the band at the top of the view)
+            if (col < 0 || col === drag.lastPos) return;
+            drag.lastPos = col;
+            // its updateColumnSelections redraws the overlay, which holds the column selection; a full redraw here
+            // (scheduleDraw, from before the overlay did) cost ~25 ms per column crossed (GLM audit cb34 #11)
+            setGeneDocColumnRange(drag.startPos, col);
+        } else {
+            const target = document.elementFromPoint(e.clientX, e.clientY);
+            const span = target?.closest?.('.seq-data > span[data-pos]');
+            if (!span) return;
+            const pos = parseInt(span.dataset.pos, 10);
+            if (!Number.isInteger(pos) || pos === drag.lastPos) return;
+            drag.lastPos = pos;
+            setGeneDocColumnRange(drag.startPos, pos);
+        }
+        return;
+    }
+
+    if (drag.type !== 'move') return;
+
+    // Coalesce every mousemove within a frame into a single repaint, so the repaint rate is
+    // capped by the display rather than by how fast the mouse reports. A fast flick still
+    // lands on the right column: the deferred step reads the latest position.
+    drag.pendingClientX = e.clientX;
+    if (drag.rafPending) return;
+    drag.rafPending = true;
+    requestAnimationFrame(() => {
+        drag.rafPending = false;
+        // Guard against a frame landing after mouse-up, which would edit past the undo snapshot.
+        if (state.editDrag === drag) applyGeneDocDragStep(drag, drag.pendingClientX);
+    });
+}
+
+function applyGeneDocDragStep(drag, clientX) {
+    const rawSteps = Math.trunc((clientX - drag.lastClientX) / drag.charWidth);
+    if (rawSteps === 0) return;
+    const amount = Math.max(-50, Math.min(50, rawSteps));
+    const direction = Math.sign(amount);
+    let totalMoved = 0;
+
+    if (canGeneDocMove(drag.rowIndex, drag.anchorPos, direction, drag.tool)) {
+        totalMoved = applyGeneDocMoveAmount(drag.rowIndex, drag.anchorPos, amount, drag.tool);
+    }
+
+    if (totalMoved !== 0) {
+        normalizeAlignmentLengths();
+        state.seqs[drag.rowIndex].gaplessPositions = calculateGaplessPositions(state.seqs[drag.rowIndex].seq);
+        drag.anchorPos += totalMoved;
+        state.editCell = { row: drag.rowIndex, pos: drag.anchorPos };
+        drag.moved += totalMoved;
+        repaintGeneDocDragRow(drag);
+        drag.lastClientX += totalMoved * drag.charWidth;
+    } else {
+        drag.lastClientX = clientX;
+    }
+}
+
+// One column step of a Move/Slide drag repaints only the on-screen columns of the dragged
+// row. Columns scrolled out of view are left stale until mouse-up, which reconciles the
+// whole row (see handleGeneDocEditDragEnd).
+function repaintGeneDocDragRow(drag) {
+    // Live conservation reshades every row, so it can only be served by a full render.
+    if (state.editLiveConservation) {
+        renderAlignment({ deferConservation: false });
+        return;
+    }
+    if (drag.isCanvas) {
+        _canvasState.scheduleDraw?.();
+        return;
+    }
+    // Preferred path: paint the moved residues onto a canvas and never touch the DOM.
+    if (drag.overlay === undefined) drag.overlay = createGeneDocDragOverlay(drag);
+    if (drag.overlay) {
+        drawGeneDocDragOverlay(drag);
+        return;
+    }
+    if (!refreshSequenceRowDom(drag.rowIndex, getGeneDocDragVisiblePositions(drag), drag.originalSeq)) {
+        // No span cache for this row (mode without spans, or a render that skipped it).
+        renderAlignment({ deferConservation: true });
+    }
+}
+
+// Columns of the dragged row currently on screen, padded so residues sliding in from
+// just outside the viewport still repaint. Cached per drag: recomputed on scroll and
+// every 20 columns of travel, since inserting columns shifts the row under the cursor.
+function getGeneDocDragVisiblePositions(drag) {
+    if (drag.visiblePositions && Math.abs(drag.moved - drag.visibleComputedAtMoved) <= 20) {
+        return drag.visiblePositions;
+    }
+    const rowCache = state.spanCache?.get(drag.rowIndex);
+    if (!rowCache || !alignmentContainer) return null;
+
+    // Measure the row's containers, not its residues: Block mode gives one .seq-data per
+    // block (~20 of them), Full mode a single one. Rect-testing every span instead costs
+    // more than the repaint it saves, which is the whole point of this engine.
+    const dataEls = document.querySelectorAll(`.seq-line[data-seq-index="${drag.rowIndex}"] .seq-data`);
+    if (!dataEls.length) return null;
+
+    const view = visibleAlignmentRect();
+    if (!view) return null;
+    const pad = 200;
+    const cw = drag.charWidth || 8;
+    const positions = new Set();
+
+    dataEls.forEach(dataEl => {
+        const r = dataEl.getBoundingClientRect();
+        // Whole block scrolled out of view vertically.
+        if (r.bottom < view.top - pad || r.top > view.bottom + pad) return;
+        const first = dataEl.firstElementChild;
+        const firstPos = first ? parseInt(first.dataset.pos, 10) : NaN;
+        if (!Number.isInteger(firstPos)) return;
+        // Columns are a fixed-width run from the block's left edge, so the horizontally
+        // visible slice is arithmetic — no per-span measurement needed.
+        const count = dataEl.childElementCount;
+        const from = Math.max(0, Math.floor((view.left - pad - r.left) / cw));
+        const to = Math.min(count - 1, Math.ceil((view.right + pad - r.left) / cw));
+        for (let i = from; i <= to; i++) positions.add(firstPos + i);
+    });
+
+    drag.visiblePositions = positions;
+    drag.visibleComputedAtMoved = drag.moved;
+    return positions;
+}
+

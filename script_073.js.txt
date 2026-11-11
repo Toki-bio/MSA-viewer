@@ -1,0 +1,517 @@
+[script.js lines 32202-32717 of ViewAlign fd8b8e4]
+// Block and Canvas (owner's request; before, only the Name length slider set it). Near the names' right edge the
+// pointer turns into a column-resize cursor; a press there drags the width in whole characters, through the same
+// path as the slider (setNameLengthUI), and does not start a row reorder or a selection. A double-click on the
+// edge fits the longest name.
+window.addEventListener('load', () => {
+    if (!alignmentContainer) return;
+    const ZONE = 4;
+    let measure = null;
+    const charWidth = nm => {
+        const font = getComputedStyle(nm).font;
+        if (!measure) measure = document.createElement('canvas').getContext('2d');
+        measure.font = font;
+        return measure.measureText('0').width || 8;
+    };
+    // { edge, ch } when (x, y) is within ZONE px of the names' right edge, else null
+    const edgeAt = (x, y, target) => {
+        if (document.getElementById('modeReads')?.checked) return null;
+        if (isCanvasMode()) {
+            const c = _canvasState.canvas, m = _canvasState.metrics;
+            if (!c || !m || !m.nameW) return null;
+            const r = c.getBoundingClientRect();
+            // not over the header (track, ruler): in the Block view every band has one (only band 1's was left out)
+            if (y < r.top || y > r.bottom || _canvasLocal(x, y).y < (m.headerH || 0)) return null;
+            const edge = r.left + (el('stickyNames')?.checked === false ? -_canvasState.offsetX : 0) + m.nameW;
+            return Math.abs(x - edge) <= ZONE ? { edge, ch: m.charW } : null;
+        }
+        const line = target && target.closest && target.closest('.seq-line[data-seq-index]');
+        const nm = line && line.querySelector(':scope > .seq-name');
+        if (!nm) return null;
+        const r = nm.getBoundingClientRect();
+        return Math.abs(x - r.right) <= ZONE ? { edge: r.right, ch: charWidth(nm) } : null;
+    };
+    let drag = null;
+    alignmentContainer.addEventListener('mousemove', (e) => {
+        if (drag) return;
+        alignmentContainer.classList.toggle('name-resize-hover', !!edgeAt(e.clientX, e.clientY, e.target));
+    });
+    alignmentContainer.addEventListener('mouseleave', () => { if (!drag) alignmentContainer.classList.remove('name-resize-hover'); });
+    alignmentContainer.addEventListener('mousedown', (e) => {
+        if (e.button !== 0) return;
+        const hit = edgeAt(e.clientX, e.clientY, e.target);
+        if (!hit) return;
+        e.preventDefault();
+        e.stopImmediatePropagation();               // no row reorder, rename or selection
+        if (el('nameLengthNoLimit')?.checked) {       // the drag starts from the width on screen (the longest name), not the stale slider value
+            const cur = effectiveNameLength();
+            _applyNameLenNoLimit(false);
+            updateNameLengthSliderRange();
+            setNameLengthUI(cur, false);
+        }
+        drag = { x0: e.clientX, len0: effectiveNameLength(), ch: hit.ch, len: effectiveNameLength() };
+        document.body.classList.add('name-resizing');
+    }, true);
+    document.addEventListener('mousemove', (e) => {
+        if (!drag) return;
+        const len = clampNameLength(drag.len0 + Math.round((e.clientX - drag.x0) / drag.ch));
+        if (len === drag.len) return;
+        drag.len = len;
+        setNameLengthUI(len, isCanvasMode());     // DOM widths change at once; Canvas redraws
+    });
+    document.addEventListener('mouseup', () => {
+        if (!drag) return;
+        const len = drag.len;
+        drag = null;
+        document.body.classList.remove('name-resizing');
+        setNameLengthUI(len, true);
+    });
+    alignmentContainer.addEventListener('dblclick', (e) => {
+        if (!edgeAt(e.clientX, e.clientY, e.target)) return;
+        e.preventDefault();
+        e.stopImmediatePropagation();               // not a rename
+        setNameLengthUI(_maxOf(state.seqs, s => (s.header || '').length), true);
+    }, true);
+});
+
+// Right-click horizontal scroll
+window.addEventListener('load', () => {
+    if (!alignmentContainer) return;
+    let scrolling = false, sx = 0, sl = 0;
+
+    alignmentContainer.addEventListener('mousedown', (e) => {
+        if (e.button !== 2) return;
+        if (e.target.closest('.seq-data, .seq-name')) return;
+        scrolling = true;
+        sx = e.clientX;
+        sl = alignmentContainer.scrollLeft;
+    });
+
+    document.addEventListener('mousemove', (e) => {
+        if (scrolling) alignmentContainer.scrollLeft = sl - (e.clientX - sx);
+    });
+
+    document.addEventListener('mouseup', () => { scrolling = false; });
+
+    alignmentContainer.addEventListener('contextmenu', (e) => {
+        if (!e.target.closest('.seq-data, .seq-name')) e.preventDefault();
+    });
+});
+
+// ============================================================================
+// COLOUR SEQUENCE NAMES FEATURE
+// ============================================================================
+
+// Copy all sequences with a specific color
+function copySequencesByColor(colour, ungapped = false, asFasta = true) {
+    const matchingSeqs = [];
+
+    state.seqs.forEach((seq, idx) => {
+        if (colourState.mappings.get(seq.header) === colour) {
+            const seqData = ungapped ? seq.seq.replace(/-/g, '') : seq.seq;
+            if (asFasta) {
+                matchingSeqs.push(`>${seq.header}\n${seqData}`);
+            } else {
+                matchingSeqs.push(seqData);
+            }
+        }
+    });
+
+    if (matchingSeqs.length === 0) {
+        showMessage('No sequences with this color', 2000);
+        return;
+    }
+
+    const text = matchingSeqs.join('\n');
+    navigator.clipboard.writeText(text).then(() => {
+        showMessage(`Copied ${matchingSeqs.length} sequence(s) with this color`, 2000);
+    }).catch(err => {
+        showMessage('Failed to copy', 2000);
+    });
+}
+
+// Sort sequences by their assigned color
+function sortSequencesByColor() {
+    const colorOrder = new Map();
+    let colorIndex = 0;
+
+    // First pass: assign order to each color
+    state.seqs.forEach((seq) => {
+        const color = colourState.mappings.get(seq.header);
+        if (color && !colorOrder.has(color)) {
+            colorOrder.set(color, colorIndex++);
+        }
+    });
+
+    // Sort: colored seqs first (by color), then uncolored
+    const sortedSeqs = [...state.seqs].sort((a, b) => {
+        const colorA = colourState.mappings.get(a.header);
+        const colorB = colourState.mappings.get(b.header);
+
+        const orderA = colorA ? colorOrder.get(colorA) : Infinity;
+        const orderB = colorB ? colorOrder.get(colorB) : Infinity;
+
+        return orderA - orderB;
+    });
+
+    // Update state and re-render
+    pushUndo('sort-by-color');
+    state.seqs = sortedSeqs;
+    state.selectedRows.clear();
+    renderAlignment();
+    showMessage('Sequences sorted by color', 2000);
+}
+
+// Group colored sequences at top
+function groupColoredSequencesAtTop() {
+    const coloredSeqs = [];
+    const ungroupedSeqs = [];
+
+    state.seqs.forEach((seq) => {
+        if (colourState.mappings.has(seq.header)) {
+            coloredSeqs.push(seq);
+        } else {
+            ungroupedSeqs.push(seq);
+        }
+    });
+
+    // Combine: colored at top, then ungrouped
+    pushUndo('group-colored');
+    state.seqs = [...coloredSeqs, ...ungroupedSeqs];
+    state.selectedRows.clear();
+    renderAlignment();
+    showMessage(`Moved ${coloredSeqs.length} colored sequence(s) to top`, 2000);
+}
+
+// 10-color discrete palette
+const colourPalette = [
+    '#FF6B6B', '#4ECDC4', '#45B7D1', '#FFA07A', '#98D8C8',
+    '#F7DC6F', '#BB8FCE', '#85C1E2', '#F8B88B', '#A9DFBF'
+];
+
+// Store current color mappings and presets
+let colourState = {
+    mappings: new Map(), // seqName -> color (current)
+    history: new Map(), // seqName -> [{color, method, timestamp}, ...]
+    presets: safeLocalGet('seqColourPresets'),
+    selectedPresetName: null,
+};
+
+// Normalize name for grouping: lowercase, normalize separators, strip trailing numbers
+function normalizeName(name, maxChars = 10, stripTrailingNumbers = false) {
+    let n = String(name || '').substring(0, maxChars).toLowerCase();
+    // Normalize all separators (hyphen, underscore, dot, space) to underscore
+    n = n.replace(/[-_.\s]/g, '_');
+    if (stripTrailingNumbers) {
+        n = n.replace(/[_\d]+$/, '');
+    }
+    return n;
+}
+
+// Get a canonical prefix for color assignment (used for sorting similar groups together)
+function getCanonicalPrefix(name, maxChars = 10) {
+    let n = normalizeName(name, maxChars, true);
+    // Extract just alphabetic prefix for broader grouping
+    const match = n.match(/^([a-z]+)/);
+    return match ? match[1] : n;
+}
+
+// Position-weighted n-gram Jaccard similarity for sequence name clustering.
+// Bigram + trigram with position boost (first 3 chars x2) handles
+// organism prefixes, element names, and subfamily suffixes robustly.
+function ngramJaccardSimilarity(a, b) {
+    if (a === b) return 1;
+    // Build weighted n-gram multiset for string s
+    const buildNgrams = (s) => {
+        const ngrams = new Map();
+        const add = (ng, w) => ngrams.set(ng, (ngrams.get(ng) || 0) + w);
+        // Bigrams (weight 1)
+        for (let i = 0; i < s.length - 1; i++) add(s.substring(i, i + 2), 1);
+        // Trigrams (weight 1.5 - more discriminative)
+        for (let i = 0; i < s.length - 2; i++) add(s.substring(i, i + 3), 1.5);
+        // Position boost: ngrams covering first 3 chars x2 (organism prefix)
+        for (const [ng, w] of ngrams) {
+            const idx = s.indexOf(ng);
+            if (idx >= 0 && idx <= 2) ngrams.set(ng, w * 2);
+        }
+        return ngrams;
+    };
+    const na = buildNgrams(a), nb = buildNgrams(b);
+    let shared = 0, total = 0;
+    const all = new Set([...na.keys(), ...nb.keys()]);
+    for (const ng of all) {
+        const wa = na.get(ng) || 0, wb = nb.get(ng) || 0;
+        shared += Math.min(wa, wb);
+        total += Math.max(wa, wb);
+    }
+    return total > 0 ? shared / total : 0;
+}
+
+// Cluster sequences by normalized prefix using position-weighted n-gram Jaccard.
+// Hard guarantee: identical normalized keys always share the same bucket.
+// Sensitivity 0 = strict (merge only >= 90% similar), 10 = loose (merge >= 40% similar).
+function clusterByName(seqNames, maxChars = 10, threshold = 3) {
+    const nChars = Math.max(1, parseInt(maxChars, 10) || 10);
+    const sensitivity = Math.max(0, Math.min(10, parseInt(threshold, 10) || 0));
+
+    // 1) Hard guarantee: identical normalized first-N keys always share the same color key bucket.
+    const keyToNames = new Map();
+    for (const rawName of seqNames) {
+        const key = normalizeName(rawName, nChars, false);
+        if (!keyToNames.has(key)) keyToNames.set(key, []);
+        keyToNames.get(key).push(rawName);
+    }
+
+    const uniqueKeys = Array.from(keyToNames.keys()).sort((a, b) => a.localeCompare(b));
+
+    // 2) Sensitivity controls optional merge between near keys.
+    //    sensitivity 0 = strict (0.90 similarity), sensitivity 10 = loose (0.40 similarity).
+    const minSim = 0.90 - (sensitivity / 10) * 0.50; // range: 0.90 -> 0.40
+
+    const clusters = []; // [{ repKey, keys: [] }]
+    for (const key of uniqueKeys) {
+        // The merge loop below already handles every sensitivity correctly on its own
+        // (a strict 0.90 threshold just means almost nothing merges, which is exactly
+        // right for the strictest setting) - no separate shortcut needed. There used to
+        // be one here gated on `sensitivity >= 10`, which disabled ALL merging at the
+        // LOOSEST setting instead of the strictest - the opposite of its intent.
+
+        let bestCluster = -1;
+        let bestSim = -1;
+        for (let i = 0; i < clusters.length; i++) {
+            const sim = ngramJaccardSimilarity(key, clusters[i].repKey);
+            if (sim >= minSim && sim > bestSim) {
+                bestSim = sim;
+                bestCluster = i;
+            }
+        }
+
+        if (bestCluster >= 0) {
+            clusters[bestCluster].keys.push(key);
+        } else {
+            clusters.push({ repKey: key, keys: [key] });
+        }
+    }
+
+    clusters.sort((a, b) => a.repKey.localeCompare(b.repKey));
+
+    const out = [];
+    for (const cluster of clusters) {
+        const names = [];
+        for (const key of cluster.keys) {
+            const groupNames = keyToNames.get(key);
+            if (groupNames && groupNames.length) names.push(...groupNames);
+        }
+        names.sort((a, b) => String(a).localeCompare(String(b)));
+        out.push(names);
+    }
+    return out;
+}
+
+// Apply color to sequence name elements
+function applyColourToSeqNames(mappings) {
+    scheduleSelectionsPanelRefresh();
+    // Colour Names and group colours share the name cell: one painter decides both
+    paintNameCells();
+    // Canvas draws its names from the same look: ask for a full draw (owner, 2026-10-23: the
+    // colours showed only after the next re-render)
+    if (typeof isCanvasMode === 'function' && isCanvasMode()) _canvasState.scheduleDraw?.();
+}
+
+// Helper: Record color in history
+function recordColorHistory(seqName, color, method) {
+    if (!colourState.history.has(seqName)) {
+        colourState.history.set(seqName, []);
+    }
+    colourState.history.get(seqName).push({
+        color,
+        method,
+        timestamp: new Date().toLocaleTimeString()
+    });
+}
+
+// Pattern matching function
+function applyPatternColour() {
+    const patternInput = el('colourPatternInput');
+    const colourInput = el('colourPatternColor');
+
+    if (!patternInput.value.trim()) {
+        showMessage('Please enter a pattern', 2000);
+        return;
+    }
+
+    const pattern = patternInput.value.trim();
+    const colour = colourInput.value;
+    let matchedNames = new Set();
+
+    try {
+        // The pattern is a regular expression, and also plain text: a name typed as it is written,
+        // gamma(3) or eps*5, matched nothing as an expression (audit U14). A text that is no valid
+        // expression is plain text only.
+        let regex = null;
+        try { regex = new RegExp(pattern, 'i'); } catch (_) { regex = null; }
+        const literal = pattern.toLowerCase();
+        // every row of the alignment, not the name elements on the page: Canvas has none, and the
+        // windowed Full/Block views only hold the rows near the screen
+        state.seqs.forEach(q => {
+            const header = q.header;
+            if (((regex && regex.test(header)) || String(header).toLowerCase().includes(literal)) && !matchedNames.has(header)) {
+                matchedNames.add(header);
+                colourState.mappings.set(header, colour);
+                recordColorHistory(header, colour, 'Pattern');
+            }
+        });
+
+        applyColourToSeqNames(colourState.mappings);
+    showMessage(`Applied to ${matchedNames.size} unique sequence(s)`, 2000);
+
+    } catch (e) {
+        showMessage(`Invalid regex: ${e.message}`, 3000);
+    }
+}
+
+// Auto-color by similarity
+function autoColourBySimilarity() {
+    // 0 is a valid sensitivity (the strictest, 90%): `|| 3` turned it into 3
+    const charsRaw = parseInt(el('colourSimilarityChars').value, 10);
+    const maxChars = Number.isFinite(charsRaw) ? Math.max(1, charsRaw) : 10;
+    const thrRaw = parseInt(el('colourSimilarityThreshold').value, 10);
+    const threshold = Number.isFinite(thrRaw) ? thrRaw : 3;
+    const mode = _checkedRadioValue('colourMode', 'discrete');
+
+    // Use actual sequence headers from state, not truncated display text
+    if (!state.seqs || state.seqs.length === 0) {
+        showMessage('No sequences loaded', 2000);
+        return;
+    }
+
+    // Get unique sequence names from state (full headers, not truncated)
+    const seqNames = state.seqs.map(s => s.header);
+
+    if (seqNames.length === 0) {
+        showMessage('No sequences loaded', 2000);
+        return;
+    }
+
+    // Cluster sequences
+    const clusters = clusterByName(seqNames, maxChars, threshold);
+
+    // Reset current color mapping first so stale names do not affect sorting/grouping behavior.
+    colourState.mappings.clear();
+
+    // Assign colors based on mode
+    // Use maximally distinct colors for better visual separation
+    const nClusters = clusters.length;
+
+    // High-contrast discrete palette (ColorBrewer/Tableau-inspired)
+    const distinctColors = [
+        '#e41a1c', // red
+        '#377eb8', // blue
+        '#4daf4a', // green
+        '#ff7f00', // orange
+        '#984ea3', // purple
+        '#00bfc4', // cyan
+        '#ffd92f', // yellow
+        '#a65628', // brown
+        '#f781bf', // pink
+        '#999999', // gray
+        '#66c2a5', // teal
+        '#e6ab02'  // gold
+    ];
+
+    // Predefined hues for gradient mode (maximally separated)
+    const distinctHues = [
+        0, 210, 120, 30, 270, 180, 60, 300, 90, 240, 15, 165
+    ];
+
+    clusters.forEach((cluster, clusterIdx) => {
+        let hue;
+        if (nClusters <= distinctHues.length) {
+            // Use predefined maximally distinct hues
+            hue = distinctHues[clusterIdx];
+        } else {
+            // For many clusters, use golden ratio distribution
+            const goldenRatio = 0.618033988749895;
+            hue = ((clusterIdx * goldenRatio) % 1) * 360;
+        }
+
+        if (mode === 'discrete') {
+            const colour = (nClusters <= distinctColors.length)
+                ? distinctColors[clusterIdx]
+                : `hsl(${Math.round(hue)}, 70%, 70%)`;
+            cluster.forEach(name => {
+                colourState.mappings.set(name, colour);
+                recordColorHistory(name, colour, 'Auto-Similarity');
+            });
+        } else {
+            // Gradient mode - shade by normalized key, so identical first-N groups keep identical color.
+            const keyToNames = new Map();
+            cluster.forEach(name => {
+                const key = normalizeName(name, maxChars, false);
+                if (!keyToNames.has(key)) keyToNames.set(key, []);
+                keyToNames.get(key).push(name);
+            });
+            const sortedKeys = Array.from(keyToNames.keys()).sort((a, b) => a.localeCompare(b));
+            const keyCount = Math.max(1, sortedKeys.length);
+
+            sortedKeys.forEach((key, keyIdx) => {
+                const lightness = keyCount === 1
+                    ? 65
+                    : 55 + (keyIdx * 25 / (keyCount - 1));
+                const colour = `hsl(${Math.round(hue)}, 70%, ${Math.min(lightness, 85)}%)`;
+                const namesForKey = keyToNames.get(key) || [];
+                namesForKey.forEach(name => {
+                    colourState.mappings.set(name, colour);
+                    recordColorHistory(name, colour, 'Auto-Similarity');
+                });
+            });
+        }
+    });
+
+    applyColourToSeqNames(colourState.mappings);
+    showMessage(`Colored ${seqNames.length} sequences in ${clusters.length} cluster(s)`, 2000);
+}
+
+// Save preset
+function saveColourPreset() {
+    const presetName = el('colourPresetName').value.trim();
+
+    if (!presetName) {
+        showMessage('Please enter a preset name', 2000);
+        return;
+    }
+
+    if (colourState.mappings.size === 0) {
+        showMessage('No colors to save', 2000);
+        return;
+    }
+
+    colourState.presets[presetName] = Array.from(colourState.mappings.entries());
+    colourState.selectedPresetName = presetName;
+    safeLocalSet('seqColourPresets', JSON.stringify(colourState.presets), 'the colour preset');
+
+    el('colourPresetName').value = '';
+    updateColourPresetList();
+    showMessage(`Preset '${presetName}' saved`, 2000);
+}
+
+// Load preset
+function loadColourPreset() {
+    if (Object.keys(colourState.presets).length === 0) {
+        showMessage('No saved presets', 2000);
+        return;
+    }
+
+    const presetName = (colourState.selectedPresetName && colourState.presets[colourState.selectedPresetName])
+        ? colourState.selectedPresetName
+        : Object.keys(colourState.presets)[0];
+    if (!presetName || !colourState.presets[presetName]) {
+        showMessage('No preset selected', 2000);
+        return;
+    }
+
+    colourState.mappings = new Map(colourState.presets[presetName]);
+    applyColourToSeqNames(colourState.mappings);
+    showMessage(`Loaded preset '${presetName}'`, 2000);
+}
+

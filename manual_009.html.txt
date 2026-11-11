@@ -1,0 +1,37 @@
+[manual.html lines 2725-2761 of ViewAlign fd8b8e4]
+<!-- ── JS: sidebar active tracking ── -->
+<script>
+(function() {
+  const sidebar = document.getElementById('sidebar');
+  const allLinks = sidebar.querySelectorAll('a[href^="#"]');
+
+  // Expand/collapse groups
+  sidebar.querySelectorAll('.side-group > a').forEach(groupLink => {
+    groupLink.addEventListener('click', function(e) {
+      // Don't toggle on direct section link if we're just scrolling
+    });
+  });
+
+  const headings = [];
+  document.querySelectorAll('#main section h2, #main section h3').forEach(h => {
+    if (h.id) headings.push({ el: h, id: h.id });
+  });
+
+  function updateActive() {
+    let activeId = null;
+    const scrollY = window.scrollY + 100;
+    for (const h of headings) {
+      if (h.el.offsetTop <= scrollY) activeId = h.id;
+    }
+    allLinks.forEach(a => {
+      a.classList.toggle('active', a.getAttribute('href') === '#' + activeId);
+    });
+  }
+
+  window.addEventListener('scroll', updateActive, { passive: true });
+  updateActive();
+})();
+</script>
+
+</body>
+</html>

@@ -1,0 +1,429 @@
+[script.js lines 807-1234 of ViewAlign fd8b8e4]
+// ---- Telling the user where one mark covers another's colour ----
+// residueOverlay records, per residue, which marks lost the fill (o.covered). This counts
+// them over the whole alignment, only where more than one kind of mark exists.
+let _coverageCache = null;
+let _titleFlash = null;          // the running title-bar flash after a server load: { timer, orig }
+function overlayCoverage() {
+    const c = _coverageCache;
+    if (c && c.search === _searchLayerVersion && c.repeat === _repeatLayerVersion && c.rh === state.repeatHighlights
+        && c.rhn === (state.repeatHighlights?.size || 0) && c.tsd === state._tsdMarks && c.tsdStyle === state.tsdMarkStyle
+        && c.snp === state._clusterCharMap && c.trim === state.trimBoundaries
+        && c.seqs.length === state.seqs.length && c.seqs.every((q, i) => q === state.seqs[i].seq)) return c.out;
+    const out = _overlayCoverageNow();
+    _coverageCache = { out, search: _searchLayerVersion, repeat: _repeatLayerVersion, rh: state.repeatHighlights,
+        rhn: state.repeatHighlights?.size || 0, tsd: state._tsdMarks, tsdStyle: state.tsdMarkStyle,
+        snp: state._clusterCharMap, trim: state.trimBoundaries, seqs: state.seqs.map(q => q.seq) };
+    return out;
+}
+function _overlayCoverageNow() {
+    const out = { tsd: 0, repeat: 0, snp: 0 };
+    const kinds = (state.searchHistory?.length ? 1 : 0) + (state.tsdMarks.size ? 1 : 0)
+        + (state.repeatHighlights?.size ? 1 : 0) + (state._clusterCharMap ? 1 : 0);
+    if (kinds < 2) return out;
+    const snpCols = state._clusterCharMap ? Object.keys(state._clusterCharMap).map(Number) : [];
+    state.seqs.forEach((q, row) => {
+        const ctx = _overlayRowCtx(row);
+        if (!ctx.any) return;
+        const cols = new Set([...ctx.hits.keys(), ...(ctx.tsd || []), ...ctx.rep.keys(), ...snpCols]);
+        cols.forEach(pos => {
+            const o = residueOverlay(ctx, pos, q.seq[pos] || '-');
+            o?.covered.forEach(k => { out[k]++; });
+        });
+    });
+    return out;
+}
+
+// One short sentence for the message line, or ''
+function overlayCoverageSentence(cov = overlayCoverage()) {
+    const parts = [];
+    if (cov.tsd) parts.push(`${cov.tsd} TSD residue${cov.tsd === 1 ? '' : 's'} (kept bold, second font)`);
+    if (cov.repeat) parts.push(`${cov.repeat} repeat residue${cov.repeat === 1 ? '' : 's'} (kept as an overline)`);
+    if (cov.snp) parts.push(`${cov.snp} group letter${cov.snp === 1 ? '' : 's'} (kept as coloured text)`);
+    return parts.length ? 'Colour covered on ' + parts.join(', ') : '';
+}
+
+// ---- Name cells: Colour Names and SNP-group colours, one painter ----
+// Colour Names own the fill; a group colour is the fill when there is no Colour Name, and a
+// stripe on the left edge when there is, so both stay visible whichever ran first.
+// A name cell's hover text: the full name (names are cut at the name width) and length, then its colour / group
+function _seqNameTitle(row, look) {
+    const q = state.seqs[row];
+    if (!q) return look?.title || '';
+    const base = `${q.header} (length: ${q.seq.length})`;
+    return look?.title ? base + ' | ' + look.title : base;
+}
+function nameCellLook(row) {
+    const h = state.seqs[row]?.header;
+    if (!h) return null;
+    const nc = colourState?.mappings?.get(h) || null;
+    const g = state.clusterMap ? state.clusterMap[h] : undefined;
+    const gc = g && !g.paintOff ? g.color : null;
+    if (!nc && !gc) return g?.paintOff ? { title: (g.name ? g.name + ' (paint off)' : '') } : null;
+    if (nc) return { bg: nc, fg: '#000', stripe: gc, title: `Color: ${nc}` + (gc && g.name ? ` | ${g.name}` : ''), group: !!gc };
+    return { bg: gc, fg: '#000', stripe: null, title: g.name || '', group: true };
+}
+
+function paintNameCells() {
+    document.querySelectorAll('.seq-name[data-seq-index]').forEach(el => {
+        if (el.closest('.consensus-line, .scale-ruler-line')) return;
+        const row = parseInt(el.dataset.seqIndex, 10);
+        const look = row >= 0 ? nameCellLook(row) : null;
+        const css = look && look.bg
+            ? `background-color: ${look.bg} !important; color: ${look.fg} !important; font-weight: bold !important;`
+              + (look.stripe ? ` box-shadow: inset 6px 0 0 ${look.stripe};` : '')
+            : '';
+        if ((el.getAttribute('style') || '') !== css) { if (css) el.setAttribute('style', css); else el.removeAttribute('style'); }
+        el.title = row >= 0 ? _seqNameTitle(row, look) : (look?.title || '');   // it wiped the full name
+        el.classList.toggle('cluster-colored', !!look?.group);
+    });
+}
+
+// ---- Repeat highlights: derived per row, like search hits ----
+// A row-specific repeat (Repeat Finder on one sequence) is anchored to its sequence and
+// residue numbers the first time it is drawn, so it follows gaps, row moves and deletions.
+// A column repeat (row null, found on the consensus) stays on its columns.
+let _repeatLayerVersion = 0;
+let _repeatColsCache = new Map();   // row -> { seq, version, cols: Map(col -> css colour) }
+
+function bumpRepeatLayer() {
+    _repeatLayerVersion++;
+    _repeatColsCache = new Map();
+}
+
+function _anchorRepeat(info) {
+    if (info.row === null || info.anchor) return;
+    const obj = state.seqs[info.row];
+    if (!obj) return;
+    const ranges = [];
+    let n = 0;
+    const resAt = [];
+    for (let c = 0; c < obj.seq.length; c++) {
+        const ch = obj.seq[c];
+        resAt[c] = (ch === '-' || ch === '.') ? -1 : n++;
+    }
+    info.segs.forEach(([a, z]) => {
+        let lo = -1, hi = -1;
+        for (let c = a; c < z && c < obj.seq.length; c++) {
+            if (resAt[c] < 0) continue;
+            if (lo < 0) lo = resAt[c];
+            hi = resAt[c];
+        }
+        if (lo >= 0) ranges.push([lo, hi + 1]);
+    });
+    info.anchor = { obj, ranges };
+}
+
+// Current row and column ranges of a highlight
+function _repeatView(info) {
+    if (info.row === null) return { row: null, segs: info.segs };
+    _anchorRepeat(info);
+    if (!info.anchor) return { row: info.row, segs: info.segs };
+    const row = _seqObjResolver()(info.anchor.obj);
+    if (row < 0) return { row: -1, segs: [] };
+    const seq = state.seqs[row].seq;
+    const colOf = [];
+    for (let c = 0; c < seq.length; c++) if (seq[c] !== '-' && seq[c] !== '.') colOf.push(c);
+    const segs = info.anchor.ranges.map(([lo, hi]) => [colOf[lo], (colOf[hi - 1] ?? colOf[colOf.length - 1]) + 1])
+        .filter(([a, z]) => Number.isInteger(a) && Number.isInteger(z));
+    info.row = row;                  // keep the table's go-to pointing at the right row
+    return { row, segs };
+}
+
+// Map(col -> colour) of the residues (not gaps) highlighted in one row
+function _repeatColsForRow(row) {
+    const hl = state.repeatHighlights;
+    if (!hl || !hl.size || row < 0) return _EMPTY_HITS;
+    const seq = state.seqs[row]?.seq;
+    if (seq === undefined) return _EMPTY_HITS;
+    const cached = _repeatColsCache.get(row);
+    // Keyed by the sequence object, not its letters: a repeat belongs to one sequence, and
+    // after a row move another sequence with identical letters can sit in this row. The Map
+    // itself is replaced by Selections on/off, undo and snapshots, so it is part of the key.
+    const obj = state.seqs[row];
+    if (cached && cached.obj === obj && cached.seq === seq && cached.version === _repeatLayerVersion && cached.hl === hl && cached.n === hl.size) return cached.cols;
+    const cols = new Map();
+    hl.forEach(info => {
+        const v = _repeatView(info);
+        if (v.row !== null && v.row !== row) return;
+        v.segs.forEach(([a, z]) => {
+            for (let c = a; c < z; c++) {
+                const ch = seq[c];
+                if (ch === undefined || ch === '-' || ch === '.') continue;
+                cols.set(c, info.color);
+            }
+        });
+    });
+    _repeatColsCache.set(row, { obj, seq, version: _repeatLayerVersion, hl, n: hl.size, cols });
+    return cols;
+}
+
+function _setSpanRepeatPaint(span, color) {
+    if (color) {
+        span.style.setProperty('background-color', color + '66', 'important');
+        span.dataset.repeatHl = '1';
+        if (!/repeat region/.test(span.title || '')) span.title = span.title ? span.title + ' | repeat region' : 'repeat region';
+    } else if (span.dataset.repeatHl === '1') {
+        span.style.removeProperty('background-color');
+        delete span.dataset.repeatHl;
+        span.title = (span.title || '').replace(/( \| )?repeat region/g, '');
+    }
+}
+
+// Bring every rendered residue span in line with the repeat layer
+function syncRepeatPaint() {
+    syncResidueOverlays();
+}
+
+// ---- Column edits: everything keyed by a column number follows the columns ----
+// Inserting or deleting columns used to leave the column selection, trim boundaries, SNP-group
+// letters and column-wide repeats on their old column numbers, i.e. on other residues.
+// applyColumnEdit({ type: 'insert', at, n } | { type: 'delete', cols }, rows, newWidth) maps all
+// of them, and saves their previous state on the undo entry so Undo (and Redo) put them back.
+function _columnEditMap(op) {
+    const n = op.n || 1, at = op.at;
+    const del = op.type === 'delete' ? [...new Set(op.cols)].filter(Number.isInteger).sort((a, b) => a - b) : null;
+    const delSet = del ? new Set(del) : null;
+    const countBelow = c => { let lo = 0, hi = del.length; while (lo < hi) { const m = (lo + hi) >> 1; if (del[m] < c) lo = m + 1; else hi = m; } return lo; };
+    const W = Number.isInteger(op.newWidth) ? op.newWidth : Infinity;
+    const f = op.type === 'insert' ? {
+        col: c => (c >= at ? c + n : c),       // where a column goes
+        firstGE: c => (c >= at ? c + n : c),   // a range start / a boundary "first column from c on"
+        lastLE: c => (c >= at ? c + n : c)     // "last column up to c"
+    } : {
+        col: c => (delSet.has(c) ? null : c - countBelow(c)),
+        firstGE: c => c - countBelow(c),
+        lastLE: c => c - countBelow(c + 1)
+    };
+    const base = f.col;
+    f.col = c => { const r = base(c); return r !== null && r < W ? r : null; };
+    return f;
+}
+
+function _mapColSet(set, f) {
+    const out = new Set();
+    set.forEach(c => { const r = f.col(Number(c)); if (r !== null && r >= 0) out.add(r); });
+    return out;
+}
+
+const _FEATURE_LISTS = ['perfectFeatures', 'cloudyFeatures', 'imperfectFeatures'];
+
+function _snapshotColumnState() {
+    const b = x => (x ? { ...x } : null);
+    const clusters = state.clusterResults?.clusters || null;
+    return {
+        trim: b(state.trimBoundaries), soft: b(state.softTrimBoundaries),
+        clusters,
+        // whole copies of each feature list: an edit that removes a feature's column shortens the list,
+        // and positions alone could then not be put back (SNP letters stayed shifted after Trim Undo)
+        feats: clusters ? clusters.map(c => _FEATURE_LISTS.map(k => (c[k] || []).map(ft => ({ ...ft })))) : null,
+        reps: [...(state.repeatHighlights || [])].filter(([, i]) => i.row === null).map(([id, i]) => [id, i.segs.map(x => x.slice())])
+    };
+}
+
+function _restoreColumnState(snap) {
+    if (!snap) return;
+    state.trimBoundaries = snap.trim ? { ...snap.trim } : null;
+    state.softTrimBoundaries = snap.soft ? { ...snap.soft } : null;
+    if (snap.feats && state.clusterResults?.clusters === snap.clusters) {
+        snap.clusters.forEach((c, ci) => _FEATURE_LISTS.forEach((k, ki) => {
+            if (c[k] || snap.feats[ci][ki].length) c[k] = snap.feats[ci][ki].map(ft => ({ ...ft }));
+        }));
+        _rebuildClusterCharMap();
+    }
+    snap.reps.forEach(([id, segs]) => {
+        const info = state.repeatHighlights?.get(id);
+        if (info && info.row === null) info.segs = segs.map(x => x.slice());
+    });
+    bumpRepeatLayer();
+    // a restored boundary also decides the feature offset: keep the letters on their columns
+    if (state.clusterResults) _rebuildClusterCharMap();
+    updateColumnSelections();
+}
+
+// rows: 'all' (or omitted), or an array of row indices that were edited. Column-wide state
+// (selection, trim, SNP letters, column repeats) follows only when every row was edited;
+// residue selections follow in the rows that were.
+function applyColumnEdit(op, rows) {
+    const f = _columnEditMap(op);
+    const all = rows === undefined || rows === 'all';
+    const rowSet = all ? null : new Set(rows);
+    const inRows = r => all || rowSet.has(r);
+
+    // 2D blocks are rectangles of rows x columns found for the alignment as it was; an edit that
+    // changes the columns (or the residues of rows in a block) makes them wrong, so they are
+    // cancelled and the user is asked to run Show 2D again
+    if (state.blockMask || state._biclusterRaw) {
+        const heads = state.blockMask?.row_headers || [];
+        if (all || [...rowSet].some(r => heads.includes(state.seqs[r]?.header))) {
+            clearBlockMask();
+            // after the edit's own message ("gap inserted") and its redraw, which would replace this one
+            setTimeout(() => showMessage('2D blocks cleared: the columns changed. Run Show 2D again to recalculate.', 4500), 400);
+        }
+    }
+
+    // what Undo must put back, stored on the undo entry this edit just pushed
+    if (all && state.deletedHistory.length) {
+        const entry = state.deletedHistory[state.deletedHistory.length - 1];
+        if (entry && !entry.colStateBefore) entry.colStateBefore = _snapshotColumnState();
+    }
+
+    // per row: residue selection, its pending first click, the Type-tool cell
+    if (state.selectedNucs?.size) {
+        const next = new Map();
+        state.selectedNucs.forEach((set, row) => {
+            if (row >= 0 && !inRows(row)) { next.set(row, set); return; }
+            const m = _mapColSet(set, f);
+            if (m.size) next.set(row, m);
+        });
+        state.selectedNucs = next;
+    }
+    if (state.pendingNucStart && inRows(state.pendingNucStart.row)) {
+        const c = f.col(state.pendingNucStart.pos);
+        state.pendingNucStart = c === null ? null : { ...state.pendingNucStart, pos: c };
+    }
+    if (state.editCell && inRows(state.editCell.row)) {
+        const c = f.col(state.editCell.pos);
+        state.editCell = c === null ? null : { ...state.editCell, pos: c };
+    }
+    if (!all) return;
+
+    state.selectedColumns = _mapColSet(state.selectedColumns, f);
+    if (state.selectionStash?.cols?.size) {
+        const m = _mapColSet(state.selectionStash.cols, f);
+        state.selectionStash.cols = m.size ? m : null;
+    }
+
+    // trim boundaries are columns too (last trimmed on the left, first trimmed on the right)
+    const oldOffset = _clusterAlignmentColumnOffset();
+    const bounds = b => b && {
+        ...b,
+        leftTrimEnd: b.leftTrimEnd >= 0 ? Math.max(-1, f.lastLE(b.leftTrimEnd)) : b.leftTrimEnd,
+        rightTrimStart: Number.isFinite(b.rightTrimStart) ? f.firstGE(b.rightTrimStart) : b.rightTrimStart
+    };
+    state.trimBoundaries = bounds(state.trimBoundaries);
+    state.softTrimBoundaries = bounds(state.softTrimBoundaries);
+    if (state.clusterColumnRange) {
+        const lo = f.firstGE(state.clusterColumnRange.lo), hi = f.lastLE(state.clusterColumnRange.hi);
+        state.clusterColumnRange = Number.isFinite(lo) && Number.isFinite(hi) && hi >= lo ? { lo, hi } : null;
+    }
+    const newOffset = _clusterAlignmentColumnOffset();
+
+    // SNP-group features: pos is 1-based inside the soft-trimmed window (column = pos - 1 + offset)
+    if (state.clusterResults?.clusters) {
+        state.clusterResults.clusters.forEach(c => _FEATURE_LISTS.forEach(k => {
+            if (!c[k]) return;
+            c[k] = c[k].filter(ft => {
+                const col = f.col(ft.pos - 1 + oldOffset);
+                if (col === null) return false;
+                ft.pos = col + 1 - newOffset;
+                return true;
+            });
+        }));
+        _rebuildClusterCharMap();
+    }
+
+    // repeats found on the consensus cover columns, not a sequence
+    let touched = false;
+    (state.repeatHighlights || new Map()).forEach(info => {
+        if (info.row !== null) return;
+        info.segs = info.segs.map(([a, z]) => [f.firstGE(a), f.lastLE(z - 1) + 1]).filter(([a, z]) => z > a);
+        touched = true;
+    });
+    if (touched) bumpRepeatLayer();
+    _updateSplitHint?.();
+}
+
+// Feature positions are relative to the soft-trim window; when that window is dropped they
+// must become absolute columns, or every letter moves by the window's offset.
+function _clusterFeaturesToAbsolute() {
+    const off = _clusterAlignmentColumnOffset();
+    if (!off || !state.clusterResults?.clusters) return;
+    state.clusterResults.clusters.forEach(c => _FEATURE_LISTS.forEach(k => (c[k] || []).forEach(ft => { ft.pos += off; })));
+}
+
+// ---- Marks tied to residues, not to (row, column) ----
+// TSD marks used to be stored as row index -> Set(column), so deleting or moving a row put
+// them on another sequence, and inserting a gap put them on another residue. ResidueMarks
+// stores sequence object -> Set(residue number, counting only non-gap characters) and
+// derives the current row -> Set(column) view from the sequences, so marks follow edits by
+// construction. It keeps the read API the old Map had (get, has, size, forEach, entries,
+// keys, iteration). Undo and redo replace the sequence objects with copies; such a copy is
+// found again by name. Marks whose sequence is gone are kept (an undo can bring it back)
+// but not shown.
+class ResidueMarks {
+    constructor() {
+        this.bySeq = new Map();   // seq object -> Set(residue number)
+        this._view = null;        // { len, entries: [{ row, obj, seq }], map: row -> Set(col) }
+    }
+    // from row -> Set(column) in the current layout. A gap column is kept as "between residue
+    // n-1 and n" (n - 0.5): it has no residue of its own, and it marks the gap run there.
+    static fromRowCols(map) {
+        if (map instanceof ResidueMarks) return map.clone();
+        const m = new ResidueMarks();
+        map?.forEach((cols, row) => {
+            const obj = state.seqs[row];
+            if (!obj || !cols?.size) return;
+            const seq = obj.seq;
+            const res = new Set();
+            let n = 0;
+            const want = new Set(cols);
+            for (let c = 0; c < seq.length; c++) {
+                const ch = seq[c];
+                if (ch === '-' || ch === '.') { if (want.has(c)) res.add(n - 0.5); continue; }
+                if (want.has(c)) res.add(n);
+                n++;
+            }
+            if (res.size) m.bySeq.set(obj, res);
+        });
+        return m;
+    }
+    clone() {
+        const m = new ResidueMarks();
+        this.bySeq.forEach((set, obj) => m.bySeq.set(obj, new Set(set)));
+        return m;
+    }
+    _valid() {
+        const v = this._view;
+        if (!v || v.len !== state.seqs.length) return false;
+        for (const e of v.entries) if (state.seqs[e.row] !== e.obj || e.obj.seq !== e.seq) return false;
+        return true;
+    }
+    _rows() {
+        if (this._valid()) return this._view.map;
+        const find = _seqObjResolver();
+        const map = new Map();
+        const entries = [];
+        const rebound = [];
+        this.bySeq.forEach((res, obj) => {
+            const row = find(obj);
+            if (row < 0) return;
+            const cur = state.seqs[row];
+            if (cur !== obj) rebound.push([obj, cur]);
+            const seq = cur.seq;
+            const cols = new Set();
+            let n = 0;
+            for (let c = 0; c < seq.length; c++) {
+                const ch = seq[c];
+                if (ch === '-' || ch === '.') { if (res.has(n - 0.5)) cols.add(c); continue; }
+                if (res.has(n)) cols.add(c);
+                n++;
+            }
+            if (cols.size) map.set(row, cols);
+            entries.push({ row, obj: cur, seq });
+        });
+        // follow the copies undo/redo made, so the next lookup is by identity again
+        rebound.forEach(([oldObj, cur]) => { const r = this.bySeq.get(oldObj); this.bySeq.delete(oldObj); this.bySeq.set(cur, r); });
+        this._view = { len: state.seqs.length, entries, map };
+        return map;
+    }
+    get(row) { return this._rows().get(row); }
+    has(row) { return this._rows().has(row); }
+    get size() { return this._rows().size; }
+    forEach(cb) { this._rows().forEach(cb); }
+    entries() { return this._rows().entries(); }
+    keys() { return this._rows().keys(); }
+    values() { return this._rows().values(); }
+    [Symbol.iterator]() { return this._rows()[Symbol.iterator](); }
+}
+

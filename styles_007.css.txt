@@ -1,0 +1,244 @@
+[styles.css lines 3988-4230 of ViewAlign fd8b8e4]
+/* One sans-serif face for the window's text; the matrix and pair list stay monospaced */
+.stats-win { font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; font-size: 12px; }
+.stats-win h3, .stats-card, .stats-mx-toolbar, .stats-filter, .stats-foot, .stats-tipcard { font-family: inherit; }
+.stats-mx-toolbar button, .stats-filter button, .stats-mx-toolbar select, .stats-filter select, .stats-mx-toolbar input, .stats-filter input { font-family: inherit; }
+.stats-filter .sp { flex: 1; }
+
+/* ── Statistics heatmap ── */
+.stats-heat-btn.on { background: #3d7cc9; color: #fff; border-color: #2f67ad; }
+.stats-heat-legend { display: inline-flex; align-items: center; gap: 5px; font-size: 10.5px; color: #444; cursor: pointer; }
+.stats-heat-legend[hidden] { display: none; }
+.stats-heat-legend i { display: inline-block; width: 90px; height: 10px; border-radius: 2px; border: 1px solid rgba(0,0,0,0.15); }
+.stats-heat-panel {
+    position: absolute; z-index: 30; top: calc(100% + 3px); left: 0; width: 280px;
+    background: #fff; border: 1px solid #b9c2cb; border-radius: 7px; box-shadow: 0 8px 22px rgba(0,0,0,0.18);
+    padding: 9px 11px; display: flex; flex-direction: column; gap: 7px; font-size: 11.5px;
+}
+.stats-heat-panel[hidden] { display: none; }
+.stats-heat-panel .row { display: flex; align-items: center; gap: 6px; }
+.stats-heat-panel .pals { display: grid; grid-template-columns: 1fr 1fr; gap: 5px; }
+.stats-heat-pal { display: flex; flex-direction: column; align-items: stretch; gap: 2px; padding: 4px; border: 1px solid #d3d8de; border-radius: 5px; background: #fff; cursor: pointer; font-size: 10.5px; color: #333; }
+.stats-heat-pal i { display: block; height: 12px; border-radius: 2px; }
+.stats-heat-pal.on { border-color: #3d7cc9; box-shadow: 0 0 0 1px #3d7cc9; }
+.stats-heat-panel .range { flex-wrap: wrap; }
+.stats-heat-panel .range input { width: 62px; font-size: 11px; }
+.stats-heat-panel .hint { color: #888; font-size: 10.5px; }
+/* With colours on: selected columns are outlined (their fill would hide the colour); the pair
+   filter dims non-matching cells and rings the matching ones */
+table.stats-mx.heat td.cs { box-shadow: inset 2px 0 #1a5aa0, inset -2px 0 #1a5aa0; }
+table.stats-mx.heat thead th.cs { box-shadow: inset 0 -3px #1a5aa0; }
+table.stats-mx.heat.filtering td.miss { opacity: 0.22; }
+table.stats-mx.heat.filtering td.hit { font-weight: bold; box-shadow: inset 0 0 0 2px rgba(0,0,0,0.55); }
+table.stats-mx.heat td:hover { outline: 2px solid #111; outline-offset: -2px; }
+/* The heatmap panel opens leftwards from its button so it stays inside the window; the legend sits in the button */
+.stats-heat-btn { display: inline-flex; align-items: center; gap: 4px; }
+.stats-heat-btn.on { background: #fff; color: #333; border-color: #3d7cc9; box-shadow: 0 0 0 1px #3d7cc9; }
+.stats-heat-btn .txt[hidden] { display: none; }
+.stats-content { overflow: clip; }
+.stats-labels-panel { width: auto; min-width: 250px; }
+.stats-labels-panel select, .stats-labels-panel input { font-size: 11px; }
+/* Room for the always-visible colour swatch: the number box stayed inside the panel */
+#shade-controls input[type="range"].shading-slider { width: 108px; }
+/* Column selected. Kept last and at (0,2,1) so it wins over the same rules the old
+   per-column <style> rule (.seq-data > span[data-pos="N"], appended to <head>) won over,
+   e.g. the selected-row background. script.js toggles the class per changed column. */
+.seq-data > span.column-selected {
+    --t-col: linear-gradient(rgba(25, 118, 210, 0.28), rgba(25, 118, 210, 0.28));
+}
+/* A column selection covers the sequences only: the consensus row never shows it, whichever
+   renderer drew the row (script.js no longer gives its spans the class either). */
+.consensus-line .seq-data > span.column-selected { --t-col: none; }
+/* Rows off screen skip style, layout and paint (non-windowed views, where every row is in
+   the page). At 316k residue spans a full layout cost ~2 s, and zoom, Highlight diffs, sort
+   and redraws each needed one. Placeholder size: one ch per column, 1em high, which is what
+   a row measures; `auto` keeps a row's real size once it has been drawn. Names stay outside
+   (sticky; paint containment would clip them). Consensus keeps its own padding. */
+.block-block.cv-block .seq-line:not(.scale-ruler-line):not(.consensus-line) > .seq-data {
+    content-visibility: auto;
+    contain-intrinsic-size: auto calc(var(--cols, 60) * var(--res-w, 1ch)) auto 1em;
+}
+/* Rename box: laid over the name cell so the row keeps its size and nothing shifts */
+.seq-name.renaming { z-index: 70; }   /* above the neighbouring sticky names, so the outline shows */
+.seq-name.static.renaming { position: relative; }
+.seq-name .seq-name-edit {
+    /* Stands 0.12em proud of the row above and below (the name cell no longer clips
+       vertically), text centred by the input itself (line-height: normal), same
+       size and weight as the label it replaces. */
+    position: absolute; left: 9px; right: 2px; top: -0.12em; bottom: -0.12em;
+    box-sizing: border-box; width: auto; height: auto; margin: 0; padding: 0 2px 0 3px;
+    font: inherit; font-size: 0.9em; line-height: normal; color: #000;
+    border: 0; outline: none; border-radius: 2px;
+    box-shadow: inset 0 0 0 1px #1976d2;   /* inside: the name cell clips anything outside it */
+    background: #f3f8ff;
+    z-index: 60; user-select: text; -webkit-user-select: text;
+}
+/* Undo / Redo history list: fixed to the viewport, under the caret that opened it */
+.undo-redo-dropdown { position: fixed; z-index: 10000; min-width: 190px; max-width: 320px; max-height: 60vh; overflow-y: auto;
+    background: #fff; border: 1px solid #c9ced6; border-radius: 6px; box-shadow: 0 6px 18px rgba(0,0,0,0.18); padding: 4px 0; font-size: 12px; }
+.undo-redo-head { padding: 3px 10px 5px; color: #6b7280; font-size: 11px; border-bottom: 1px solid #eef0f3; margin-bottom: 2px; }
+.undo-redo-item { display: flex; align-items: baseline; gap: 8px; width: 100%; padding: 4px 10px; border: 0; background: none;
+    text-align: left; font: inherit; color: #1f2937; cursor: pointer; }
+.undo-redo-item.in-range { background: #e8f0fe; }
+.undo-redo-item:focus-visible { outline: 2px solid #1976d2; outline-offset: -2px; }
+.undo-redo-num { flex: 0 0 auto; min-width: 1.6em; text-align: right; color: #9aa1ab; font-variant-numeric: tabular-nums; }
+.undo-redo-name { flex: 1 1 auto; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* ---- Repeat Finder: floating panel (no backdrop; the alignment stays visible and usable) ---- */
+.rf-layer { position: fixed; inset: 0; z-index: 10002; pointer-events: none; }
+.rf-panel { pointer-events: auto; position: absolute; top: 48px; right: 20px; width: 640px; min-width: 420px; max-width: calc(100vw - 24px);
+    height: min(640px, calc(100vh - 70px)); min-height: 260px; max-height: calc(100vh - 16px); display: flex; flex-direction: column;
+    background: #fff; border: 1px solid #c9ced6; border-radius: 8px; box-shadow: 0 8px 28px rgba(0,0,0,0.22); overflow: hidden;
+    font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; font-size: 12px; color: #1f2937; }   /* resized by the shared window frame's handles (_initWindowFrame) */
+/* A window being moved shows what is under it (owner, 2026-10-23) */
+.win-dragging { opacity: 0.6; }
+.rf-panel.win-maximized { max-width: none; max-height: none; }   /* the frame's maximize sets the size itself */
+.rf-body { flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; gap: 6px; padding: 8px 14px 12px; }
+.rf-row { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; }
+.rf-label { flex: 0 0 64px; color: #6b7280; font-weight: 600; font-size: 11px; }
+.rf-num { width: 52px; font-size: 12px; padding: 1px 3px; }
+.rf-seqselect { max-width: 230px; font-size: 12px; height: 24px; }
+.rf-seg { display: inline-flex; border: 1px solid #c9ced6; border-radius: 6px; overflow: hidden; background: #f7f8fa; }
+.rf-seg label { position: relative; padding: 3px 11px; cursor: pointer; border-left: 1px solid #c9ced6; white-space: nowrap; user-select: none; }
+.rf-seg label:first-child { border-left: 0; }
+.rf-seg input { position: absolute; inset: 0; opacity: 0; margin: 0; cursor: pointer; }
+.rf-seg label:hover { background: #eef2f7; }
+.rf-seg label:has(input:checked) { background: #1976d2; color: #fff; }
+.rf-seg label:has(input:focus-visible) { outline: 2px solid #1976d2; outline-offset: -2px; }
+.rf-btn { font: inherit; font-size: 12px; padding: 3px 10px; border: 1px solid #c9ced6; border-radius: 5px; background: #fff; color: #1f2937; cursor: pointer; }
+.rf-btn:hover { background: #f1f4f8; }
+.rf-btn:disabled { opacity: 0.45; cursor: default; background: #fff; }
+.rf-btn-primary { background: #1976d2; border-color: #1976d2; color: #fff; font-weight: 600; padding: 4px 18px; }
+.rf-btn-primary:hover { background: #1565c0; }
+/* the Mark button after a TSD run: the found TSDs are shown faintly and this is the next step */
+.rf-btn-attention { background: #fff3c4; border-color: #e0a800; box-shadow: 0 0 0 3px rgba(240, 180, 41, 0.35); animation: rf-attention 1.1s ease-in-out 3; }
+@keyframes rf-attention { 50% { box-shadow: 0 0 0 6px rgba(240, 180, 41, 0.15); } }
+.rf-actions { padding-top: 2px; border-top: 1px solid #eef0f3; margin-top: 2px; }
+.rf-tools { background: #f7f8fa; border: 1px solid #eef0f3; border-radius: 6px; padding: 4px 8px; }
+.rf-tools[hidden] { display: none; }
+.rf-color { width: 28px; height: 22px; padding: 0; border: 1px solid #c9ced6; }
+.rf-results { flex: 1 1 auto; min-height: 60px; overflow: auto; border: 1px solid #e3e6ea; border-radius: 6px; padding: 8px; background: #fcfcfd; }
+.rf-progress { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+.rf-progress .rf-progress-bar { width: 160px; height: 10px; }
+.rf-summary { display: flex; flex-wrap: wrap; gap: 6px; align-items: baseline; margin-bottom: 6px; }
+.rf-summary .rf-big { font-size: 14px; font-weight: 700; margin-right: 6px; }
+.rf-chip { display: inline-block; padding: 1px 7px; border-radius: 10px; background: #eef2f7; color: #374151; font-size: 11px; white-space: nowrap; }
+.rf-chip.rf-warn { background: #fff4e5; color: #8a4b00; }
+.rf-hint { color: #6b7280; font-size: 11px; margin: 2px 0 6px; }
+.rf-histo { display: inline-flex; align-items: flex-end; gap: 2px; height: 26px; vertical-align: middle; margin-left: 4px; }
+.rf-histo span { display: inline-block; width: 9px; background: #90b4dd; border-radius: 2px 2px 0 0; position: relative; }
+.rf-table { width: 100%; border-collapse: collapse; font-size: 12px; table-layout: fixed; }
+.rf-table th { position: sticky; top: -8px; background: #f1f3f6; text-align: left; font-weight: 600; font-size: 11px; color: #4b5563; padding: 3px 6px; border-bottom: 1px solid #dde1e6; cursor: default; }
+.rf-table th[data-sort] { cursor: pointer; }
+.rf-table th[data-sort]:hover { color: #1976d2; }
+.rf-table td { padding: 3px 6px; border-bottom: 1px solid #f0f2f5; vertical-align: middle; }
+.rf-table tbody tr { cursor: pointer; }
+.rf-table tbody tr:hover { background: #eef5fd; }
+.rf-table tbody tr.rf-active { background: #e3eefc; }
+.rf-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.rf-num-cell { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.rf-pair { font-family: "Courier New", monospace; font-size: 12px; line-height: 1.25; white-space: nowrap; }
+.rf-pair .rf-mm { background: #ffd6d6; color: #b00020; border-radius: 2px; }
+.rf-pair .rf-flank { color: #a3a3a3; font-size: 9px; }
+.rf-pair .rf-tag { color: #9aa1ab; font-family: system-ui, sans-serif; font-size: 10px; display: inline-block; width: 16px; }
+.rf-cols { color: #6b7280; font-size: 11px; white-space: nowrap; }
+.rf-swatch { display: inline-block; width: 12px; height: 12px; border-radius: 2px; vertical-align: middle; }
+.rf-x { background: none; border: 0; color: #9aa1ab; cursor: pointer; font-size: 14px; line-height: 1; padding: 0 2px; }
+.rf-x:hover { color: #b00020; }
+/* "Remove this highlight" only on a highlighted row: on the others it did nothing (GLM db2 #14) */
+#repeatResults tr:not([data-active="1"]) .repeat-remove-btn { visibility: hidden; }
+.rf-misses { margin-top: 8px; }
+.rf-misses summary { cursor: pointer; color: #374151; font-weight: 600; }
+.rf-misses li { margin: 1px 0; }
+@keyframes rfFlash { 0%,60% { background: #ffe082; } 100% { background: transparent; } }
+.seq-name.rf-flash { animation: rfFlash 1.6s ease-out; }
+.rf-panel > .win-titlebar { margin: 0; padding: 6px 8px 6px 14px; flex: 0 0 auto; }
+.rf-panel input.rf-num { width: 58px; }
+
+/* ---- Alignment menu: even button grid, settings in a two-column grid ---- */
+.al-menu { padding: 2px 2px 6px; }
+#alignment-controls { width: 470px; max-width: calc(100vw - 24px); box-sizing: border-box; }
+.al-btngrid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 5px; margin-bottom: 8px; }
+.al-btngrid .al-btn-wide { grid-column: 1 / -1; }
+.al-btngrid button { height: 26px; padding: 0 8px; margin: 0; font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.al-settings { display: grid; grid-template-columns: max-content minmax(0, 1fr); gap: 5px 10px; align-items: center; border-top: 1px solid #eee; padding-top: 8px; font-size: 12px; }
+.al-settings > label, .al-head { text-align: right; color: #555; font-size: 11px; }
+.al-head { align-self: start; padding-top: 2px; font-weight: 600; }
+.al-settings select { height: 22px; font-size: 12px; max-width: 190px; }
+.al-settings input[type="number"] { width: 58px; font-size: 12px; }
+.al-pair { display: inline-flex; align-items: center; gap: 6px; }
+.al-inline { color: #555; font-size: 11px; }
+.al-checks { display: flex; flex-direction: column; gap: 3px; }
+.al-checks label { display: inline-flex; align-items: center; gap: 4px; cursor: pointer; font-size: 12px; white-space: nowrap; }
+.al-kline { display: inline-flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.al-checks .al-k input { width: 46px; }
+/* Dot plot: a movable, resizable window (was fixed-size, centred with margin:auto) */
+#dotPlotDialog.dot-window { position: absolute; left: max(8px, calc(50vw - 450px)); top: 30px; margin: 0; width: 900px; height: calc(100vh - 60px);
+    min-width: 560px; min-height: 420px; max-width: calc(100vw - 16px); max-height: calc(100vh - 16px); padding: 16px; box-sizing: border-box;
+    background: #fff; border-radius: 8px; box-shadow: 0 4px 20px rgba(0,0,0,0.3); display: flex; flex-direction: column; overflow: hidden; }
+.dot-help-btn { width: 22px; height: 22px; padding: 0; border-radius: 50%; font-size: 12px; font-weight: 700; line-height: 1; }
+/* Window frame shared by floating windows: resize from any edge or corner, maximize */
+.win-rz { position: absolute; z-index: 20; }
+.win-rz[data-dir="n"] { top: 0; left: 12px; right: 12px; height: 6px; cursor: ns-resize; }
+.win-rz[data-dir="s"] { bottom: 0; left: 12px; right: 12px; height: 6px; cursor: ns-resize; }
+.win-rz[data-dir="e"] { right: 0; top: 12px; bottom: 12px; width: 6px; cursor: ew-resize; }
+.win-rz[data-dir="w"] { left: 0; top: 12px; bottom: 12px; width: 6px; cursor: ew-resize; }
+.win-rz[data-dir="ne"] { top: 0; right: 0; width: 12px; height: 12px; cursor: nesw-resize; }
+.win-rz[data-dir="nw"] { top: 0; left: 0; width: 12px; height: 12px; cursor: nwse-resize; }
+.win-rz[data-dir="se"] { bottom: 0; right: 0; width: 14px; height: 14px; cursor: nwse-resize;
+    background: linear-gradient(135deg, transparent 55%, #b8bec6 55%, #b8bec6 62%, transparent 62%, transparent 72%, #b8bec6 72%, #b8bec6 79%, transparent 79%); }
+.win-rz[data-dir="sw"] { bottom: 0; left: 0; width: 12px; height: 12px; cursor: nesw-resize; }
+.win-maximized .win-rz { display: none; }
+.win-btns { display: inline-flex; gap: 2px; align-items: center; }
+.win-maxbtn { font-size: 15px; }
+.win-maxbtn:hover { background: #e4e7eb; color: #222; }
+#dotPlotRecalc.dot-dirty { background: #fff3cd; border-color: #e0b100; font-weight: 600; }
+/* The alignment panel under the plot keeps one height: three lines plus the room a horizontal scrollbar
+   takes (--dot-sb, measured once by _initDotPlotEvents; 0 where scrollbars are overlays). A wide hover
+   text used to add a scrollbar, shrink the plot viewport and re-zoom the fitted plot: the plot jerked
+   whenever the pointer crossed between the plot and its axis strip (owner, 2026-10-23). */
+#dotPlotAlignPanel { height: calc(3 * 1.4 * 12px + 16px + 2px + var(--dot-sb, 17px)); box-sizing: border-box; overflow-y: hidden; }
+/* Named search presets (Search menu) */
+.search-presets { display: flex; flex-wrap: wrap; gap: 4px; align-items: center; margin-top: 4px; }
+.search-presets select { height: 22px; font-size: 11px; max-width: 150px; }
+.search-presets input[type="text"] { height: 22px; font-size: 11px; width: 150px; padding: 2px; box-sizing: border-box; }
+.search-presets button { height: 22px; font-size: 11px; padding: 0 6px; }
+/* The side column of the dot plot: the Top Regions list and the collection of starred stretches */
+.dot-side { display: flex; flex-direction: column; gap: 6px; width: 220px; min-width: 180px; }
+.dot-side-list { border: 1px solid #ccc; overflow-y: auto; font-size: 11px; background: #fafafa; }
+.dot-side-head { padding: 6px; font-weight: bold; border-bottom: 1px solid #ddd; background: #eee; position: sticky; top: 0; display: flex; align-items: center; gap: 4px; }
+.dot-star { float: right; font-size: 12px; line-height: 15px; padding: 0 4px; margin-left: 2px; cursor: pointer; }
+.dot-bm { padding: 3px 6px; border-bottom: 1px solid #eee; cursor: pointer; }
+.dot-bm:hover { background: #d0e4ff; }
+.dot-bm-other { color: #666; }
+.dot-bm-name { font-weight: bold; }
+.dot-bm-tools { float: right; display: inline-flex; gap: 1px; margin-left: 4px; }
+.dot-bm-tools button { font-size: 11px; line-height: 15px; padding: 0 4px; cursor: pointer; }
+.dot-bm-rename { font-size: 11px; width: 120px; }
+/* A region shown in the alignment (owner, 2026-10-23): the list entry's button, the entry's highlight, and the
+   window's backdrop made click-through so the alignment behind it can be used while the window stays */
+.dot-goto { float: right; font-size: 11px; line-height: 15px; padding: 0 5px; margin-left: 4px; cursor: pointer; }
+.dot-region-active { background: #e3f0ff; }
+.dot-mini-btn { font-size: 10px; font-weight: normal; padding: 1px 5px; }
+#dotPlotModal.dot-peek { background: transparent !important; pointer-events: none; }
+#dotPlotModal.dot-peek #dotPlotDialog { pointer-events: auto; }
+/* The dot plot's control rows (owner, 2026-10-23: tidy, boxes level with their text, one wide slider) */
+.dot-ctl-row { display: flex; flex-wrap: wrap; gap: 6px 10px; align-items: center; margin-bottom: 6px; font-size: 12px; }
+.dot-ctl-row label { display: inline-flex; align-items: center; gap: 4px; white-space: nowrap; }
+.dot-ctl-row label[hidden], .dot-ctl-row[hidden] { display: none; }
+.dot-ctl-row input[type="checkbox"], .dot-ctl-row input[type="radio"] { margin: 0; }
+.dot-ctl-row input[type="number"] { font-size: 12px; padding: 1px 2px; }
+.dot-ctl-row button { font-size: 11px; padding: 2px 8px; }
+.dot-ctl-row .dot-sep { border-left: 1px solid #ccc; height: 16px; }
+.dot-ctl-row .dot-grow { flex: 1 1 0; }
+.dot-slider { flex: 1 1 220px; min-width: 200px; gap: 6px; }
+.dot-slider input[type="range"] { flex: 1 1 120px; min-width: 120px; margin: 0; }
+.dot-slider output { min-width: 3.2em; text-align: right; font-variant-numeric: tabular-nums; }
+.dot-split-row { margin: -2px 0 8px; }
+.dot-lower-ctl { display: inline-flex; flex: 1 1 auto; flex-wrap: wrap; gap: 6px 10px; align-items: center; padding: 2px 8px; border-left: 3px solid #90b4dd; background: #f4f8fd; border-radius: 3px; }
+.dot-lower-ctl[hidden] { display: none; }
+
+/* ---- Selections panel (top menu) ---- */
+/* Invisible while there is nothing to list, but keeping its place: when it was display:none its
+   appearance wrapped the menu line at widths where the line is nearly full, the toolbar grew a line
+   and the alignment jumped down under the pointer (and Canvas redrew everything) on every selection. */

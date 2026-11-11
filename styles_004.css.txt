@@ -1,0 +1,622 @@
+[styles.css lines 2406-3026 of ViewAlign fd8b8e4]
+/* the cell a gap tool would act on, outlined under the pointer */
+body.edit-mode-active[data-edit-tool="insertGapSeq"] .seq-data > span[data-pos]:hover,
+body.edit-mode-active[data-edit-tool="deleteGapSeq"] .seq-data > span[data-pos]:hover,
+body.edit-mode-active[data-edit-tool="insertGapOther"] .seq-data > span[data-pos]:hover,
+body.edit-mode-active[data-edit-tool="deleteGapOther"] .seq-data > span[data-pos]:hover,
+body.edit-mode-active[data-edit-tool="insertGapAll"] .seq-data > span[data-pos]:hover,
+body.edit-mode-active[data-edit-tool="deleteGapAll"] .seq-data > span[data-pos]:hover {
+    outline: 2px solid #ff8c00;
+    outline-offset: -2px;
+}
+
+body.edit-mode-active[data-edit-tool="residue"] .seq-data {
+    cursor: text;
+}
+
+body.edit-dragging,
+body.edit-dragging .seq-data {
+    cursor: default !important;
+}
+
+.seq-data span.edit-active-cell {
+    outline: 1px solid #1976d2;
+    outline-offset: -1px;
+    --t-edit: linear-gradient(rgba(25, 118, 210, 0.22), rgba(25, 118, 210, 0.22));
+}
+.black {
+    background-color: var(--blackShading, #000) !important;
+    color: var(--blackText, white) !important;
+}
+.dark {
+    background-color: var(--darkShading, #555) !important;
+    color: var(--darkText, white) !important;
+}
+.light {
+    background-color: var(--lightShading, #ccc) !important;
+    color: var(--lightText, black) !important;
+}
+.gap { background-color: white !important; color: #888 !important; }
+.other { background-color: white; color: black; }
+.ambiguous { color: #0000AA; font-weight: bold; }
+.artifact {
+    color: red !important;
+    background-color: #ffe6e6 !important;
+    font-weight: bold !important;
+}
+
+/* Non-monochrome schemes replace conservation shading with residue colours */
+#alignmentContainer:not(.color-scheme-monochrome) .seq-data .black,
+#alignmentContainer:not(.color-scheme-monochrome) .seq-data .dark,
+#alignmentContainer:not(.color-scheme-monochrome) .seq-data .light,
+#alignmentContainer:not(.color-scheme-monochrome) .seq-data .other {
+    background-color: transparent !important;
+    color: inherit !important;
+}
+
+/* Alignment residue color schemes. Monochrome is the existing conservation shading. */
+#alignmentContainer.color-scheme-nucleotide .seq-data .base-A { background-color: #8ddf88 !important; color: #063b09 !important; }
+#alignmentContainer.color-scheme-nucleotide .seq-data .base-C { background-color: #87c7ff !important; color: #07335e !important; }
+#alignmentContainer.color-scheme-nucleotide .seq-data .base-G { background-color: #ffc878 !important; color: #5f3300 !important; }
+#alignmentContainer.color-scheme-nucleotide .seq-data .base-T,
+#alignmentContainer.color-scheme-nucleotide .seq-data .base-U { background-color: #ff8c8c !important; color: #5e0505 !important; }
+#alignmentContainer.color-scheme-nucleotide .seq-data .base-N { background-color: #d9d9d9 !important; color: #333 !important; }
+
+/* Okabe-Ito: distinct under the common forms of colour blindness */
+#alignmentContainer.color-scheme-nucleotide-cb .seq-data .base-A { background-color: #56b4e9 !important; color: #000 !important; }
+#alignmentContainer.color-scheme-nucleotide-cb .seq-data .base-C { background-color: #e69f00 !important; color: #000 !important; }
+#alignmentContainer.color-scheme-nucleotide-cb .seq-data .base-G { background-color: #f0e442 !important; color: #000 !important; }
+#alignmentContainer.color-scheme-nucleotide-cb .seq-data .base-T,
+#alignmentContainer.color-scheme-nucleotide-cb .seq-data .base-U { background-color: #cc79a7 !important; color: #000 !important; }
+#alignmentContainer.color-scheme-nucleotide-cb .seq-data .base-N { background-color: #d9d9d9 !important; color: #333 !important; }
+
+#alignmentContainer.color-scheme-purine-pyrimidine .seq-data .pp-purine { background-color: #ffe9a8 !important; color: #6b4500 !important; }
+#alignmentContainer.color-scheme-purine-pyrimidine .seq-data .pp-pyrimidine { background-color: #cbe7ff !important; color: #06466d !important; }
+#alignmentContainer.color-scheme-purine-pyrimidine .seq-data .iupac-ambiguous,
+#alignmentContainer.color-scheme-purine-pyrimidine .seq-data .base-N { background-color: #e5e5e5 !important; color: #333 !important; }
+
+#alignmentContainer.color-scheme-ambiguity .seq-data .iupac-ambiguous { background-color: #e8ddff !important; color: #3f1375 !important; font-weight: bold; }
+#alignmentContainer.color-scheme-ambiguity .seq-data .base-R { background-color: #d7ffd7 !important; color: #075007 !important; }
+#alignmentContainer.color-scheme-ambiguity .seq-data .base-Y { background-color: #d7edff !important; color: #06466d !important; }
+#alignmentContainer.color-scheme-ambiguity .seq-data .base-S { background-color: #dff7ff !important; color: #06515f !important; }
+#alignmentContainer.color-scheme-ambiguity .seq-data .base-W { background-color: #fff4c7 !important; color: #6b5200 !important; }
+#alignmentContainer.color-scheme-ambiguity .seq-data .base-K { background-color: #ffe2ce !important; color: #6a2a00 !important; }
+#alignmentContainer.color-scheme-ambiguity .seq-data .base-M { background-color: #f4dcff !important; color: #5d126d !important; }
+#alignmentContainer.color-scheme-ambiguity .seq-data .base-N { background-color: #d9d9d9 !important; color: #333 !important; font-weight: bold; }
+
+#alignmentContainer.color-scheme-aa-clustal .seq-data .aa-hydrophobic { background-color: #80b1ff !important; color: #062a5f !important; }
+#alignmentContainer.color-scheme-aa-clustal .seq-data .aa-positive { background-color: #ff9a9a !important; color: #650808 !important; }
+#alignmentContainer.color-scheme-aa-clustal .seq-data .aa-negative { background-color: #ff77dd !important; color: #5d064e !important; }
+#alignmentContainer.color-scheme-aa-clustal .seq-data .aa-polar { background-color: #8ee68e !important; color: #064906 !important; }
+#alignmentContainer.color-scheme-aa-clustal .seq-data .aa-aromatic { background-color: #8fe6ff !important; color: #07495a !important; }
+#alignmentContainer.color-scheme-aa-clustal .seq-data .aa-special { background-color: #ffe680 !important; color: #5c4600 !important; }
+#alignmentContainer.color-scheme-aa-clustal .seq-data .aa-stop { background-color: #222 !important; color: #fff !important; }
+#alignmentContainer.color-scheme-aa-clustal .seq-data .aa-unknown { background-color: #ddd !important; color: #333 !important; }
+
+#alignmentContainer.color-scheme-aa-jalview .seq-data .aa-hydrophobic { background-color: #ffcc99 !important; color: #5c2c00 !important; }
+#alignmentContainer.color-scheme-aa-jalview .seq-data .aa-positive { background-color: #99ccff !important; color: #06345f !important; }
+#alignmentContainer.color-scheme-aa-jalview .seq-data .aa-negative { background-color: #ff9999 !important; color: #620909 !important; }
+#alignmentContainer.color-scheme-aa-jalview .seq-data .aa-polar { background-color: #99e699 !important; color: #064906 !important; }
+#alignmentContainer.color-scheme-aa-jalview .seq-data .aa-aromatic { background-color: #d6b3ff !important; color: #3d0b63 !important; }
+#alignmentContainer.color-scheme-aa-jalview .seq-data .aa-special { background-color: #ffff99 !important; color: #555500 !important; }
+#alignmentContainer.color-scheme-aa-jalview .seq-data .aa-stop { background-color: #222 !important; color: #fff !important; }
+#alignmentContainer.color-scheme-aa-jalview .seq-data .aa-unknown { background-color: #ddd !important; color: #333 !important; }
+.selected .seq-name {
+    background-color: var(--selected-bg) !important;
+    color: #000 !important;
+    font-weight: bold;
+}
+/* Selections are tints over whatever the residue shows (shading, colour scheme, search, SNP
+   letters...), never a fill that would hide it. Each kind sets a variable; one rule stacks them. */
+.seq-line.selected {
+    --t-row: linear-gradient(rgba(40, 167, 69, 0.30), rgba(40, 167, 69, 0.30));
+}
+/* Only on selected residues: a rule on every residue made the browser style 450k spans with
+   four image layers on each redraw. Not on the consensus row (see .column-selected below). */
+.seq-line.selected .seq-data > span[data-pos],
+.seq-data > span.column-selected,
+.seq-data > span.nuc-selected,
+.seq-data > span.edit-active-cell {
+    background-image: var(--t-edit, none), var(--t-nuc, none), var(--t-col, none), var(--t-row, none);
+}
+.seq-line.selected .seq-name {
+    background-image: var(--t-row);
+}
+
+/* Column highlight: left and right pseudo-element bars only, no horizontal lines */
+span.column-highlighted {
+    position: relative;
+}
+
+span.column-highlighted::before {
+    content: '';
+    position: absolute;
+    left: 0;
+    top: 0;
+    bottom: 0;
+    width: 1px;
+    background: rgba(52, 152, 219, 0.9);
+    pointer-events: none;
+}
+
+span.column-highlighted::after {
+    content: '';
+    position: absolute;
+    right: 0;
+    top: 0;
+    bottom: 0;
+    width: 1px;
+    background: rgba(52, 152, 219, 0.9);
+    pointer-events: none;
+}
+
+/* Row highlight: top and bottom pseudo-element bars, no width expansion */
+.seq-line.highlighted-row {
+    position: relative;
+}
+
+.seq-line.highlighted-row::before {
+    content: '';
+    position: absolute;
+    left: 0;
+    right: 0;
+    top: 0;
+    height: 1px;
+    background: rgba(220, 53, 69, 0.9);
+    pointer-events: none;
+    z-index: 2;
+}
+
+.seq-line.highlighted-row::after {
+    content: '';
+    position: absolute;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    height: 1px;
+    background: rgba(220, 53, 69, 0.9);
+    pointer-events: none;
+    z-index: 2;
+}
+
+.consensus-line {
+    font-style: normal;
+    color: #555;
+    font-weight: bold;
+}
+
+.consensus-line.consensus-top {
+    border-bottom: 1px solid #ccc;
+    margin-bottom: 4px;
+}
+
+.consensus-line.consensus-bottom {
+    border-top: 1px solid #ccc;
+    margin-top: 4px;
+}
+.consensus-line .seq-name {
+    color: #555;
+    font-weight: bold;
+    background: white !important;
+    z-index: 11;
+}
+.consensus-line .seq-data span {
+    opacity: 0.9;
+    background-color: transparent !important;
+    color: #555;
+}
+
+/* Trim region indicators in consensus */
+.consensus-line .seq-data span.trim-left {
+    background-color: #ff6b6b !important;
+    color: white !important;
+    opacity: 1 !important;
+    cursor: ew-resize;
+    user-select: none;
+}
+
+.consensus-line .seq-data span.trim-right {
+    background-color: #4ecdc4 !important;
+    color: white !important;
+    opacity: 1 !important;
+    cursor: ew-resize;
+    user-select: none;
+}
+/* Soft-trim visual indicator — dimmed columns excluded from clustering */
+.soft-trim-col { opacity: 0.35; background-color: #f0f0f0 !important; }
+
+.error-message {
+    color: red;
+    font-weight: bold;
+    padding: 10px;
+    background: var(--error-bg);
+    border: 1px solid var(--error-border);
+    margin: 5px;
+    border-radius: 4px;
+}
+.search-hit {
+    background-color: var(--search-hit-bg) !important;
+    color: black !important;
+    font-weight: bold;
+}
+.tooltip {
+    position: fixed;
+    background: var(--tooltip-bg);
+    color: black;
+    font-size: 12px;
+    padding: 2px 6px;
+    border-radius: 3px;
+    white-space: nowrap;
+    z-index: 200;
+    display: none;
+    border: 1px solid var(--tooltip-border);
+    pointer-events: none;
+}
+/* Consensus frequency tooltip */
+.tooltip.consensus-box {
+    background: #222;
+    color: #eee;
+    font-size: 11px;
+    padding: 6px 8px;
+    border: 1px solid #444;
+    border-radius: 5px;
+    white-space: normal;
+    max-width: 200px;
+    box-shadow: 0 2px 6px rgba(0,0,0,0.4);
+    line-height: 1.25;
+}
+.tooltip.consensus-box .cov-row {
+    font-weight: 600;
+    margin-bottom: 4px;
+    text-align: left;
+}
+.tooltip.consensus-box .freq-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 6px;
+    margin: 2px 0;
+    font-family: monospace;
+}
+.tooltip.consensus-box .freq-row .base {
+    font-weight: 600;
+    padding: 2px 6px;
+    border-radius: 3px;
+    color: #fff;
+    min-width: 24px;
+    text-align: center;
+    box-shadow: inset 0 0 0 1px rgba(255,255,255,0.15);
+}
+.tooltip.consensus-box .freq-row .pct {
+    flex: 0 0 40px;
+    text-align: right;
+}
+.tooltip.consensus-box .freq-row .raw {
+    flex: 0 0 40px;
+    text-align: right;
+    opacity: 0.7;
+}
+.tooltip.consensus-box .coord-row {
+    font-family: monospace;
+    font-size: 10px;
+    margin-bottom: 4px;
+    text-align: left;
+    opacity: 0.95;
+}
+.tooltip.trim-tip {
+    background: #222;
+    color: #eee;
+    font-size: 11px;
+    padding: 8px 10px;
+    border: 1px solid #444;
+    border-radius: 5px;
+    white-space: normal;
+    max-width: 280px;
+    line-height: 1.35;
+    box-shadow: 0 2px 6px rgba(0,0,0,0.4);
+}
+.tooltip.trim-tip .trim-tip-gen {
+    margin-bottom: 6px;
+}
+.tooltip.trim-tip .trim-var {
+    color: #ffe08a;
+    font-weight: 700;
+    font-variant-numeric: tabular-nums;
+}
+.tooltip.consensus-box .freq-row .raw {
+    font-size: 10px;
+    color: #888;
+}
+
+/* ============================================================================
+   NUCLEOTIDE LETTER COLORING MODE (shadeMode=letter)
+   ============================================================================ */
+/* In letter mode, override ALL shading backgrounds to white/transparent */
+.shade-letter .seq-data .black,
+.shade-letter .seq-data .dark,
+.shade-letter .seq-data .light { background: transparent !important; }
+.shade-letter .seq-data .base-A { color: #2ecc40 !important; }    /* Green */
+.shade-letter .seq-data .base-C { color: #0074d9 !important; }    /* Blue */
+.shade-letter .seq-data .base-G { color: #ff851b !important; }    /* Orange */
+.shade-letter .seq-data .base-T { color: #ff4136 !important; }    /* Red */
+.shade-letter .seq-data .base-U { color: #b10dc9 !important; }    /* Purple */
+.shade-letter .seq-data .base-N { color: #888 !important; }       /* Grey */
+/* Common IUPAC ambiguity codes */
+.shade-letter .seq-data .base-R { color: #01ff70 !important; }
+.shade-letter .seq-data .base-Y { color: #7fdbff !important; }
+.shade-letter .seq-data .base-M { color: #f39c12 !important; }
+.shade-letter .seq-data .base-K { color: #e74c3c !important; }
+.shade-letter .seq-data .base-S { color: #3498db !important; }
+.shade-letter .seq-data .base-W { color: #1abc9c !important; }
+.shade-letter .seq-data .base-H { color: #9b59b6 !important; }
+.shade-letter .seq-data .base-B { color: #e67e22 !important; }
+.shade-letter .seq-data .base-V { color: #2c3e50 !important; }
+.shade-letter .seq-data .base-D { color: #16a085 !important; }
+
+.modal {
+    display: none;
+    position: fixed;
+    z-index: 1000;
+    left: 0;
+    top: 0;
+    width: 100%;
+    height: 100%;
+    background-color: rgba(0,0,0,0.5);
+}
+.modal-content {
+    background-color: var(--modal-bg);
+    margin: 5% auto;
+    padding: 20px;
+    border: 1px solid var(--modal-border);
+    width: 80%;
+    max-width: 800px;
+    max-height: 80vh;
+    overflow-y: auto;
+    border-radius: 8px;
+    font-family: Arial, sans-serif;
+    line-height: 1.6;
+}
+.close {
+    color: #aaa;
+    float: right;
+    font-size: 28px;
+    font-weight: bold;
+    cursor: pointer;
+}
+.close:hover,
+.close:focus {
+    color: black;
+    text-decoration: none;
+}
+.modal h2, .modal h3 {
+    color: #2c3e50;
+}
+.modal ul {
+    margin: 10px 0;
+    padding-left: 20px;
+}
+.zoom-buttons {
+    display: flex;
+    gap: 4px;
+    align-items: center;
+    width: 60px;
+    justify-content: space-between;
+}
+.zoom-button {
+    width: 18px;
+    height: 18px;
+    min-width: 18px;
+    min-height: 18px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 12px;
+    padding: 0;
+    border-radius: 50%;
+    line-height: 18px;
+    text-align: center;
+    box-sizing: border-box;
+}
+.zoom-value {
+    width: 30px;
+    min-width: 30px;
+    text-align: center;
+    display: inline-block;
+    cursor: pointer;
+    border-radius: 2px;
+    padding: 1px 2px;
+    transition: background-color 0.15s;
+}
+.zoom-value:hover {
+    background-color: #e8f0fe;
+}
+.zoom-value.not-default {
+    font-weight: bold;
+    color: #1a73e8;
+}
+/* Quick display-mode switcher in the top bar (mirrors the Full/Block/Canvas/
+   Reads radios in the Display dropdown). Shown in every view (owner 2026-10-31);
+   the view switch (.view-switch) is compact: one-letter labels, tooltips name the view. */
+.quick-mode-switch {
+    display: inline-flex;
+    align-items: stretch;
+    height: 18px;
+    border: 1px solid #bbb;
+    border-radius: 4px;
+    overflow: hidden;
+    background: #f5f5f5;
+    flex: 0 0 auto;
+    align-self: center;
+}
+.quick-mode-switch input[type="radio"] {
+    display: none;
+}
+.quick-mode-switch label {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    padding: 0 6px;
+    font-size: 10px;
+    font-weight: bold;
+    color: #666;
+    cursor: pointer;
+    white-space: nowrap;
+    user-select: none;
+    border-right: 1px solid #ccc;
+}
+.quick-mode-switch label:last-of-type {
+    border-right: none;
+}
+.quick-mode-switch label:hover {
+    background: #e0f0ff;
+}
+.quick-mode-switch input:checked + label {
+    background: #1a73e8;
+    color: #fff;
+}
+
+.canvas-mode-chip {
+    display: none;
+    align-self: center;
+    flex: 0 0 auto;
+    height: 18px;
+    line-height: 18px;
+    padding: 0 7px;
+    font-size: 10px;
+    font-weight: 600;
+    color: #5c4a00;
+    background: #fff8e1;
+    border: 1px solid #ffe082;
+    border-radius: 4px;
+    white-space: nowrap;
+    user-select: none;
+    cursor: default;
+}
+
+.canvas-mode-chip.is-visible {
+    display: inline-flex;
+    align-items: center;
+}
+
+#shortcuts-section .control-group {
+    min-width: 260px;
+    max-width: min(340px, calc(100vw - 12px));
+    padding: 0 6px 6px; /* top 0: the sticky detach handle sits flush */
+}
+.keys-grid {
+    display: grid;
+    grid-template-columns: auto 1fr;
+    gap: 2px 12px;
+    font-family: monospace;
+    font-size: 10px;
+    padding: 0 6px 4px;
+}
+.keys-grid .keys-cat {
+    grid-column: 1 / -1;
+    font-family: sans-serif;
+    font-size: 10px;
+    font-weight: bold;
+    color: #666;
+    border-bottom: 1px solid #e3e3e3;
+    margin-top: 6px;
+    padding-bottom: 1px;
+}
+.keys-grid .keys-cat:first-child {
+    margin-top: 0;
+}
+
+/* Top-bar codon analysis controls (visible when Codon analysis is enabled) */
+.codon-mode-panel {
+    display: none !important;
+    align-self: center;
+    flex: 0 0 auto;
+    flex-shrink: 0;
+    align-items: center;
+    gap: 4px;
+    height: 18px;
+    padding: 0 5px;
+    border: 1px solid #81c784;
+    border-radius: 4px;
+    background: #e8f5e9;
+    white-space: nowrap;
+    overflow: hidden;
+}
+.codon-mode-panel.is-visible {
+    display: inline-flex !important;
+}
+.codon-mode-panel[hidden] {
+    display: none !important;
+}
+.codon-panel-label {
+    font-size: 10px;
+    font-weight: 600;
+    color: #2e7d32;
+    user-select: none;
+}
+.codon-frame-switch {
+    display: inline-flex;
+    align-items: stretch;
+    height: 16px;
+    border: 1px solid #a5d6a7;
+    border-radius: 3px;
+    overflow: hidden;
+    background: #f1f8e9;
+}
+.codon-frame-switch input[type="radio"] {
+    display: none;
+}
+.codon-frame-switch label {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    padding: 0 5px;
+    font-size: 9px;
+    font-weight: bold;
+    color: #33691e;
+    cursor: pointer;
+    white-space: nowrap;
+    user-select: none;
+    border-right: 1px solid #c8e6c9;
+}
+.codon-frame-switch label:last-of-type {
+    border-right: none;
+}
+.codon-frame-switch label:hover {
+    background: #c8e6c9;
+}
+.codon-frame-switch input:checked + label {
+    background: #43a047;
+    color: #fff;
+}
+.codon-panel-btn {
+    height: 16px;
+    line-height: 14px;
+    padding: 0 5px;
+    font-size: 9px;
+    font-weight: 600;
+    cursor: pointer;
+    border: 1px solid #a5d6a7;
+    border-radius: 3px;
+    background: #fff;
+    color: #2e7d32;
+}
+.codon-panel-btn:hover {
+    background: #c8e6c9;
+}
+
+.mode-container {
+    display: flex;
+    align-items: flex-start;
+    gap: 2px;
+    height: auto;
+    min-height: 22px;
+}
+.mode-container label {
+    min-width: 0;
+    margin-right: 0;
+}
+.mode-container input[type="checkbox"] {
+    vertical-align: middle;
+    margin: 0 2px 0 0;
+}
+

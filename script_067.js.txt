@@ -1,0 +1,477 @@
+[script.js lines 29201-29676 of ViewAlign fd8b8e4]
+    const topConsensusRadio = document.querySelector('input[name="consensusPosition"][value="top"]');
+    if (topConsensusRadio) {
+        topConsensusRadio.checked = true;
+    }
+
+    // Trigger initial render/setup based on defaults
+    onModeChange();
+    // that was the page setting itself up, not the user choosing the default Block view
+    _userChoseDomView = false;
+    _userDismissedAutoCanvas = false;
+    toggleStickyNames();
+
+    // -- Residue case toggle (GeneDoc-style upper/lower/asis) --
+    const caseSel = el('residueCase');
+    if (caseSel) caseSel.addEventListener('change', () => setResidueCase(caseSel.value || 'asis'));
+    document.querySelectorAll('input[name="caseQuick"]').forEach(r => r.addEventListener('change', () => { if (r.checked) setResidueCase(r.value); }));
+    setResidueCase(state.residueCase || 'asis');
+    _linkInit();
+    _foldDomInit();
+    _paneInit();
+
+    updateControlsOffset();
+    const controls = el('controls');
+    if (controls && typeof ResizeObserver !== 'undefined') {
+        const controlsResizeObserver = new ResizeObserver(() => {
+            window.requestAnimationFrame(updateControlsOffset);
+        });
+        controlsResizeObserver.observe(controls);
+    }
+    window.addEventListener('resize', () => window.requestAnimationFrame(updateControlsOffset));
+
+    // Initialize slider backgrounds
+    ['blackSlider', 'darkSlider', 'lightSlider', 'nameLengthSlider', 'zoomSlider', 'blockSizeSlider', 'consensusThreshold', 'groupConsensusThreshold', 'consensusMinCoverage'].forEach(id => {
+        const slider = el(id);
+        if (slider) {
+            updateSliderBackground(slider);
+        }
+    });
+
+    // Setup menu stability to prevent flickering on mouse movement
+    setupMenuStability();
+
+    // -- :has() fallback for Firefox < 121 --
+    // CSS :has(.control-group:hover) is not supported in Firefox < 121.
+    // We add .hover-active class via JS as a fallback.
+    if (!CSS.supports('selector(:has(*))')) {
+        document.querySelectorAll('.menu-section').forEach(section => {
+            const cg = section.querySelector('.control-group');
+            if (!cg) return;
+            cg.addEventListener('mouseenter', () => openMenuSection(section));
+            cg.addEventListener('mouseleave', () => section.classList.remove('hover-active'));
+        });
+    }
+
+    // Initialize colour seqs feature
+    initColourSeqs();
+
+    // Initialize Dot Plot & Repeat Finder modals
+    _initDotPlotEvents();    _initRepeatFinderEvents();
+    updateSearchPresetList();
+
+    // -- URL parameter auto-loading --
+    // ...
+
+    // Esc closes the Recent list, like every other list (audit U12)
+    window.addEventListener('keydown', (e) => {
+        const dd = document.getElementById('recentDropdown');
+        if (e.key === 'Escape' && dd && dd.style.display === 'block') dd.style.display = 'none';
+    }, true);   // capture: the alignment's own key handler does not let Esc through
+    // Click-outside to close recent dropdown
+    document.addEventListener('click', (e) => {
+        const dd = document.getElementById('recentDropdown');
+        if (!dd || dd.style.display !== 'block') return;
+        if (!dd.contains(e.target) && e.target.id !== 'recentButton') {
+            dd.style.display = 'none';
+        }
+    });
+    // Supports:
+    //   ?url=<relative_or_absolute_url>   - fetch FASTA/MSF from URL
+    //   ?data=<base64_encoded_text>        - decode inline data
+    //   ?title=<text>                      - optional display title
+    //   ?mask=<url>                        - fetch a 2D block-mask JSON and overlay it
+    //   ?bed=<url>                         - fetch a BED file and show it as the annotation track
+    //   ?reads=<url>                       - fetch a SAM/BAM mapped to a loaded row and open Reads mode
+    //   ?demo=<id>                         - with ?url=: run the worked example <id> of DEMOS and show its note
+    //   ?view=full|block|canvas             - open in this view (full/block is remembered as the user's choice);
+    //                                         also single (= full), blocks and cblock (= block, cblock the prototype's name)
+    //   ?view=domblock                      - test-only: Block drawn by the old DOM renderer (for this tab only:
+    //                                         panes and new tabs opened from it get ?view=block)
+    const urlParams = new URLSearchParams(window.location.search);
+    {
+        const v = (urlParams.get('view') || '').toLowerCase();
+        // domblock: the old DOM Block renderer, test-only (see _domBlockForTests); cblock: the prototype's name for Block
+        const id = { full: 'modeSingle', single: 'modeSingle', block: 'modeBlocks', blocks: 'modeBlocks', cblock: 'modeBlocks', domblock: 'modeBlocks', canvas: 'modeCanvas' }[v];
+        if (v === 'domblock') _domBlockForTests = true;
+        if (id && document.getElementById(id)) {
+            document.getElementById(id).checked = true;
+            _lastModeRadioId = id;
+            _userChoseDomView = id !== 'modeCanvas';
+            _userDismissedAutoCanvas = _userChoseDomView;
+            syncQuickModeSwitch?.();
+        }
+    }
+    // An address taken from the link must not be one of the local server's own routes: with the page
+    // served by server.js, ?url=/api/local-cat?file=... read a local file at a stranger's request (audit M10)
+    let _apiLinkRefused = false;
+    const _linkAddress = (name) => {
+        const v = urlParams.get(name);
+        if (!v) return v;
+        try {
+            const u = new URL(v, location.href);
+            let path = u.pathname; try { path = decodeURIComponent(path); } catch (_) {}
+            if (u.origin === location.origin && /^[\/\\]+api([\/\\]|$)/i.test(path)) { _apiLinkRefused = true; return null; }
+        } catch (_) {}
+        return v;
+    };
+    const autoSnapshot = urlParams.get('snapshot');
+    const autoSnapshotFile = _linkAddress('snapshotFile');
+    const autoUrl   = _linkAddress('url');
+    const autoData  = urlParams.get('data');
+    const autoTitle = urlParams.get('title');
+    const autoMask  = _linkAddress('mask');
+    const autoBed   = _linkAddress('bed');
+    const autoReads = _linkAddress('reads');
+    if (_apiLinkRefused) setTimeout(() => showMessage('This link asks the local server for a file (/api/...). That is not allowed from a link; open the file from the Input menu.', 8000), 600);
+    const autoHandoff = urlParams.get('handoff');   // Actions > New Tab (openSelectedInNewTab)
+    const autoLink = urlParams.get('link');         // Clone Tab from a linked view: start linked
+    const autoDemo = urlParams.get('demo');         // a worked example (DEMOS): run it after ?url= has loaded
+    // Loaded after the alignment: the mask overlay, then the annotation track
+    const _loadUrlExtras = () => {
+        let p = autoMask ? _loadBlockMaskFromUrl(autoMask) : Promise.resolve();
+        if (autoBed) p = p.then(() => loadAnnotationFromUrl(autoBed));
+        return autoReads ? p.then(() => _loadReadsFromUrl(autoReads)) : p;
+    };
+    // ?reads=: the file goes through the SAM/BAM button's loader, which matches it to the loaded row and opens Reads mode
+    const _loadReadsFromUrl = (u) => {
+        showMessage('Loading reads from URL...', 0);
+        return fetch(u)
+            .then(r => { if (!r.ok) throw new Error(`HTTP ${r.status}: ${r.statusText}`); return r.blob(); })
+            .then(b => handleBamFile({ target: { files: [new File([b], u.split('?')[0].split('/').pop() || 'reads.sam')], value: '' } }))
+            .catch(err => showMessage(`Failed to load reads from URL: ${err.message}`, 6000));
+    };
+    const _loadBlockMaskFromUrl = (u) => fetch(u)
+        .then(r => { if (!r.ok) throw new Error('HTTP ' + r.status); return r.json(); })
+        .then(j => {
+            if (!j || !Array.isArray(j.blocks) || !Array.isArray(j.row_headers)) throw new Error('not a block-mask JSON');
+            state.blockMask = j;
+            if (typeof renderBlockMaskOverlay === 'function') renderBlockMaskOverlay();
+        })
+        .catch(err => { console.warn('[blockmask] ?mask= load failed:', err.message); });
+
+    if (autoSnapshotFile) {
+        showMessage('Loading snapshot file...', 0);
+        fetch(autoSnapshotFile)
+            .then(resp => {
+                if (!resp.ok) throw new Error(`HTTP ${resp.status}: ${resp.statusText}`);
+                return resp.json();
+            })
+            .then(payload => {
+                return Promise.resolve(_loadSnapshotPayload(payload)).then(() => { if (state.seqs.length) showMessage('Snapshot file loaded', 2200); });
+            })
+            .catch(err => {
+                console.error('Snapshot file load failed:', err);
+                showMessage(`Failed to load snapshot file: ${err.message}`, 5000);
+            });
+    } else if (autoSnapshot) {
+        try {
+            const snapshotText = _fromBase64Utf8(autoSnapshot);
+            const payload = JSON.parse(snapshotText);
+            Promise.resolve(_loadSnapshotPayload(payload)).then(() => { if (state.seqs.length) showMessage('Snapshot loaded', 2200); })   // not over a load error (audit M6)
+                .catch(err => { console.error('Snapshot load failed:', err); showMessage(`Failed to load snapshot: ${err.message}`, 5000); });
+        } catch (err) {
+            console.error('Snapshot load failed:', err);
+            showMessage(`Failed to load snapshot: ${err.message}`, 5000);
+        }
+    } else if (autoHandoff) {
+        showMessage('Loading the selected sequences...', 0);
+        _receiveNewTabHandoff(autoHandoff)
+            .then(({ fasta, name, payload }) => {
+                // a reload of this tab would ask an opener that no longer has it
+                try { history.replaceState(null, '', location.pathname); } catch (err) { /* file:// */ }
+                if (payload && typeof payload === 'object' && typeof payload.fasta === 'string') {
+                    // Clone Tab: the whole view of the other tab
+                    _loadSnapshotPayload(payload);
+                    if (autoLink) _linkFromUrlParam(autoLink);
+                    showMessage(autoLink ? `Opened ${name} as in the other tab, linked with it` : `Opened ${name} as in the other tab`, 2500);
+                    return;
+                }
+                const fastaInputEl = el('fastaInput');
+                if (fastaInputEl) _setInputText(fasta);
+                state.currentFilename = name;
+                return Promise.resolve(parseAndRender(true)).then(() => { if (autoLink) _linkFromUrlParam(autoLink); showMessage(`Opened ${name}`, 2000); });
+            })
+            .catch(err => showMessage(`Could not open the selected sequences: ${err.message}`, 6000));
+    } else if (autoUrl) {
+        showMessage('Loading alignment from URL...', 0);
+        fetch(autoUrl)
+            .then(resp => {
+                if (!resp.ok) throw new Error(`HTTP ${resp.status}: ${resp.statusText}`);
+                return resp.text();
+            })
+            .then(text => {
+                const fastaInputEl = el('fastaInput');
+                if (fastaInputEl) _setInputText(text);
+                state.currentFilename = autoTitle || autoUrl.split('/').pop() || 'URL';
+                const seqsBefore = state.seqs;
+                return Promise.resolve(parseAndRender(true)).then(() => {
+                    // parseAndRender reports a failed load itself (binary, FASTQ, empty file) and returns
+                    // normally: this message replaced its error (GLM audit cblk #14)
+                    if (!_autoLoadSucceeded(seqsBefore)) return;
+                    showMessage('Alignment loaded from URL', 2000);
+                    return Promise.resolve(_loadUrlExtras()).then(() => autoDemo ? _runDemoFromUrl(autoDemo) : undefined);
+                });
+            })
+            .catch(err => {
+                console.error('URL auto-load failed:', err);
+                showMessage(`Failed to load URL: ${err.message}`, 5000);
+            });
+    } else if (autoData) {
+        try {
+            const text = _fromBase64Utf8(autoData);
+            const fastaInputEl = el('fastaInput');
+            if (fastaInputEl) _setInputText(text);
+            state.currentFilename = autoTitle || 'Inline data';
+            const seqsBefore = state.seqs;
+            Promise.resolve(parseAndRender(true)).then(() => {
+                if (!_autoLoadSucceeded(seqsBefore)) return;   // its own error stays on screen (as ?url=)
+                showMessage('Alignment loaded from inline data', 2000);
+                return _loadUrlExtras();
+            }).catch(err => {
+                console.error('Inline data load failed:', err);
+                showMessage(`Failed to load data: ${err.message}`, 5000);
+            });
+        } catch (err) {
+            console.error('Inline data decode failed:', err);
+            showMessage(`Failed to decode data: ${err.message}`, 5000);
+        }
+    }
+    // Init Add-Sequences modal Browse button
+    initAddSeqBrowse();
+    initStatsTabs();
+    initTreeBuilderControls();
+    initResEnzymeSearch();
+    initBlockMaskPanel();
+    initAnnotationPanel();
+    _initDemoButtons();
+    updateBamButtonVisibility();
+}
+
+// ---- Worked examples (owner, 2026-11-09) ----------------------------------------------------------------------------
+// "For k-mer clustering, diagnostic SNPs, 2D colouring etc. there should be a small but distinct button opening a good
+// example in a new separate tab, demonstrating how it works, on the example deposited at GitHub."
+// Each feature has an "Example ↗" pill, built from this table by _initDemoButtons. It opens
+//   index.html?url=<file>&title=<title>&demo=<id>[&reads=<reads>]
+// in a new tab; after the ?url= alignment has loaded, _runDemoFromUrl calls the feature's own function with the
+// settings in run() and then shows a short closable note. The files are in examples/ (served by the site).
+// place: where the pill goes. sel = an element of the feature; how = 'title' (into the .cluster-block-title of the block
+// holding sel), 'after' / 'before' (right after / before sel; in a window's title bar it goes before the window buttons,
+// not on the bar's free part, which drags the window: a drag cannot start on a button), 'afterLabel' (after the label holding sel), 'wrap' (sel and the pill share
+// sel's place; sel keeps most of the width) or 'append' (a line at the end of sel, with label).
+// Checks: tests/regression/demos.js
+const _demoWait = (ms) => new Promise(r => setTimeout(r, ms));
+async function _demoUntil(test, ms = 30000) {
+    const t0 = Date.now();
+    while (!test()) {
+        if (Date.now() - t0 > ms) throw new Error('the analysis did not finish in time');
+        await _demoWait(100);
+    }
+}
+const DEMOS = {
+    kmer: {
+        name: 'k-mer groups',
+        file: 'examples/demo/alu_subfamilies.fa',
+        title: 'Alu copies (k-mer groups example)',
+        place: { sel: '#clusterGuideTreeButton', how: 'title' },
+        // method peel (owner, 2026-11-09: tree cut mixes these old subfamilies); the other settings are the panel's defaults
+        run: async () => {
+            const set = (id, v) => { const e = el(id); if (e) e.value = v; };
+            set('guideTreeMethod', 'peel'); el('guideTreeMethod')?.dispatchEvent(new Event('change')); set('guideTreeMetric', 'pdist'); set('guideTreeK', '6');
+            set('guideTreeLinkage', 'average'); set('guideTreeMinSize', '2'); set('guideTreeGroups', '');
+            if (el('guideTreeAuto')) el('guideTreeAuto').checked = true;
+            for (const id of ['clusterSelColsOnly', 'clusterSelRowsOnly']) if (el(id)) el(id).checked = false;
+            await clusterByGuideTree();
+        },
+        note: "This is alu_subfamilies.fa from the examples/demo folder of the GitHub repository: 36 full-length Alu copies from "
+            + "human chromosome 1 (hg38, UCSC RepeatMasker), 12 each of AluY, AluSx and AluJb. \"Group by k-mer\" (Clustering menu, "
+            + "k-mer groups) with method \"peel\" split off groups that share diagnostic columns: all 12 AluY copies form one group, "
+            + "and the 24 AluSx and AluJb copies form the other. AluSx and AluJb stay together: these old copies carry so many of "
+            + "their own mutations that the few columns telling the two apart are not enough. Each group has its own colour."
+    },
+    snp: {
+        name: 'Diagnostic SNPs',
+        file: 'examples/demo/alu_subfamilies.fa',
+        title: 'Alu copies (diagnostic SNPs example)',
+        place: { sel: '#clusterNowButton', how: 'title' },
+        // the factory thresholds (the "optimal" preset, createOptimalPreset), not a preset the user saved
+        run: async () => {
+            for (const id of ['clusterWithinTypes', 'clusterSelColsOnly', 'clusterSelRowsOnly']) if (el(id)) el(id).checked = false;
+            const set = (id, v) => { const e = el(id); if (e) e.value = v; };
+            set('clusterMinSizeInput', '3'); set('clusterMinPerfectInput', '5'); set('clusterMaxIterationsInput', '10');
+            set('qualitySmallInput', '80'); set('qualityMediumInput', '70'); set('qualityLargeInput', '60');
+            set('sizeSmallMediumInput', '11'); set('sizeMediumLargeInput', '20'); set('minOccurrencesInput', '3');
+            await clusterSequences();
+        },
+        note: "This is alu_subfamilies.fa from the examples/demo folder of the GitHub repository: 36 full-length Alu copies from "
+            + "human chromosome 1 (hg38, UCSC RepeatMasker), 12 each of AluY, AluSx and AluJb. \"Find SNP groups\" (Clustering menu, "
+            + "Diagnostic SNPs) looked for columns where a set of sequences shares a base the others lack, and grouped the sequences "
+            + "by them with the default thresholds. It found 2 types: 3 AluY copies, and the 24 AluSx and AluJb copies together. The "
+            + "other 9 AluY copies share no such columns and stay uncoloured."
+    },
+    bicluster: {
+        name: '2D analysis',
+        file: 'examples/demo/alu_subfamilies.fa',
+        title: 'Alu copies (2D analysis example)',
+        place: { sel: '#biclusterComputeButton', how: 'title' },
+        run: async () => { computeAndShowBicluster(); },
+        note: "This is alu_subfamilies.fa from the examples/demo folder of the GitHub repository: 36 full-length Alu copies from human "
+            + "chromosome 1 (hg38, UCSC RepeatMasker), 12 each of AluY, AluSx and AluJb. \"Show 2D\" (Clustering menu, 2D analysis) drew "
+            + "rectangles over stretches where a set of rows shares a local pattern of bases; here most are conserved stretches shared "
+            + "by all 36 copies. The status line under the button lists them. Row order is not changed."
+    },
+    trim: {
+        name: 'Trimming',
+        file: 'examples/svk_k4.fa',
+        title: 'SINE copies (trimming example)',
+        place: { sel: '#previewTrimButton', how: 'title' },
+        // Preview only: the columns Trim would remove are painted on the Consensus row; nothing is deleted.
+        // 60/60/20: the values the panel shows on a fresh page (the "optimal" preset, createOptimalPreset)
+        run: async () => {
+            const set = (id, v) => { const e = el(id); if (e) e.value = v; };
+            set('leftGapInput', '60'); set('rightGapInput', '60'); set('edgeWindowInput', '20');
+            previewTrimming();
+        },
+        note: 'This is svk_k4.fa from the examples folder of the GitHub repository. "Preview" (Clustering menu, Trimming) measured the '
+            + 'gappy ends with Left 60 %, Right 60 % and Window 20, filled Keep, and painted the columns to be cut on the Consensus row. '
+            + 'Nothing was deleted: drag the coloured edges or edit Keep, then Trim.'
+    },
+    autocolour: {
+        name: 'Auto-Color by Similarity',
+        file: 'examples/demo/alu_subfamilies.fa',
+        title: 'Alu copies (auto-colour example)',
+        place: { sel: '#colourAutoButton', how: 'wrap' },
+        run: async () => {
+            if (el('colourSimilarityChars')) el('colourSimilarityChars').value = '4';   // the names start AluY, AluS, AluJ
+            autoColourBySimilarity();
+        },
+        note: "This is alu_subfamilies.fa from the examples/demo folder of the GitHub repository: 36 full-length Alu copies from human "
+            + "chromosome 1 (hg38, UCSC RepeatMasker), 12 each of AluY, AluSx and AluJb. \"Auto-Color by Similarity\" (Colour Names menu)"
+            + " compared the first 4 characters of the names (AluY, AluS, AluJ) and gave names that look alike one colour: 3 colours, 1"
+            + "2 names each. It reads the names only, not the sequences."
+    },
+    macse: {
+        name: 'Codon alignment (MACSE)',
+        file: 'examples/demo/cmah_primates.fa',
+        title: 'CMAH coding sequences of primates (MACSE example)',
+        place: { sel: '#macsePresetButton', how: 'wrap' },
+        run: async () => {
+            openMacsePreset(false);
+            await realignAll();
+        },
+        note: "This is cmah_primates.fa from the examples/demo folder of the GitHub repository: the CMAH coding sequence of chimpanzee,"
+            + " bonobo, gorilla, orangutan, macaque and human (GenBank). The human copy lacks 92 bases, an exon lost in human evolution"
+            + "; 92 is not a multiple of 3, so the reading frame shifts. \"Codon alignment (MACSE)\" (Alignment menu) aligned the sequenc"
+            + "es codon by codon with MACSE v2.07, which allows frameshifts: it reports one frameshift, in the human row only, and no i"
+            + "nternal stop. Details are in the browser console."
+    },
+    codon: {
+        name: 'Codon analysis',
+        file: 'examples/real/ncbi_NC_012920_human_mito.gb',
+        title: 'Human mitochondrial genome NC_012920 (codon analysis example)',
+        place: { sel: '#codonAnalysis', how: 'afterLabel' },
+        run: async () => {
+            const cb = el('codonAnalysis');
+            if (el('codonFrame')) el('codonFrame').value = 'auto';
+            if (cb && !cb.checked) { cb.checked = true; cb.dispatchEvent(new Event('change', { bubbles: true })); }
+            await _demoUntil(() => !!state._codonData, 15000);
+            // go to the first codon of the first CDS
+            const ph = state._codonData.phase && state._codonData.phase[0];
+            const first = ph ? ph.findIndex(p => p >= 0) : -1;
+            if (first > 0) requestAnimationFrame(() => _scrollToColumn(first));
+        },
+        note: 'This is the human mitochondrial genome (NCBI NC_012920, GenBank) from the examples folder of the GitHub repository. '
+            + 'Codon analysis (Display menu) took each CDS of the annotation in its own frame and strand, coloured the codon positions '
+            + 'and marked stop codons. The view starts at the first CDS.'
+    },
+    dotplot: {
+        name: 'Dot Plot',
+        file: 'examples/demo/alu_copy.fa',
+        title: 'One AluY copy (dot plot example)',
+        place: { sel: '#dotPlotDockClear', how: 'before' },
+        // the same call as the row menu's "Dot-plot (self)" on the first row
+        run: async () => {
+            const s = state.seqs[0];
+            const u = s.seq.replace(/[-. ]/g, '');
+            await openDotPlot(u, u, s.header, s.header, { rowIndexA: 0, rowIndexB: 0, alignedSeqA: s.seq, alignedSeqB: s.seq });
+            await _demoUntil(() => !_dotPlotState.computing, 30000);
+        },
+        note: "This is alu_copy.fa from the examples/demo folder of the GitHub repository: one AluY copy from human chromosome 1 (hg38 "
+            + "chr1:11,897,747-11,898,057). The dot plot compares it with itself (as \"Dot-plot (self)\" in the menu of a sequence name)."
+            + " The main diagonal is the sequence matching itself. Alu is made of two similar halves, so short lines appear off the dia"
+            + "gonal, about 135 positions away; the dense block at the end is the A-rich tail."
+    },
+    repeats: {
+        name: 'Repeat Finder',
+        file: 'examples/synthetic/synth_msa.fa',
+        title: 'Synthetic alignment (repeat finder example)',
+        place: { sel: '#repeatFinderMaxBtn', how: 'before' },
+        run: async () => {
+            openRepeatFinder(0, 'tandem');
+            const all = document.querySelector('input[name="repeatScope"][value="all"]');
+            if (all) { all.checked = true; all.dispatchEvent(new Event('change', { bubbles: true })); }
+            if (el('repeatMinLen')) el('repeatMinLen').value = '12';
+            if (el('repeatMaxDiv')) el('repeatMaxDiv').value = '15';
+            runRepeatAnalysis();
+            await _demoUntil(() => !_repeatJob, 60000);
+        },
+        note: 'This is synthetic/synth_msa.fa from the examples folder of the GitHub repository. The Repeat Finder (Actions menu, Repeats) '
+            + 'searched every sequence for tandem arrays of at least 12 bases with up to 15 % divergence. '
+            + 'The table lists each array; click a row to see it in the alignment.'
+    },
+    resites: {
+        name: 'Restriction Sites',
+        file: 'examples/real/ncbi_NC_012920_human_mito.gb',
+        title: 'Human mitochondrial genome NC_012920 (restriction sites example)',
+        place: { sel: '#reSitePopupBtn', how: 'after' },
+        enzymes: ['EcoRI', 'BamHI', 'HindIII'],
+        run: async () => {
+            renderRestrictionEnzymeList();
+            document.querySelectorAll('.re-cb').forEach(cb => { cb.checked = DEMOS.resites.enzymes.includes(cb.dataset.name); });
+            if (el('reSiteManualInput')) el('reSiteManualInput').value = '';
+            searchResEnzyme();
+            // go to the first site in the first row
+            const seq = state.seqs[0]?.seq || '';
+            let first = -1;
+            document.querySelectorAll('.re-cb:checked').forEach(cb => {
+                const re = restrictionSiteToRegex(cb.value);
+                const m = re ? new RegExp(re, 'i').exec(seq) : null;
+                if (m && (first < 0 || m.index < first)) first = m.index;
+            });
+            if (first > 0) requestAnimationFrame(() => _scrollToColumn(first));
+        },
+        note: 'This is the human mitochondrial genome (NCBI NC_012920, GenBank) from the examples folder of the GitHub repository. '
+            + 'Restriction Sites (Search menu) looked for EcoRI, BamHI and HindIII sites; each enzyme has its own highlight colour, '
+            + 'and the message line gives the number of sites. The view starts at the first site.'
+    },
+    reads: {
+        name: 'SAM/BAM reads',
+        file: 'examples/synthetic/synth_ref.fa',
+        reads: 'examples/synthetic/synth_reads.bam',
+        title: 'Synthetic reference (reads example)',
+        place: { sel: '#input-controls', how: 'append', label: 'SAM/BAM reads on a reference' },
+        // the reads come through ?reads= (the SAM/BAM button's loader), which has run before this
+        run: async () => { await _demoUntil(() => bamState.reads && bamState.reads.length > 0, 15000); },
+        note: 'This is synthetic/synth_ref.fa with the reads in synthetic/synth_reads.bam, from the examples folder of the GitHub repository. '
+            + 'The BAM went through the SAM/BAM button\'s loader, which matched it to the reference and opened the Reads view. '
+            + 'Bases that differ from the reference are coloured; insertions and deletions are marked.'
+    },
+    tree: {
+        name: 'Tree',
+        file: 'examples/demo/andricus_cytb.fa',
+        title: 'Andricus cytb and NUMT copies (tree example)',
+        place: { sel: '#treeBuilderCloseBtn', how: 'before' },
+        run: async () => {
+            const upgma = document.querySelector('input[name="treeMethod"][value="upgma"]');
+            if (upgma) upgma.checked = true;
+            openTreeBuilder();
+            await _demoUntil(() => el('treeBuilderModal')?.style.display !== 'none'
+                && !!(el('treeNewickOutput')?.value || el('treeNewickOutput')?.textContent), 30000);
+        },
+        note: "This is andricus_cytb.fa from the examples/demo folder of the GitHub repository: 15 cytochrome b sequences of two gall w"
+            + "asps, Andricus grossulariae and A. quercusramuli (GenBank JQ416366-JQ416415), 10 mitochondrial (mt) and 5 nuclear copies"
+            + " (NUMT). \"Tree\" (Actions menu) built a UPGMA tree from p-distances. The mitochondrial sequences of each species form the"
+            + "ir own clade; three NUMTs sit beside their own species' clade, and two (pan109, pan111) sit outside both."
+    }
+};
+

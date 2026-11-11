@@ -1,0 +1,458 @@
+[script.js lines 14506-14962 of ViewAlign fd8b8e4]
+function _setSeqNameLabel(nameEl, text) {
+    nameEl.textContent = '';
+    const t = document.createElement('span');
+    t.className = 'seq-name-text';
+    t.textContent = text;
+    nameEl.appendChild(t);
+}
+
+// Relabel every on-screen name cell of a row (Block mode repeats it once per block).
+function _relabelSeqNameCells(index) {
+    const seq = state.seqs[index];
+    if (!seq) return;
+    const n = effectiveNameLength();
+    const len = seq.seq.length;
+    document.querySelectorAll(`.seq-name[data-seq-index="${index}"]`).forEach(cell => {
+        if (cell.closest('.consensus-line, .scale-ruler-line')) return;
+        _setSeqNameLabel(cell, seq.header.length > n ? _truncName(seq.header, n) : seq.header);
+        cell.title = `${seq.header} (length: ${len})`;
+    });
+}
+
+// Applies a rename (undoable), relabels the DOM name cells, resizes a "No limit" name
+// column. Returns false when nothing changed.
+function _commitSeqRename(index, newName) {
+    // A FASTA name ends at the first space: "my seq" was saved as ">my seq" and came back, here and in any
+    // other program, as "my". Spaces become "_" and the message says so (owner 2026-11-11; GLM check Q15a).
+    const typed = String(newName || '').trim();
+    newName = typed.replace(/\s+/g, '_');
+    const spaced = newName !== typed;
+    if (!newName || !state.seqs[index] || newName === state.seqs[index].header) return false;
+    const oldName = state.seqs[index].header;
+    pushUndo('rename');
+    // A chromatogram stays keyed by the name the row was read under: the row remembers it (an undo
+    // snapshot copies the field, so Undo/Redo keep it right). The context menu lost "View
+    // Chromatogram..." after a rename (GLM audit cblk #12).
+    if (state.ab1Traces && !state.seqs[index].ab1Name && state.ab1Traces[oldName]) state.seqs[index].ab1Name = oldName;
+    state.seqs[index].header = newName;
+    state.seqs[index].fullHeader = newName;
+    _migrateColourMapping(oldName, newName);
+    _relabelSeqNameCells(index);
+    // "No limit" sizes the name column to the longest name, which may just have changed
+    if (el('nameLengthNoLimit')?.checked) {
+        applyNameLengthLive(effectiveNameLength());
+        if (isCanvasMode()) renderAlignment();   // Canvas sizes its name column when it renders
+    }
+    if (spaced) showMessage(`Renamed to "${newName}": spaces were replaced with _ , because a FASTA name ends at the first space`, 6000);
+    else showMessage('Sequence renamed', 1500);
+    return true;
+}
+
+function _startSeqNameEdit(nameSpan, index) {
+    // The sequence, not its row number: rows can move while the box is open
+    const obj = state.seqs[index];
+    if (!obj || nameSpan.querySelector('.seq-name-edit')) return;
+    hideTooltip();
+    const input = document.createElement('input');
+    input.type = 'text';
+    input.className = 'seq-name-edit';
+    input.value = obj.header;
+    input.spellcheck = false;
+    input.setAttribute('aria-label', 'Sequence name');
+    const label = nameSpan.querySelector('.seq-name-text');
+    if (label) label.style.visibility = 'hidden';
+    nameSpan.classList.add('renaming');
+    nameSpan.appendChild(input);
+    input.focus();
+    input.select();
+    let done = false;
+    const finish = (commit) => {
+        if (done) return;
+        done = true;
+        document.removeEventListener('mousedown', onOutside, true);
+        const newName = input.value.trim();
+        input.remove();
+        nameSpan.classList.remove('renaming');
+        if (label) label.style.visibility = '';
+        const row = state.seqs.indexOf(obj);
+        if (commit && row >= 0) _commitSeqRename(row, newName);
+    };
+    // Keys typed here are for the name only: none may reach the viewer's shortcuts
+    input.addEventListener('keydown', (e) => {
+        e.stopPropagation();
+        if (e.key === 'Enter') { e.preventDefault(); finish(true); }
+        else if (e.key === 'Escape') { e.preventDefault(); finish(false); }
+    });
+    input.addEventListener('keyup', e => e.stopPropagation());
+    input.addEventListener('keypress', e => e.stopPropagation());
+    // Clicks inside place the caret / select text; they must not start a row drag or selection
+    ['mousedown', 'click', 'dblclick'].forEach(t => input.addEventListener(t, e => e.stopPropagation()));
+    input.addEventListener('blur', () => finish(true));
+    const onOutside = (e) => { if (e.target !== input) finish(true); };
+    document.addEventListener('mousedown', onOutside, true);
+}
+
+// The residue spans of one row for columns start..end-1, as an HTML string.
+// Shared by createSequenceLine (whole row) and the windowed renderer's
+// in-place column patch (_patchRowColumns), so a span looks the same
+// whichever path made it.
+function _seqDataSpansHtml(index, start, end, standard, ambiguous, blackThresh, darkThresh, lightThresh, enableBlack, enableDark, enableLight, conservationData) {
+    const seq = state.seqs[index].seq;
+    const selectedCols = state.selectedColumns;
+    const htmlParts = [];
+    const colorScheme = getAlignmentColorScheme();
+    const effectiveColorScheme = getEffectiveColorScheme(colorScheme);
+    const renderConfig = {
+        blackThresh, darkThresh, lightThresh, enableBlack, enableDark, enableLight,
+        colorScheme, effectiveColorScheme
+    };
+
+    // Var-sites: check if breakpoints are active for this render
+    const showBrk = state._brkBeforePos && state._brkBeforePos.size > 0;
+    const brkBeforePos = state._brkBeforePos || new Set();
+    const brkInfo = state._brkInfo || {};
+
+    const ovCtx = _overlayRowCtx(index);
+    const fd = _foldDomInfo();
+    for (let pos = start; pos < end; pos++) {
+            if (fd && fd.before.has(pos)) htmlParts.push(_foldMarkerHtml(fd.before.get(pos)));
+            // Insert breakpoint marker before this position if needed
+            if (showBrk && brkBeforePos.has(pos)) {
+                const r = brkInfo[pos];
+                const title = `${r.count} column${r.count > 1 ? 's' : ''} hidden (positions ${r.start + 1}–${r.end + 1})`;
+                htmlParts.push(`<span class="col-breakpoint" data-break="${r.start}-${r.end}" title="${title}" style="pointer-events:none;">${_escapeHtml(brkStyle.symbol)}</span>`);
+            }
+            const base = seq[pos] || '-';
+            const baseUp = base.toUpperCase();
+            const baseClass = getResidueAnnotationClasses(base, standard, ambiguous, effectiveColorScheme);
+
+            const posData = conservationData[pos] || { hasData: false, hasValidCoverage: false };
+            let cls = applyConservationShadeClass(baseUp, posData, renderConfig);
+            if (fd && fd.hidden[pos]) cls += ' fold-hidden';
+
+            // Codon analysis classes built inline (avoids 160K-node DOM scan)
+            if (state._codonData && state._codonData.phase && state._codonData.phase[index]) {
+                const ph = state._codonData.phase[index][pos];
+                if (ph >= 0) cls += ' codon-p' + ph;
+            }
+            if (state._codonData && state._codonData.stops && state._codonData.stops[index]) {
+                if (state._codonData.stops[index].includes(pos)) cls += ' codon-stop';
+            }
+            if (state._codonData && state._codonData.frameShifts && state._codonData.frameShifts[index]) {
+                for (const fs of state._codonData.frameShifts[index]) {
+                    if (fs.pos === pos && fs.type === 'incomplete') {
+                        cls += ' codon-fs';
+                        break;
+                    }
+                    if (fs.pos === pos && fs.type === 'indel') {
+                        cls += ' codon-fs-internal';
+                        break;
+                    }
+                }
+            }
+            if (state._codonData && state._codonData.synNonSyn && state._codonData.synNonSyn[index]) {
+                if (state._codonData.synNonSyn[index][pos]) cls += ' codon-' + state._codonData.synNonSyn[index][pos];
+            }
+            if (state._diffColumns && state._diffColumns.has(pos)) {
+                cls += ' diff-highlight';
+            }
+            if (state.trimBoundaries) {
+                if (pos <= state.trimBoundaries.leftTrimEnd) cls += ' trim-left';
+                else if (pos >= state.trimBoundaries.rightTrimStart) cls += ' trim-right';
+            }
+
+            const colSelected = selectedCols.has(pos) ? ' column-selected' + (selectedCols.has(pos - 1) ? '' : ' col-sel-l') + (selectedCols.has(pos + 1) ? '' : ' col-sel-r') : '';
+            const ov = ovCtx.any ? residueOverlay(ovCtx, pos, base) : null;
+            if (!ov) {
+                htmlParts.push(`<span class="${cls}${baseClass ? ' ' + baseClass : ''}${colSelected}" data-pos="${pos}">${base}</span>`);
+                continue;
+            }
+            const ovc = _overlayClassList(ov);
+            let attrs = '';
+            if (ov.titles.length) attrs += ` title="${_escapeHtml(ov.titles.join(' | '))}"`;
+            if (ov.hit) attrs += ` data-search-hit="${ov.hit.className}"`;
+            if (ov.rep) attrs += ` data-repeat-hl="1"`;
+            htmlParts.push(`<span class="${cls}${baseClass ? ' ' + baseClass : ''}${colSelected}${ovc ? ' ' + ovc : ''}" data-pos="${pos}"${attrs}>${base}</span>`);
+        }
+    if (fd && end >= fd.len && fd.before.has(fd.len)) htmlParts.push(_foldMarkerHtml(fd.before.get(fd.len)));   // a fold at the end
+    return htmlParts.join('');
+}
+
+// The "sequence length" badge shown after a row's last column.
+function _seqLengthBadgeHtml(index) {
+    const gaplessPositions = _linkGapless(state.seqs[index]);
+    const gaplessLength = gaplessPositions[gaplessPositions.length - 1] || 0;
+    return `<span class="seq-length" title="Sequence length: ${gaplessLength} (gapless)">${gaplessLength}</span>`;
+}
+
+// Register a row's rendered spans for the selection features (skipped for
+// large view-only renders).
+function _registerRowSpans(index, dataSpan) {
+    if (state._enableSpanCache === false) return;
+    const spans = dataSpan.children;
+    for (let i = 0; i < spans.length; i++) {
+        const span = spans[i];
+        const pos = span.dataset.pos;
+        if (pos !== undefined) {
+            registerSpanInCache(index, parseInt(pos), span);
+        }
+    }
+}
+
+function createSequenceLine(index, start, end, nameLen, stickyNames, standard, ambiguous, blackThresh, darkThresh, lightThresh, enableBlack, enableDark, enableLight, showLength = false, conservationData) {
+    const lineDiv = document.createElement('div');
+    lineDiv.className = 'seq-line';
+    lineDiv.dataset.seqIndex = index;
+    const nameSpan = document.createElement('div');
+    nameSpan.className = `seq-name ${stickyNames ? '' : 'static'}`;
+    nameSpan.dataset.seqIndex = index;
+    nameSpan.title = `${state.seqs[index].fullHeader} (length: ${state.seqs[index].seq.length})`;
+    let displayName = state.seqs[index].header;
+    let nameLenInt = parseInt(nameLen, 10);
+    if (displayName.length > nameLenInt) {
+        // One "…" inside the column: "..." after nameLen characters overflowed it and showed
+        // only its first dot, stuck to the sequence
+        _setSeqNameLabel(nameSpan, _truncName(displayName, nameLenInt));
+        nameSpan.title = `${displayName} (length: ${state.seqs[index].seq.length})`;
+    } else {
+        _setSeqNameLabel(nameSpan, displayName);
+        nameSpan.title = `${displayName} (length: ${state.seqs[index].seq.length})`;
+    }
+    nameSpan.draggable = false;
+    // Row selection (Ctrl/Shift on seq-name) must run in capture phase only.
+    // Per-line bubble handlers must not also toggle or the selection cancels out.
+    nameSpan.addEventListener('mousedown', (e) => {
+        if (e.button !== 0) return;
+        if (isCtrlModifier(e) || e.shiftKey || isAltModifier(e)) return;
+        _startRowReorderDrag(e, index);
+        e.preventDefault();
+        e.stopPropagation();
+    });
+    // Tooltip: show truncated full header on hover (avoid OS tooltip delay)
+    nameSpan.addEventListener('mouseover', () => {
+        if (nameSpan.classList.contains('renaming')) return;   // the box shows the name
+        const full = state.seqs[index].fullHeader || state.seqs[index].header;
+        const maxLen = 120;
+        const text = (full.length > maxLen) ? (full.slice(0, maxLen - 1) + '...') : full;
+        showTooltipAt(text, nameSpan);
+    });
+    nameSpan.addEventListener('mouseout', () => {
+        hideTooltip();
+    });
+    // Double-click renames in place: an input laid over the name cell (the cell keeps its
+    // size, so nothing shifts), Enter or clicking away saves, Esc cancels. Saving relabels the
+    // name cells of that row instead of redrawing the alignment (~1.4 s on big files).
+    nameSpan.addEventListener('dblclick', (e) => {
+        e.stopPropagation();
+        _startSeqNameEdit(nameSpan, index);
+    });
+    lineDiv.addEventListener('drop', handleDrop);
+    lineDiv.appendChild(nameSpan);
+    const dataSpan = document.createElement('div');
+    dataSpan.className = 'seq-data';
+    // This 'click' handler itself does nothing - plain click is handled on the earlier
+    // document-level mousedown (handleGeneDocEditMouseDown), which now enters GeneDoc
+    // residue-edit mode on a plain click; Ctrl+Click selection is also handled by mousedown.
+    dataSpan.addEventListener('click', (e) => {
+        if (e.ctrlKey || e.metaKey) return; // handled by mousedown
+        // Do nothing here - no copy, no selection, no-op by design
+    });
+
+    // *** PERFORMANCE: build one HTML string, set innerHTML once ***
+    dataSpan.innerHTML = _seqDataSpansHtml(index, start, end, standard, ambiguous, blackThresh, darkThresh, lightThresh, enableBlack, enableDark, enableLight, conservationData)
+        + (showLength ? _seqLengthBadgeHtml(index) : '');   // length badge only after the last block
+    _registerRowSpans(index, dataSpan);
+
+    lineDiv.appendChild(dataSpan);   // repeats are part of the residue overlay above
+    if (state.selectedRows.has(index)) {
+        lineDiv.classList.add('selected');
+    }
+    return lineDiv;
+}
+// A consensus letter is upper case when its column is conserved at or above the
+// threshold, lower case otherwise. Shared by the full render and the in-place reshade so
+// the two cannot drift apart.
+function consensusDisplayBase(base, pos, threshold) {
+    if (base === '-' || base === '.') return base;
+    const baseUp = base.toUpperCase();
+    const col = state.seqs.map(s => (s.seq[pos] || '-').toUpperCase());
+    const nonGapCol = col.filter(b => b !== '-' && b !== '.');
+    if (nonGapCol.length === 0) return base;
+    const counts = {};
+    nonGapCol.forEach(b => counts[b] = (counts[b] || 0) + 1);
+    const maxCount = Math.max(...Object.values(counts));
+    return (maxCount / col.length) >= threshold ? baseUp : baseUp.toLowerCase();
+}
+
+// consensusDisplayBase's rule for Canvas mode: is the column's majority base at or above the
+// consensus threshold (fraction of ALL rows, gaps included, as in the DOM row)?
+function _canvasConsensusUpper(base, pos, threshold) {
+    const seqs = state.seqs, n = seqs.length;
+    const counts = Object.create(null);
+    let max = 0, nonGap = 0;
+    for (let i = 0; i < n; i++) {
+        const c = (seqs[i].seq[pos] || '-').toUpperCase();
+        if (c === '-' || c === '.') continue;
+        nonGap++;
+        const k = (counts[c] = (counts[c] || 0) + 1);
+        if (k > max) max = k;
+    }
+    if (nonGap === 0) return true;
+    return max / n >= threshold;
+}
+
+// The consensus column tooltip: coverage and base percentages of column pos (Full/Block spans and the Canvas row)
+function _consensusTooltipHtml(pos, consensus) {
+    const totalSeqs = state.seqs.length || 1;
+    const colAll = state.seqs.map(s => s.seq[pos] || '-');
+    const nonGaps = colAll.filter(b => b !== '-' && b !== '.');
+    const coveragePct = Math.round((nonGaps.length / totalSeqs) * 100);
+    const counts = {};
+    for (const ch of nonGaps) {
+        const up = String(ch).toUpperCase();
+        const norm = up === 'U' ? 'T' : up;
+        counts[norm] = (counts[norm] || 0) + 1;
+    }
+    const denom = nonGaps.length || 1;
+    const entries = Object.entries(counts)
+        .filter(([b,_]) => b !== '-' && b !== '.')
+        .sort((a,b) => b[1]-a[1]);
+    const colorMap = { A:'#27ae60', C:'#2980b9', G:'#d35400', T:'#c0392b', N:'#7f8c8d' };
+    const consChar = consensus[pos] || '-';
+    const consGap = consChar === '-' || consChar === '.' || consChar === ' ';
+    let ungapped = 0;
+    for (let i = 0; i <= pos && i < consensus.length; i++) {
+        const c = consensus[i];
+        if (c && c !== '-' && c !== '.' && c !== ' ') ungapped++;
+    }
+    const ungappedHtml = consGap
+        ? (ungapped > 0
+            ? `<strong>—</strong> <span class="raw">(gap after ${ungapped})</span>`
+            : `<strong>—</strong> <span class="raw">(leading gap)</span>`)
+        : `<strong>${ungapped}</strong>`;
+    let html = `<div class="coord-row">aln <strong>${pos + 1}</strong> · ungapped ${ungappedHtml}</div>`;
+    html += `<div class="cov-row">Coverage: <strong>${coveragePct}%</strong> (${nonGaps.length}/${totalSeqs})</div>`;
+    if (entries.length === 0) {
+        html += '<div class="freq-row"><em>No bases</em></div>';
+    } else {
+        entries.forEach(([base,count]) => {
+            const pct = Math.round((count/denom)*100);
+            const color = colorMap[base] || '#555';
+            html += `<div class="freq-row"><span class="base" style="background:${color}">${base}</span><span class="pct">${pct}%</span><span class="raw">(${count})</span></div>`;
+        });
+    }
+    // Additional counts for ambiguous, etc.
+    const ambigBases = Object.keys(counts).filter(b => 'RYMKSWHBVD'.includes(b));
+    if (ambigBases.length) {
+        html += `<div class="freq-row"><span class="base" style="background:#8e44ad">Ambig</span><span class="pct">${ambigBases.length}</span></div>`;
+    }
+    return html;
+}
+function addConsensusLine(parent, consensus, start, end, nameLen, stickyNames, blackThresh, darkThresh, lightThresh, enableBlack, enableDark, enableLight, showLength = false, position = 'bottom', options = {}) {
+    const consLine = document.createElement('div');
+    consLine.className = `seq-line consensus-line consensus-${position}`;
+    consLine.dataset.seqIndex = String(CONSENSUS_ROW_INDEX);
+    const consName = document.createElement('div');
+    consName.className = `seq-name ${stickyNames ? '' : 'static'}`;
+    consName.textContent = 'Consensus';
+    consLine.appendChild(consName);
+    const dataSpan = document.createElement('div');
+    dataSpan.className = 'seq-data';
+
+    // Get trim boundaries if available
+    const trimBounds = state.trimBoundaries || {};
+    const leftTrimEnd = trimBounds.leftTrimEnd !== undefined ? trimBounds.leftTrimEnd : -1;
+    const rightTrimStart = trimBounds.rightTrimStart !== undefined ? trimBounds.rightTrimStart : Infinity;
+
+    const showBrk = state._brkBeforePos && state._brkBeforePos.size > 0;
+    const brkBeforePos = state._brkBeforePos || new Set();
+    const brkInfo = state._brkInfo || {};
+    const fd = _foldDomInfo();
+
+    for (let pos = start; pos < end; pos++) {
+        if (fd && fd.before.has(pos)) dataSpan.appendChild(_foldMarkerEl(fd.before.get(pos)));
+        // Insert breakpoint marker before this position if var-sites active
+        if (showBrk && brkBeforePos.has(pos)) {
+            const r = brkInfo[pos];
+            const brkSpan = document.createElement('span');
+            brkSpan.className = 'col-breakpoint';
+            brkSpan.dataset.break = `${r.start}-${r.end}`;
+            brkSpan.title = `${r.count} column${r.count > 1 ? 's' : ''} hidden (positions ${r.start + 1}\u2013${r.end + 1})`;
+            brkSpan.style.pointerEvents = 'none';
+            brkSpan.textContent = brkStyle.symbol;
+            dataSpan.appendChild(brkSpan);
+        }
+        const base = pos < consensus.length ? consensus[pos] : '-';
+        const baseClass = getResidueAnnotationClasses(base);
+
+        // Determine display case from column conservation (consensus STRING stays uppercase)
+        const displayBase = options.deferConservation
+            ? base
+            : consensusDisplayBase(base, pos, clampConsensusPercent(el('consensusThreshold').value) / 100);
+
+        const span = document.createElement('span');
+        span.className = baseClass;
+        if (fd && fd.hidden[pos]) span.classList.add('fold-hidden');
+        span.dataset.pos = String(pos);
+        span.textContent = displayBase;
+
+        // Match the per-sequence rows: variable columns carry .diff-highlight so that
+        // Highlight-diffs / Variable-sites-only CSS treats the consensus row identically.
+        // Without this the var-sites rule hides every consensus residue, leaving only
+        // the breakpoint markers visible.
+        if (state._diffColumns && state._diffColumns.has(pos)) {
+            span.classList.add('diff-highlight');
+        }
+        // no .column-selected: a column selection covers the sequences, not the consensus
+
+        // Apply trim region coloring
+        if (pos <= leftTrimEnd) {
+            span.classList.add('trim-left');
+            if (pos === leftTrimEnd) span.classList.add('trim-edge-left');
+            span.title = 'Will be removed (left end). Drag to move this border.';
+        } else if (pos >= rightTrimStart) {
+            span.classList.add('trim-right');
+            if (pos === rightTrimStart) span.classList.add('trim-edge-right');
+            span.title = 'Will be removed (right end). Drag to move this border.';
+        }
+        // Soft trim visual: dim columns excluded from clustering
+        if (state.softTrimBoundaries && !state.trimBoundaries) {
+            const stl = state.softTrimBoundaries.leftTrimEnd;
+            const str = state.softTrimBoundaries.rightTrimStart;
+            if (pos <= stl || pos >= str) {
+                span.classList.add('soft-trim-col');
+                if (!span.title) span.title = 'Excluded from clustering (soft trim)';
+            }
+        }
+
+        // Tooltip on hover: show coverage and per-nucleotide percentages for this column
+        span.addEventListener('mouseover', () => {
+            const html = _consensusTooltipHtml(pos, consensus);
+            showTooltipAt(html, span, {html:true, className:'consensus-box'});
+        });
+        span.addEventListener('mouseout', () => hideTooltip());
+        dataSpan.appendChild(span);
+        if (state._enableSpanCache !== false) {
+            registerSpanInCache(CONSENSUS_ROW_INDEX, pos, span);
+        }
+    }
+    if (fd && end >= fd.len && fd.before.has(fd.len)) dataSpan.appendChild(_foldMarkerEl(fd.before.get(fd.len)));
+    // Apply repeat highlights to consensus line too
+    if (state.repeatHighlights && state.repeatHighlights.size > 0) {
+        _applyLineHighlights(dataSpan);
+    }
+    // Add consensus length at the end (only for last block and using gapless length)
+    if (showLength) {
+        const lengthSpan = document.createElement('span');
+        lengthSpan.className = 'seq-length';
+        // For consensus, count non-gap characters
+        const consensusStr = Array.isArray(consensus) ? consensus.join('') : String(consensus || '');
+        const gaplessLength = (consensusStr.match(/[^-.\s]/g) || []).length;
+        lengthSpan.textContent = gaplessLength;
+        lengthSpan.title = `Consensus length: ${gaplessLength} (gapless)`;
+        dataSpan.appendChild(lengthSpan);
+    }
+    consLine.appendChild(dataSpan);
+    parent.appendChild(consLine);
+}

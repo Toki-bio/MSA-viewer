@@ -1,0 +1,377 @@
+[script.js lines 38883-39258 of ViewAlign fd8b8e4]
+function _findTSD(seqs, mode, params) {
+    const results = [];
+    const aliLen = _maxOf(seqs, seqObj => seqObj.seq.length);
+    const minTsdLen = params.minLen || 4;
+    const maxTsdLen = params.maxLen || 20;
+    const maxDiv = (Number.isFinite(params.maxDiv) ? params.maxDiv : 20) / 100;
+    const flankSize = params.flankSize || 30;
+    const boundaries = _findSineBoundaryColumns(seqs, mode, params, aliLen);
+    // A body from the first to the last column leaves no flank in any row. Every copy was then reported as
+    // "copy truncated or flank all gaps"; the results now say why (e.g. 2 rows alike in their flanks too, or a
+    // reference row that includes its flanks)
+    const noUpCols = mode !== 'manual' && boundaries.leftBoundary <= 0;
+    const noDownCols = mode !== 'manual' && boundaries.rightBoundary >= aliLen - 1;
+    if (noUpCols || noDownCols) {
+        const ends = noUpCols && noDownCols ? 'first and last columns' : noUpCols ? 'first column' : 'last column';
+        const side = noUpCols && noDownCols ? '5′ or 3′' : noUpCols ? '5′' : '3′';
+        boundaries.flankNote = `the SINE body found (columns ${boundaries.leftBoundary + 1}–${boundaries.rightBoundary + 1}) reaches the alignment's ${ends}, so no row has a ${side} flank to search. ` +
+            `This happens when the copies agree in their flanks too (${seqs.length} row${seqs.length === 1 ? '' : 's'} here) or the reference row includes its flanks; set the SINE body under Manual`;
+    }
+
+    const misses = [];   // copies searched without a TSD, with the reason (shown in the results)
+    const skipped = [];  // rows not searched (a gap-padded reference / consensus row), with the reason (shown too)
+    for (let seqIndex = 0; seqIndex < seqs.length; seqIndex++) {
+        if (_isTsdReferenceRow(seqs[seqIndex]) && _tsdGapFraction(seqs[seqIndex].seq) >= 0.2) {
+            skipped.push({ seqIndex, obj: seqs[seqIndex], seqName: seqs[seqIndex].header, reason: 'not searched: named as a reference / consensus row, and gap-padded (no flanks)' });
+            continue;
+        }
+        const seq = seqs[seqIndex].seq;
+        let upstreamWindow;
+        let downstreamWindow;
+        let boundaryIndex = 0;   // first residue of downstreamWindow past the SINE body
+
+        if (mode === 'manual') {
+            upstreamWindow = _collectUngappedBasesWithColumns(seq, boundaries.upStart, boundaries.upEnd);
+            downstreamWindow = _collectUngappedBasesWithColumns(seq, boundaries.downStart, boundaries.downEnd);
+        } else {
+            const upstreamCollected = _collectUngappedBasesWithColumns(seq, Math.max(0, boundaries.leftBoundary - flankSize - maxTsdLen - 6), boundaries.leftBoundary - 1);
+            const upstreamStart = Math.max(0, upstreamCollected.bases.length - flankSize);
+            upstreamWindow = _sliceCollectedWindow(upstreamCollected, upstreamStart, upstreamCollected.bases.length - upstreamStart);
+            const downstreamEndCol = Math.min(aliLen - 1, boundaries.rightBoundary + flankSize + maxTsdLen + 6);
+            downstreamWindow = _collectUngappedBasesWithColumns(seq, Math.max(0, boundaries.rightBoundary - 40), downstreamEndCol);
+            boundaryIndex = downstreamWindow.columns.findIndex(c => c > boundaries.rightBoundary);
+            if (boundaryIndex < 0) boundaryIndex = downstreamWindow.bases.length;
+        }
+
+        const upShort = upstreamWindow.bases.length < minTsdLen, downShort = downstreamWindow.bases.length - boundaryIndex < minTsdLen;
+        if (upShort || downShort) {
+            // both sides named when both are short (only the 5' side was); a body reaching the alignment's end is said
+            // to be the cause (it was blamed on the copy)
+            // each side its own cause: a body from column 1 was said to reach "the end", and a copy's own empty 3' flank
+            // was blamed on the body too (GLM db2 #13)
+            const side = upShort && downShort ? '5′ and 3′' : upShort ? '5′' : '3′';
+            const upWhy = noUpCols ? 'the SINE body found reaches the alignment\'s first column' : 'copy truncated or flank all gaps';
+            const downWhy = noDownCols ? 'the SINE body found reaches the alignment\'s last column' : 'copy truncated or flank all gaps';
+            const why = !(upShort && downShort) ? (upShort ? upWhy : downWhy)
+                : noUpCols && noDownCols ? 'the SINE body found reaches the end of the alignment on both sides'
+                : upWhy === downWhy ? upWhy : `5′: ${upWhy}; 3′: ${downWhy}`;
+            misses.push({ seqIndex, obj: seqs[seqIndex], seqName: seqs[seqIndex].header, reason: `no ${side} flank bases next to the SINE body (${why})` });
+            continue;
+        }
+        const bestTsd = _findBestTsdInFlanks(upstreamWindow, downstreamWindow, boundaries.rightBoundary, minTsdLen, maxTsdLen, maxDiv, boundaryIndex, mode !== 'manual', flankSize);
+        if (!bestTsd) {
+            misses.push({ seqIndex, obj: seqs[seqIndex], seqName: seqs[seqIndex].header, reason: `no pair of ${minTsdLen}–${maxTsdLen} bp with ≤${Math.round(maxDiv * 100)}% mismatch near the SINE ends` });
+            continue;
+        }
+
+        const upFirst = bestTsd.upCols[0] ?? boundaries.upStart;
+        const upLast = bestTsd.upCols[bestTsd.upCols.length - 1] ?? boundaries.upEnd;
+        const downFirst = bestTsd.downCols[0] ?? boundaries.downStart;
+        const downLast = bestTsd.downCols[bestTsd.downCols.length - 1] ?? boundaries.downEnd;
+        // Tied to the sequence and its residues, not to a row and columns: the results table stays
+        // correct after rows are moved or deleted and after columns are inserted
+        const resNum = _residueNumbers(seq);
+        results.push({
+            seqName: seqs[seqIndex].header,
+            seqIndex,
+            obj: seqs[seqIndex],
+            upRes: bestTsd.upCols.map(c => resNum[c]).filter(n => n >= 0),
+            downRes: bestTsd.downCols.map(c => resNum[c]).filter(n => n >= 0),
+            tsdLen: bestTsd.length,
+            upTSD: bestTsd.upSeq,
+            downTSD: bestTsd.downSeq,
+            divergence: (bestTsd.divergence * 100).toFixed(1),
+            mismatches: bestTsd.mismatches,
+            upCols: `${upFirst + 1}-${upLast + 1}`,
+            downCols: `${downFirst + 1}-${downLast + 1}`,
+            upPositions: bestTsd.upCols.slice(),
+            downPositions: bestTsd.downCols.slice(),
+            upFlank: _tsdFlanks(seq, bestTsd.upCols),
+            downFlank: _tsdFlanks(seq, bestTsd.downCols),
+            boundary: boundaries.label,
+            downstreamOffset: downFirst - (boundaries.rightBoundary + 1)
+        });
+    }
+    results.misses = misses;
+    results.skipped = skipped;
+    results.boundaries = boundaries;
+    return results;
+}
+
+function runRepeatAnalysis() {
+    if (!state.seqs || state.seqs.length === 0) {
+        showMessage('No sequences loaded', 2000);
+        return;
+    }
+    const resultsEl = document.getElementById('repeatResults');
+    if (!resultsEl) return;
+    const mode = document.querySelector('input[name="repeatMode"]:checked')?.value || 'tandem';
+    if (mode === 'tsd') {
+        runTsdAnalysis();
+        return;
+    }
+    const scopeRadio = document.querySelector('input[name="repeatScope"]:checked');
+    const scope = scopeRadio ? scopeRadio.value : 'single';
+
+    // "Selected rows" with nothing selected used to search the (hidden) one-sequence choice without saying so
+    if (scope === 'selected' && !(state.selectedRows && state.selectedRows.size)) {
+        _lastRepeatResults = [];
+        _lastRepeatView = null;
+        resultsEl.textContent = 'No rows are selected: select rows in the alignment first (click a name; Ctrl+click adds), or search One sequence or All.';
+        return;
+    }
+
+    let targets = [];
+    if (scope === 'all') {
+        state.seqs.forEach((s, i) => targets.push({ index: i, seq: s.seq.replace(/[-. ]/g, ''), name: s.header, fullSeq: s.seq }));
+    } else if (scope === 'selected' && state.selectedRows.size > 0) {
+        Array.from(state.selectedRows).sort((a,b)=>a-b).forEach(i => {
+            const s = state.seqs[i];
+            targets.push({ index: i, seq: s.seq.replace(/[-. ]/g, ''), name: s.header, fullSeq: s.seq });
+        });
+    }
+    if (targets.length === 0) {
+        const si = _repeatFinderCurrentRow();
+        if (si < 0) {
+            const gone = _repeatFinderSeqObj?.header || 'The chosen sequence';
+            _fillRepeatFinderSeqSelect(0);
+            _lastRepeatResults = [];
+            _lastRepeatView = null;
+            _repeatResultsShown = null;
+            resultsEl.textContent = `${gone} is no longer in the alignment: choose a sequence in the list (it now shows the current rows), then press Find.`;
+            return;
+        }
+        targets = [{ index: si, seq: state.seqs[si]?.seq.replace(/[-. ]/g, '') || '', name: state.seqs[si]?.header || '', fullSeq: state.seqs[si]?.seq || '' }];
+    }
+
+    // clamp to the field's own min/max and show the value used in the field
+    const num = (id, dflt) => {
+        const e = document.getElementById(id);
+        let v = parseInt(e?.value, 10);
+        if (!Number.isFinite(v)) v = dflt;
+        const lo = parseFloat(e?.min), hi = parseFloat(e?.max);
+        if (Number.isFinite(lo)) v = Math.max(lo, v);
+        if (Number.isFinite(hi)) v = Math.min(hi, v);
+        if (e && e.value !== String(v)) e.value = String(v);
+        return v;
+    };
+    // an empty field is the mode's default (it fell back to 10 in Tandem too, and wrote it into the field; GLM m307 #11)
+    const minLen = num('repeatMinLen', mode === 'tandem' ? 20 : 10);
+    const maxDiv = num('repeatMaxDiv', 15);
+    const protein = isProteinAlignment();
+    const unit = _repeatUnitWord();
+
+    // the rows as they are now: a row moved or deleted while the search runs keeps its results tied to its sequence
+    targets.forEach(t => { t.obj = state.seqs[t.index]; });
+    _startRepeatJob({ resultsEl, mode, scope, targets, minLen, maxDiv, protein, unit });
+}
+
+/*
+ * A Direct, Inverted or Tandem search runs in slices of about REPEAT_SLICE_MS that give the browser back its tab between
+ * them (owner's decision 2026-10-31): "Searching sequence k of M..." with a bar, Pause/Resume and Cancel in the results
+ * area, Find disabled. Until v310 the whole search ran in one callback: a 25 kb low-complexity row held the tab for
+ * 2.6-5.7 s, and Tandem All on 200 rows of 50 kb for about 45 s (then stopped by TANDEM_TOTAL_WORK_LIMIT).
+ * - The searches are generators (_findRepeatsSteps, _findTandemRepeatsSteps) run here a few ms at a time; run at once
+ *   (_findRepeats) they give the same results.
+ * - Cancel keeps what was found: the sequences searched, and the part of the current one searched so far, and says so.
+ * - A new file, closing the window, another window taking its place or another mode abandons the search: nothing of it
+ *   is shown afterwards (_abortRepeatJob).
+ */
+const REPEAT_SLICE_MS = 20;
+let _repeatJob = null;
+let _repeatJobStats = null;   // the last search's slices: { slices, maxSliceMs, ms } (tests and timings)
+const _repeatNextTask = (() => {
+    // a message to itself runs straight after the browser's own work (setTimeout(0) waits at least 4 ms once nested)
+    let ch = null;
+    const queue = [];
+    return (fn) => {
+        if (typeof MessageChannel === 'undefined') { setTimeout(fn, 0); return; }
+        if (!ch) {
+            ch = new MessageChannel();
+            ch.port1.onmessage = () => { const f = queue.shift(); if (f) f(); };
+        }
+        queue.push(fn);
+        ch.port2.postMessage(0);
+    };
+})();
+
+function _setRepeatRunning(running) {
+    const btn = document.getElementById('repeatRunBtn');
+    if (btn) {
+        btn.disabled = running;
+        btn.title = running ? 'A search is running: pause or cancel it below' : 'Search with the current settings';
+    }
+}
+
+// Abandon a running search without showing anything of it; msg, if given, replaces its progress line
+function _abortRepeatJob(msg) {
+    const job = _repeatJob;
+    if (!job) return false;
+    job.aborted = true;
+    _repeatJob = null;
+    _setRepeatRunning(false);
+    if (msg && job.resultsEl && job.resultsEl.querySelector('.rf-progress')) job.resultsEl.textContent = msg;
+    return true;
+}
+
+function _startRepeatJob(o) {
+    _abortRepeatJob();
+    const { resultsEl, mode, targets } = o;
+    const M = targets.length;
+    const job = { ...o, M, i: 0, gen: null, frac: 0, paused: false, stop: { now: false }, cancelled: false,
+        allResults: [], notes: [], displayName: '', totalLen: 0, done: 0, partial: false, groups: [],
+        t0: performance.now(), slices: 0, maxSliceMs: 0 };
+    _repeatJob = job;
+    _setRepeatRunning(true);
+    resultsEl.innerHTML = '';
+    const box = document.createElement('div');
+    box.className = 'rf-progress';
+    const text = document.createElement('span');
+    text.className = 'rf-progress-text';
+    const bar = document.createElement('progress');
+    bar.className = 'rf-progress-bar';
+    bar.max = 1; bar.value = 0;
+    const pauseBtn = document.createElement('button');
+    pauseBtn.type = 'button'; pauseBtn.className = 'rf-btn'; pauseBtn.id = 'repeatPauseBtn';
+    pauseBtn.textContent = 'Pause'; pauseBtn.title = 'Pause the search (Resume goes on where it stopped)';
+    const cancelBtn = document.createElement('button');
+    cancelBtn.type = 'button'; cancelBtn.className = 'rf-btn'; cancelBtn.id = 'repeatCancelBtn';
+    cancelBtn.textContent = 'Cancel'; cancelBtn.title = 'Stop the search and show what was found so far';
+    box.append(text, ' ', bar, ' ', pauseBtn, ' ', cancelBtn);
+    resultsEl.appendChild(box);
+    const progress = () => {
+        const f = Math.min(1, (job.i + (job.gen ? job.frac : 0)) / Math.max(1, M));
+        const pct = Math.floor(f * 100);
+        const k = Math.min(job.i + 1, M);
+        const t = targets[Math.min(job.i, M - 1)];
+        const what = M > 1 ? `sequence ${k} of ${M}` : (t?.name || 'the sequence');
+        text.textContent = job.paused ? `Paused: ${what}, ${pct} % done. ` : `Searching ${what} (${mode})… ${pct} % `;
+        bar.value = f;
+    };
+    job.progress = progress;
+    pauseBtn.addEventListener('click', () => {
+        if (_repeatJob !== job) return;
+        job.paused = !job.paused;
+        pauseBtn.textContent = job.paused ? 'Resume' : 'Pause';
+        pauseBtn.title = job.paused ? 'Go on with the search' : 'Pause the search (Resume goes on where it stopped)';
+        progress();
+        if (!job.paused) _repeatNextTask(() => _repeatJobStep(job));
+    });
+    cancelBtn.addEventListener('click', () => {
+        if (_repeatJob !== job) return;
+        job.stop.now = true;
+        job.cancelled = true;
+        cancelBtn.disabled = true;
+        pauseBtn.disabled = true;
+        text.textContent = 'Stopping… ';
+        if (job.paused) { job.paused = false; _repeatNextTask(() => _repeatJobStep(job)); }
+    });
+    progress();
+    // the progress line is painted before the first slice
+    setTimeout(() => _repeatJobStep(job), 0);
+}
+
+function _repeatJobStep(job) {
+    if (_repeatJob !== job || job.paused) return;
+    const t0 = performance.now();
+    try {
+        while (performance.now() - t0 < REPEAT_SLICE_MS) {
+            if (!job.gen) {
+                while (job.i < job.M && !job.targets[job.i].seq) job.i++;
+                if (job.i >= job.M || job.stop.now) { _finishRepeatJob(job); return; }
+                const t = job.targets[job.i];
+                // Direct/Inverted: pairs inside microsatellites grouped by unit (owner 2026-10-31, B2)
+                job.gen = (job.mode === 'tandem' ? _findRepeatsSteps : _findRepeatsGroupedSteps)(t.seq, job.minLen, job.maxDiv, job.mode, { protein: job.protein, stop: job.stop });
+                job.frac = 0;
+            }
+            const r = job.gen.next();
+            if (r.done) {
+                _collectRepeatJobRow(job, job.targets[job.i], r.value);
+                job.gen = null;
+                job.i++;
+            } else job.frac = r.value;
+        }
+    } catch (e) {
+        _repeatJob = null;
+        _setRepeatRunning(false);
+        job.resultsEl.textContent = `Error: ${e.message}`;
+        return;
+    }
+    const dt = performance.now() - t0;
+    job.slices++;
+    if (dt > job.maxSliceMs) job.maxSliceMs = dt;
+    if (!job.stop.now) job.progress();
+    _repeatNextTask(() => _repeatJobStep(job));
+}
+
+// one sequence's results, mapped to alignment columns, and its notes
+function _collectRepeatJobRow(job, t, seqResults) {
+    const { mode, unit, minLen, maxDiv } = job;
+    const where = job.M > 1 ? ` in ${t.name}` : '';
+    if (seqResults.stoppedByUser) job.partial = true; else job.done++;
+    if (!job.displayName) job.displayName = t.name;
+    job.totalLen += t.seq.length;
+    const notes = job.notes;
+    const gs2al = [];
+    let gs = 0;
+    for (let c = 0; c < t.fullSeq.length; c++) {
+        if (!' -.'.includes(t.fullSeq[c])) { gs2al[gs++] = c; }
+    }
+    if (seqResults.rowsTotal != null) {   // grouped Direct/Inverted: rows are groups and pairs
+        if (seqResults.rowsTotal > seqResults.rowsShown) notes.push(`showing the ${seqResults.rowsShown} longest of ${seqResults.rowsTotal}${where}`);
+    } else if (seqResults.total > seqResults.length) notes.push(`showing the ${seqResults.length} longest of ${seqResults.total}${where}`);
+    if (seqResults.stoppedByUser) {
+        if (mode === 'tandem') notes.push(`stopped by you${where}: units up to ${seqResults.maxUnit} ${unit} searched`);
+        else notes.push(`stopped by you${where} at ${seqResults.searchedTo ?? t.seq.length} of ${t.seq.length} ${unit}`);
+    } else if (seqResults.searchedTo != null) notes.push(`search stopped at ${seqResults.searchedTo} of ${t.seq.length} ${unit}${where} (work limit; low-complexity sequence)`);
+    if (seqResults.unitLimited) notes.push(`units up to ${seqResults.maxUnit} ${unit} searched${where} (work limit; long sequence)`);
+    if (seqResults.seedLimited && !notes.some(x => /exact run of/.test(x))) notes.push(`at ${minLen} ${unit} and ${maxDiv}% divergence, copies that share no exact run of ${seqResults.seedLimited} ${unit} can be missed (raise Min length or lower Max divergence)`);
+    const row = state.seqs.indexOf(t.obj);
+    // this sequence's microsatellite groups (B2), their arrays in alignment columns; a pair's .group is the group's index
+    const gidOf = new Map();
+    if (seqResults.rowsTotal != null) {
+        job.ungroupedTotal = (job.ungroupedTotal || 0) + seqResults.rowsTotal - (seqResults.groupsTotal || 0);
+        job.groupedPairs = (job.groupedPairs || 0) + (seqResults.groupedPairs || 0);
+        job.rowsTotal = (job.rowsTotal || 0) + seqResults.rowsTotal;
+        for (const g of seqResults.groups || []) {
+            const arrays = g.arrays.map(A => [gs2al[A.start] ?? A.start, (gs2al[A.end - 1] ?? (A.end - 1)) + 1]);
+            gidOf.set(g.key, job.groups.length);
+            job.groups.push({ id: job.groups.length, unit: g.unit, unitLen: g.unitLen, n: g.n, longest: g.longest, bp: g.bp,
+                arrays, seqIndex: row >= 0 ? row : t.index, obj: t.obj, seqName: t.name });
+        }
+    }
+    for (const r of seqResults) {
+        if (r.groupKey !== undefined) r.group = gidOf.get(r.groupKey);
+        r.seqIndex = row >= 0 ? row : t.index;
+        r.obj = t.obj;
+        r.seqName = t.name;
+        if (mode === 'tandem') {
+            const sG = r.start;
+            r.start = (sG >= 0 && sG < gs2al.length) ? (gs2al[sG] ?? r.start) : r.start;
+            const eG = r.end - 1;
+            r.end = (eG >= 0 && eG < gs2al.length && gs2al[eG] !== undefined) ? gs2al[eG] + 1 : r.end;
+        } else {
+            const oL = r.length;
+            const gA = r.posA;
+            r.posA = (gA >= 0 && gA < gs2al.length) ? (gs2al[gA] ?? r.posA) : r.posA;
+            const gB = r.posB;
+            r.posB = (gB >= 0 && gB < gs2al.length) ? (gs2al[gB] ?? r.posB) : r.posB;
+            let col = r.posA, bases = 0;
+            while (col < t.fullSeq.length && bases < oL) {
+                if (!' -.'.includes(t.fullSeq[col])) bases++;
+                col++;
+            }
+            r.alignEnd = col;
+            // second copy's end column, so both copies can be highlighted
+            let colB = r.posB, basesB = 0;
+            while (colB < t.fullSeq.length && basesB < oL) {
+                if (!' -.'.includes(t.fullSeq[colB])) basesB++;
+                colB++;
+            }
+            r.alignEndB = colB;
+        }
+        job.allResults.push(r);
+    }
+}
+

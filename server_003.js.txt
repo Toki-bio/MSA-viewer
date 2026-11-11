@@ -1,0 +1,429 @@
+[server.js lines 932-1359 of ViewAlign fd8b8e4]
+// Realign all sequences or add new sequences to existing alignment
+app.post('/api/mafft', async (req, res) => {
+    const { mode = 'align', sequences, existingAlignment, newSequences, options = [] } = req.body;
+    // each mode's input must be there (mode=add without newSequences fell through and crashed: 500)
+    if (mode === 'add' ? !(existingAlignment && newSequences) : !sequences) {
+        return res.status(400).json({ error: mode === 'add' ? 'mode "add" needs existingAlignment and newSequences' : 'sequences required' });
+    }
+
+    if (!sequences && !existingAlignment) {
+        return res.status(400).json({ error: 'No sequences provided' });
+    }
+
+    const tmpDir = os.tmpdir();
+    // unique per request: two requests in the same millisecond shared (and overwrote) each other's files
+    const timestamp = Date.now() + '_' + process.pid + '_' + Math.random().toString(36).slice(2, 8);
+    const inputFile = path.join(tmpDir, `mafft_input_${timestamp}.fasta`);
+    const addFile = path.join(tmpDir, `mafft_add_${timestamp}.fasta`);
+    const outputFile = path.join(tmpDir, `mafft_output_${timestamp}.fasta`);
+
+    try {
+        const mafftArgs = [];
+        let inputPath;
+
+        if (mode === 'add' && existingAlignment && newSequences) {
+            fs.writeFileSync(inputFile, existingAlignment);
+            fs.writeFileSync(addFile, newSequences);
+            const addMode = options.includes('--addfragments') ? '--addfragments' : '--add';
+            mafftArgs.push(addMode, addFile, '--keeplength', inputFile);
+            const extraOpts = options.filter(o => o !== '--addfragments' && o !== '--add');
+            mafftArgs.unshift(...allowedMafftArgs(extraOpts));
+            inputPath = inputFile;
+        } else if (mode === 'realign-block') {
+            fs.writeFileSync(inputFile, sequences);
+            mafftArgs.push('--auto', inputFile);
+            inputPath = inputFile;
+        } else {
+            fs.writeFileSync(inputFile, sequences);
+            const mafftOpts = options.length > 0 ? options : ['--auto'];
+            mafftArgs.push(...allowedMafftArgs(mafftOpts));
+            mafftArgs.push(inputFile);
+            inputPath = inputFile;
+        }
+
+        console.log(`Running MAFFT: ${MAFFT_BIN} ${mafftArgs.join(' ')}`);
+        const mafftEnv = { ...process.env, PATH: '/usr/local/bin:/usr/bin:/bin:/staging/conda/envs/bioinfo/bin:' + (process.env.PATH || '') };
+        const result = await runMafft(mafftArgs, [inputPath], mafftEnv, 300000);
+
+        // Clean up temp files
+        try { fs.unlinkSync(inputFile); } catch (_) {}
+        try { fs.unlinkSync(addFile); } catch (_) {}
+
+        if (!result || result.trim().length === 0) {
+            return res.status(500).json({ error: 'MAFFT produced no output' });
+        }
+
+        res.json({
+            success: true,
+            alignment: result,
+            mode: mode
+        });
+
+    } catch (err) {
+        console.error('MAFFT error:', err);
+        // Clean up temp files on error
+        try { fs.unlinkSync(inputFile); } catch (_) {}
+        try { fs.unlinkSync(addFile); } catch (_) {}
+
+        res.status(500).json({
+            error: 'MAFFT alignment failed',
+            details: err.stderr || err.message
+        });
+    }
+});
+
+// Check database status
+app.get('/api/databases', (req, res) => {
+    const status = {};
+    for (const [name, info] of Object.entries(DATABASES)) {
+        status[name] = blastDbStatus(name, info);
+    }
+    res.json(status);
+});
+
+// List local snapshot JSON files for Input menu snapshot picker
+app.get('/api/snapshots', (req, res) => {
+    const snapDir = path.join(__dirname, 'snapshots');
+    if (!fs.existsSync(snapDir)) {
+        return res.json({ files: [] });
+    }
+    try {
+        const files = fs.readdirSync(snapDir)
+            .filter(name => name.toLowerCase().endsWith('.json'))
+            .map(name => {
+                const fullPath = path.join(snapDir, name);
+                const st = fs.statSync(fullPath);
+                return {
+                    name,
+                    path: `snapshots/${name}`,
+                    size: st.size,
+                    mtime: st.mtime.toISOString()
+                };
+            })
+            .sort((a, b) => new Date(b.mtime) - new Date(a.mtime));
+        res.json({ files });
+    } catch (err) {
+        res.status(500).json({ error: err.message, files: [] });
+    }
+});
+
+// ============ SSH MULTI-SERVER FILE FETCH ============
+// Load server config from external file (not committed to git)
+const PPK = process.env.SSH_KEY_PATH || path.join(os.homedir(), '.ssh', process.platform === 'win32' ? 'id_ed25519.ppk' : 'id_ed25519');
+let SSH_SERVERS = {};
+try {
+    const srvPath = path.join(__dirname, 'ssh-servers.json');
+    if (fs.existsSync(srvPath)) {
+        // Keys starting with '_' (notes) and non-object values are not servers
+        SSH_SERVERS = Object.fromEntries(Object.entries(JSON.parse(fs.readFileSync(srvPath, 'utf8')))
+            .filter(([k, v]) => !k.startsWith('_') && v && typeof v === 'object'));
+        console.log(`Loaded ${Object.keys(SSH_SERVERS).length} SSH server(s) from ssh-servers.json`);
+    } else {
+        console.log('No ssh-servers.json found — SSH features disabled. Copy ssh-servers.example.json to ssh-servers.json to configure.');
+    }
+} catch (err) {
+    console.error('Failed to load ssh-servers.json:', err.message);
+}
+
+// Keep backwards compat for old ssh-cat calls without ?server=
+const SSH_CONFIG = SSH_SERVERS[Object.keys(SSH_SERVERS)[0]] || null;
+
+// Queue for push-to-load from MC on remote servers
+let _queuedFile = null; // { server, file, ts }
+
+function getPlinkBaseArgs(server) {
+    const args = ['-batch', '-i', PPK];
+    if (server?.hostKey) args.push('-hostkey', server.hostKey);
+    return args;
+}
+
+// Remote paths go through one shell (direct) or two (jump host), so they are
+// limited to characters that are inert inside single quotes and that the
+// jump host's double quotes pass through unchanged: letters (any script),
+// digits, space and _ @ % + = : , . / ~ -. No quotes, $, `, \, newlines or
+// redirections, no '..' segment, and no leading '-'.
+const SAFE_REMOTE_PATH = /^[\p{L}\p{N}_@%+=:,./~ -]+$/u;
+function remotePathError(p) {
+    if (typeof p !== 'string' || !p) return 'Missing path';
+    if (p.length > 4096) return 'Path too long';
+    if (!SAFE_REMOTE_PATH.test(p)) return 'Invalid characters in path';
+    if (p.split('/').includes('..')) return 'Path traversal not allowed';
+    if (p.startsWith('-')) return 'Invalid path';
+    return null;
+}
+
+// Quote a path checked by remotePathError for a POSIX shell, keeping a
+// leading ~ outside the quotes so the remote shell still expands it.
+function shellQuoteRemotePath(p) {
+    if (p === '~') return '~';
+    if (p.startsWith('~/')) return "~/'" + p.slice(2) + "'";
+    return "'" + p + "'";
+}
+
+// Build the plink argument array that runs `command` (already quoted) on a
+// configured server, routing through its 'via' jump server when needed.
+function buildSshArgs(serverKey, command) {
+    const srv = SSH_SERVERS[serverKey];
+    if (!srv) return null;
+    const port = srv.port || 22;
+    if (!srv.via) {
+        const args = getPlinkBaseArgs(srv);
+        if (port !== 22) args.push('-P', port.toString());
+        args.push(`${srv.user}@${srv.host}`, command);
+        return args;
+    }
+    // Route through jump server: local → via → target. `command` holds no
+    // double quotes, $, ` or \, so wrapping it in double quotes passes it to
+    // the target unchanged.
+    const via = SSH_SERVERS[srv.via];
+    if (!via) return null;
+    const innerPortArgs = port !== 22 ? ` -p ${port}` : '';
+    const innerCmd = `ssh -T -o BatchMode=yes -o StrictHostKeyChecking=accept-new${innerPortArgs} ${srv.user}@${srv.host} "${command}"`;
+    return [...getPlinkBaseArgs(via), `${via.user}@${via.host}`, innerCmd];
+}
+
+function buildSshCatArgs(serverKey, filePath) {
+    return buildSshArgs(serverKey, `cat -- ${shellQuoteRemotePath(filePath)}`);
+}
+
+// Output of a child process read into memory for one JSON reply, with a size cap: without one a huge
+// remote file or a whole BAM grew one string until V8's string limit threw inside the 'data' handler
+// and took the server down. Bytes are kept as Buffers and decoded once, so a multi-byte character split
+// across two chunks is not garbled. onDone(err, text): err.status 413 when the cap was hit.
+const CHILD_OUTPUT_MAX_BYTES = Number(process.env.CHILD_OUTPUT_MAX_BYTES) || 200 * 1024 * 1024;
+function collectChildOutput(child, onDone) {
+    const out = [], err = [];
+    let bytes = 0, over = false;
+    child.stdout.on('data', (d) => {
+        if (over) return;
+        bytes += d.length;
+        if (bytes > CHILD_OUTPUT_MAX_BYTES) { over = true; out.length = 0; try { child.kill(); } catch (e) {} return; }
+        out.push(d);
+    });
+    child.stderr.on('data', (d) => { if (err.length < 1000) err.push(d); });
+    child.on('close', (code) => {
+        if (over) return onDone({ status: 413, message: `Output too large (over ${Math.round(CHILD_OUTPUT_MAX_BYTES / 1048576)} MB) to load this way` });
+        onDone(null, Buffer.concat(out).toString('utf8'), code, Buffer.concat(err).toString('utf8'));
+    });
+}
+
+function stripBanner(stdout) {
+    const fastaStart = stdout.indexOf('>');
+    const msfStart   = stdout.indexOf('!!');
+    if (fastaStart > 0 && (msfStart < 0 || fastaStart < msfStart)) return stdout.substring(fastaStart);
+    if (msfStart > 0) return stdout.substring(msfStart);
+    return stdout;
+}
+
+// List available servers
+app.get('/api/ssh-servers', (req, res) => {
+    const result = {};
+    for (const [key, srv] of Object.entries(SSH_SERVERS)) {
+        result[key] = { label: srv.label, pollable: !srv.via };
+    }
+    res.json(result);
+});
+
+// Queue a file to auto-load (called from MC via curl)
+app.get('/api/queue-file', (req, res) => {
+    const serverKey = req.query.server;
+    const filePath  = req.query.file;
+    if (!filePath)  return res.status(400).json({ error: 'Missing file' });
+    if (!serverKey || !SSH_SERVERS[serverKey]) return res.status(400).json({ error: 'Unknown server' });
+    const pathErr = remotePathError(filePath);
+    if (pathErr) return res.status(400).json({ error: pathErr });
+    _queuedFile = { server: serverKey, file: filePath, ts: Date.now() };
+    console.log(`Queued: [${serverKey}] ${filePath}`);
+    res.json({ ok: true });
+});
+
+// Viewer polls this; returns queued file and clears it
+app.get('/api/poll-file', (req, res) => {
+    if (!_queuedFile) return res.json({ queued: false });
+    const qf = _queuedFile;
+    _queuedFile = null;
+    res.json({ queued: true, server: qf.server, file: qf.file });
+});
+
+// The queue file is read and emptied only when it is a regular file owned by the logged-in user: its
+// name is fixed in the remote host's shared /tmp, and a symlink another user put there was read as a
+// queued path and the file it points at emptied (cp /dev/null writes through the link).
+const REMOTE_QUEUE_CMD = 'Q=/tmp/.msa_viewer_queue; if [ -f "$Q" ] && [ ! -h "$Q" ] && [ -O "$Q" ] && [ -s "$Q" ]; then echo "=START_QUEUE="; cat "$Q"; echo "=END_QUEUE="; cp /dev/null "$Q" 2>/dev/null || true; fi';
+
+// Poll queue file from remote server (MC writes to /tmp/.msa_viewer_queue)
+app.get('/api/ssh-poll-file', (req, res) => {
+    const serverKey = req.query.server || 'default';
+    console.log(`[POLL] Checking queue for server: ${serverKey}`);
+    if (!SSH_SERVERS[serverKey]) return res.status(400).json({ error: `Unknown server: ${serverKey}` });
+
+    const srv = SSH_SERVERS[serverKey];
+    const baseArgs = getPlinkBaseArgs(srv);
+    let sshArgs;
+
+    if (!srv.via) {
+        // Direct: read queue and clear it. Use /tmp so any user can write.
+        // Queue file has 2 lines: line 1 = directory, line 2 = filename (from MC %d and %f)
+        // Or 1 line with full path (from MC %p)
+        const cmd = REMOTE_QUEUE_CMD;
+        const port = srv.port || 22;
+        const args = [...baseArgs];
+        if (port !== 22) args.push('-P', port.toString());
+        args.push(`${srv.user}@${srv.host}`, cmd);
+        sshArgs = args;
+    } else {
+        // Via jump host
+        const via = SSH_SERVERS[srv.via];
+        const port = srv.port || 22;
+        const innerPortArgs = port !== 22 ? ` -p ${port}` : '';
+        // Same queue command as the direct path: the reply below is parsed between the markers,
+        // so without them a queued file was read, deleted and reported as "nothing queued".
+        const queueCmd = REMOTE_QUEUE_CMD;
+        const innerCmd = `ssh -T -o BatchMode=yes -o StrictHostKeyChecking=accept-new${innerPortArgs} ${srv.user}@${srv.host} '${queueCmd}'`;
+        sshArgs = [...getPlinkBaseArgs(via), `${via.user}@${via.host}`, innerCmd];
+    }
+
+    const child = spawn('plink', sshArgs, { timeout: 10000 });
+    let stdout = '', stderr = '';
+    child.stdout.on('data', (d) => { stdout += d.toString(); });
+    child.stderr.on('data', (d) => { stderr += d.toString(); });
+    child.on('close', (code) => {
+        if (res.headersSent) return;
+        if (code !== 0) {
+            const message = stderr.trim() || `plink exited with code ${code}`;
+            console.error(`[POLL] ${serverKey} failed: ${message}`);
+            return res.status(500).json({ error: message });
+        }
+        // Extract content between markers to avoid MOTD pollution
+        const startMarker = '=START_QUEUE=';
+        const endMarker = '=END_QUEUE=';
+        
+        const startIdx = stdout.indexOf(startMarker);
+        const endIdx = stdout.indexOf(endMarker);
+        
+        let filePath = '';
+        if (startIdx >= 0 && endIdx > startIdx) {
+            const raw = stdout.substring(startIdx + startMarker.length, endIdx).trim();
+            // Queue may have 2 lines (dir + filename from MC %d/%f) or 1 line (full path from %p)
+            const lines = raw.split('\n').map(l => l.trim()).filter(l => l);
+            if (lines.length >= 2) {
+                // dir + filename
+                const dir = lines[0].replace(/\/+$/, '');
+                filePath = dir + '/' + lines[1];
+            } else if (lines.length === 1) {
+                filePath = lines[0];
+            }
+        }
+        
+        console.log(`[POLL] Queue check result: filePath="${filePath}", stdout length=${stdout.length}`);
+        if (!filePath) return res.json({ queued: false });
+        console.log(`[POLL] Returning queued file: ${filePath}`);
+        res.json({ queued: true, server: serverKey, file: filePath });
+    });
+    child.on('error', (err) => { if (!res.headersSent) res.status(500).json({ error: `SSH failed: ${err.message}` }); });
+});
+
+app.get('/api/ssh-cat', (req, res) => {
+    const filePath  = req.query.file;
+    const serverKey = req.query.server || 'default';
+    console.log(`[SSH-CAT] Fetching file: ${filePath} from ${serverKey}`);
+    if (!filePath)  return res.status(400).json({ error: 'Missing "file" query parameter' });
+    if (!SSH_SERVERS[serverKey]) return res.status(400).json({ error: `Unknown server: ${serverKey}` });
+    const pathErr = remotePathError(filePath);
+    if (pathErr) return res.status(400).json({ error: pathErr });
+
+    const sshArgs = buildSshCatArgs(serverKey, filePath);
+    if (!sshArgs) return res.status(400).json({ error: 'Bad server config' });
+
+    const child = spawn('plink', sshArgs, { timeout: 30000 });
+    collectChildOutput(child, (over, stdout, code, stderr) => {
+        if (res.headersSent) return;
+        if (over) return res.status(over.status).json({ error: over.message });
+        if (code !== 0) return res.status(500).json({ error: stderr.trim() || `SSH exited with code ${code}` });
+        if (!stdout.trim()) return res.status(404).json({ error: 'File is empty or not found' });
+        res.json({ content: stripBanner(stdout), file: filePath, server: serverKey });
+    });
+    child.on('error', (err) => { if (!res.headersSent) res.status(500).json({ error: `SSH failed: ${err.message}` }); });
+});
+
+// Read a file directly off the machine running this server (distinct from
+// /api/ssh-cat above, which reads from a configured remote server). This
+// server already reads/writes arbitrary local paths for BLAST database
+// management with no additional auth, so a read-only local file fetch is
+// the same trust boundary, not a new one - it exists so pasting a local
+// path into the main input box can be resolved without a file-picker
+// round-trip, mirroring how a URL paste is resolved via plain fetch().
+// Local paths the server may read: under LOCAL_FILE_ROOTS (separated by the
+// platform's path delimiter; default the server folder and the home folder),
+// after resolving symlinks, and never inside a hidden folder or file such as
+// ~/.ssh, ~/.aws or ~/.gnupg.
+const LOCAL_FILE_ROOTS = (process.env.LOCAL_FILE_ROOTS
+    ? process.env.LOCAL_FILE_ROOTS.split(path.delimiter)
+    : [__dirname, os.homedir()]).filter(Boolean).map(r => {
+        try { return fs.realpathSync(path.resolve(r)); } catch (_) { return path.resolve(r); }
+    });
+
+// Returns { path } for a readable local file inside the roots, or { status, error }
+function resolveLocalFile(filePath) {
+    if (typeof filePath !== 'string' || !filePath) return { status: 400, error: 'Missing file path' };
+    if (filePath.startsWith('-')) return { status: 400, error: 'Invalid path' };
+    let real;
+    try {
+        real = fs.realpathSync(path.resolve(filePath));
+    } catch (err) {
+        if (err.code === 'ENOENT') return { status: 404, error: 'File not found: ' + filePath };
+        return { status: 500, error: 'Failed to read file: ' + err.message };
+    }
+    const root = LOCAL_FILE_ROOTS.find(r => real === r || real.startsWith(r.endsWith(path.sep) ? r : r + path.sep));
+    if (!root) return { status: 403, error: 'Path is outside the folders this server may read (LOCAL_FILE_ROOTS)' };
+    const rel = path.relative(root, real);
+    if (rel.split(path.sep).some(seg => seg.startsWith('.'))) {
+        return { status: 403, error: 'Hidden files and folders are not served' };
+    }
+    return { path: real };
+}
+
+app.get('/api/local-cat', (req, res) => {
+    const resolved = resolveLocalFile(req.query.file);
+    if (resolved.error) return res.status(resolved.status).json({ error: resolved.error });
+    const filePath = resolved.path;
+    console.log(`[LOCAL-CAT] Fetching file: ${filePath}`);
+    try {
+        const stat = fs.statSync(filePath);
+        if (!stat.isFile()) return res.status(400).json({ error: 'Path is not a regular file' });
+        if (stat.size > 200 * 1024 * 1024) return res.status(413).json({ error: 'File too large (>200MB) to load this way' });
+        const content = fs.readFileSync(filePath, 'utf8');
+        res.json({ content, file: filePath });
+    } catch (err) {
+        if (err.code === 'ENOENT') return res.status(404).json({ error: 'File not found: ' + filePath });
+        res.status(500).json({ error: 'Failed to read file: ' + err.message });
+    }
+});
+
+// List remote directory
+app.get('/api/ssh-ls', (req, res) => {
+    const dirPath   = req.query.dir || '~';
+    const serverKey = req.query.server || 'default';
+    const pathErr = remotePathError(dirPath);
+    if (pathErr) return res.status(400).json({ error: pathErr });
+    if (!SSH_SERVERS[serverKey]) return res.status(400).json({ error: `Unknown server: ${serverKey}` });
+
+    // a marker before the listing: a login banner printed by the server is not a directory entry
+    const sshArgs = buildSshArgs(serverKey, `echo =LS= && ls -1p -- ${shellQuoteRemotePath(dirPath)}`);
+    if (!sshArgs) return res.status(400).json({ error: 'Bad server config' });
+
+    const child = spawn('plink', sshArgs, { timeout: 10000 });
+    let stdout = '', stderr = '';
+    child.stdout.on('data', (d) => { stdout += d.toString(); });
+    child.stderr.on('data', (d) => { stderr += d.toString(); });
+    child.on('close', (code) => {
+        if (res.headersSent) return;
+        if (code !== 0) return res.status(500).json({ error: stderr.trim() || `ls failed` });
+        const at = stdout.indexOf('=LS=');
+        const listing = at >= 0 ? stdout.slice(at + 4) : stdout;
+        const entries = listing.split(/\r?\n/).map(l => l.trim()).filter(Boolean);
+        res.json({ dir: dirPath, entries });
+    });
+    child.on('error', (err) => { if (!res.headersSent) res.status(500).json({ error: `SSH failed: ${err.message}` }); });
+});
+

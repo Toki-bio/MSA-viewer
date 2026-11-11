@@ -1,0 +1,515 @@
+[tree-draw.js lines 536-1049 of ViewAlign fd8b8e4]
+    labelOrientation: 'angled', groupOverlap: false
+  };
+  var TREE_FONT_FAMILIES = [
+    { label: 'System UI', value: 'system-ui,-apple-system,Segoe UI,sans-serif' },
+    { label: 'Serif', value: 'Georgia,Cambria,"Times New Roman",Times,serif' },
+    { label: 'Monospace', value: '"Courier New",Courier,monospace' },
+    { label: 'Sans (Helvetica)', value: 'Helvetica,Arial,sans-serif' }
+  ];
+
+  // Measures label width at the font size/family actually being rendered (a Font size or
+  // Font type control that doesn't match this measurement makes the computed margin/label
+  // column width wrong — too narrow if the real font renders wider than assumed, clipping
+  // text, or wastefully wide otherwise). Always measures at 12px and callers scale the result
+  // by (actualFontSize / 12) — matches the pre-existing zoom-scaling convention, just driven
+  // by the real font size instead of assuming it's always exactly 12*zoom.
+  function measurer(fontFamily) {
+    var ctx = null;
+    try { ctx = document.createElement('canvas').getContext('2d'); ctx.font = '12px ' + (fontFamily || 'system-ui,-apple-system,sans-serif'); } catch (e) {}
+    return ctx ? function (t) { return ctx.measureText(String(t)).width; }
+               : function (t) { return String(t).length * 6.8; };
+  }
+
+  function nodeById(id) {
+    var found = null;
+    (function walk(n) { if (found) return; if (n._id === id) { found = n; return; } n.children.forEach(walk); })(st.root);
+    return found;
+  }
+
+  function countLeaves(node) {
+    if (!node.children.length) return 1;
+    return node.children.reduce(function (s, c) { return s + countLeaves(c); }, 0);
+  }
+  function collectLeafNames(node, out) {
+    out = out || [];
+    if (!node.children.length) { out.push(node.name || '?'); return out; }
+    node.children.forEach(function (c) { collectLeafNames(c, out); });
+    return out;
+  }
+
+  // the drawing options for the current panel size and a given zoom
+  function drawOpts(zoom) {
+    var box = document.getElementById('treeSvgCanvas');
+    // clientWidth/Height include the panel's padding; drawing to them made the tree 12px
+    // wider than the space inside it, so it always scrolled sideways at Fit (100%)
+    var cs = getComputedStyle(box);
+    var innerW = box.clientWidth - parseFloat(cs.paddingLeft) - parseFloat(cs.paddingRight);
+    var innerH = box.clientHeight - parseFloat(cs.paddingTop) - parseFloat(cs.paddingBottom);
+    return {
+      measure: measurer(st.fontFamily),
+      width: innerW > 0 ? innerW : 700,
+      height: innerH > 0 ? innerH : 520,
+      zoom: zoom,
+      layout: st.layout,
+      labelSpacing: st.labelSpacing,
+      fontSize: st.fontSize,
+      fontFamily: st.fontFamily,
+      labelOrientation: st.labelOrientation,
+      groupOverlap: st.groupOverlap
+    };
+  }
+
+  // Fit on an unrooted tree: the zoom at which the whole drawing, labels included, sits inside the panel. At 100 % the drawing is
+  // the tree fitted to the panel BEFORE the labels (and the density floor) are added, so it could be 746 px in a 480 px panel
+  // (colleague check 2026-11-07). The size is not proportional to the zoom, so the largest zoom that fits is found by halving.
+  function fitUnrootedZoom() {
+    var o = drawOpts(1);
+    var fits = function (z) {
+      var m = /<svg[^>]* width="(\d+)" height="(\d+)"/.exec(buildTreeSVGString(st.root, Object.assign({}, o, { zoom: z })));
+      return !m || (+m[1] <= o.width && +m[2] <= o.height);
+    };
+    if (fits(1)) return 1;
+    // When not even the smallest zoom fits (the labels alone are wider or taller than the panel: long names at a big font) no zoom helps, and a
+    // zoom of 10 % only shrinks the tree to a speck inside the same ring of labels: leave it at 100 % (GLM audit of the colleague fixes, #14)
+    if (!fits(0.1)) return 1;
+    var lo = 0.1, hi = 1;   // lo is taken to fit; the largest zoom that fits is found by halving (in the logarithm)
+    for (var i = 0; i < 7; i++) {
+      var mid = Math.sqrt(lo * hi);
+      if (fits(mid)) lo = mid; else hi = mid;
+    }
+    return lo;
+  }
+
+  function draw() {
+    var box = document.getElementById('treeSvgCanvas');
+    if (!box || !st.root) return;
+    box.innerHTML = buildTreeSVGString(st.root, drawOpts(st.zoom));
+    var zl = document.getElementById('treeZoomLabel');
+    if (zl) zl.textContent = Math.round(st.zoom * 100) + '%';
+    var sl = document.getElementById('treeSpacingLabel');
+    if (sl) sl.textContent = Math.round(st.labelSpacing * 100) + '%';
+    var fsl = document.getElementById('treeFontSizeLabel');
+    if (fsl) fsl.textContent = st.fontSize + 'px';
+    var spacingGroup = document.getElementById('treeSpacingGroup');
+    if (spacingGroup) spacingGroup.style.display = st.layout === 'unrooted' ? 'inline-flex' : 'none';
+    var unrootedGroup = document.getElementById('treeUnrootedGroup');
+    if (unrootedGroup) unrootedGroup.style.display = st.layout === 'unrooted' ? 'inline-flex' : 'none';
+    // the tree on screen is always the one just built, so the method radio says how it was made
+    var rootNote = document.getElementById('treeRootNote');
+    var methodEl = document.querySelector('input[name="treeMethod"]:checked');
+    if (rootNote) rootNote.style.display = st.layout === 'unrooted' && (!methodEl || methodEl.value === 'upgma') ? 'inline' : 'none';
+  }
+
+  // ---------- export ----------
+  function currentSvgEl() {
+    var box = document.getElementById('treeSvgCanvas');
+    return box ? box.querySelector('svg') : null;
+  }
+
+  function svgMarkup() {
+    var svg = currentSvgEl();
+    if (!svg) return null;
+    // A white backing rect so the exported image is not transparent where viewers
+    // (and Word) would otherwise show black.
+    var clone = svg.cloneNode(true);
+    clone.querySelectorAll('.tree-hit').forEach(function (n) { n.remove(); });
+    var bg = document.createElementNS('http://www.w3.org/2000/svg', 'rect');
+    // cover the viewBox, which starts below zero when the unrooted drawing grew to hold its labels
+    var vbp = (clone.getAttribute('viewBox') || '').split(/[\s,]+/).map(Number);
+    var hasVb = vbp.length === 4 && vbp.every(isFinite);
+    bg.setAttribute('x', hasVb ? String(vbp[0]) : '0'); bg.setAttribute('y', hasVb ? String(vbp[1]) : '0');
+    bg.setAttribute('width', hasVb ? String(vbp[2]) : clone.getAttribute('width'));
+    bg.setAttribute('height', hasVb ? String(vbp[3]) : clone.getAttribute('height'));
+    bg.setAttribute('fill', '#ffffff');
+    clone.insertBefore(bg, clone.firstChild);
+    return new XMLSerializer().serializeToString(clone);
+  }
+
+  function saveBlob(blob, filename) {
+    var url = URL.createObjectURL(blob);
+    var a = document.createElement('a');
+    a.href = url; a.download = filename;
+    document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(function () { URL.revokeObjectURL(url); }, 1000);
+  }
+
+  function exportSVG() {
+    var markup = svgMarkup();
+    if (!markup) return;
+    saveBlob(new Blob(['<?xml version="1.0" encoding="UTF-8"?>\n' + markup], { type: 'image/svg+xml;charset=utf-8' }), 'tree.svg');
+  }
+
+  function exportPNG() {
+    var markup = svgMarkup(), svg = currentSvgEl();
+    if (!markup || !svg) return;
+    var w = parseFloat(svg.getAttribute('width')) || 800;
+    var h = parseFloat(svg.getAttribute('height')) || 600;
+    var scale = 2;                                   // 2x so the raster stands up to print
+    var img = new Image();
+    img.onload = function () {
+      var cv = document.createElement('canvas');
+      cv.width = Math.ceil(w * scale); cv.height = Math.ceil(h * scale);
+      var ctx = cv.getContext('2d');
+      ctx.fillStyle = '#ffffff';
+      ctx.fillRect(0, 0, cv.width, cv.height);
+      ctx.drawImage(img, 0, 0, cv.width, cv.height);
+      cv.toBlob(function (blob) { if (blob) saveBlob(blob, 'tree.png'); }, 'image/png');
+    };
+    img.onerror = function () { alert('Could not rasterise the tree image.'); };
+    // The SVG is self-contained (no external refs), so a data URL keeps the canvas clean.
+    img.src = 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(markup);
+  }
+
+  function setFullscreen(on) {
+    var panel = document.getElementById('treeSvgOutput');
+    if (!panel) return;
+    st.full = !!on;
+    panel.classList.toggle('tree-fullscreen', st.full);
+    var btn = panel.querySelector('button[data-act="fullscreen"]');
+    if (btn) btn.textContent = st.full ? 'Exit full screen' : 'Full screen';
+    setTimeout(draw, 30);
+  }
+
+  // Renders the clicked node's descendants alone, in their own small overlay - lets you
+  // zoom into a crowded region of a big tree without losing your place in the full one.
+  function openSubtreeModal(node) {
+    var overlay = document.getElementById('treeSubtreeOverlay');
+    if (!overlay) {
+      overlay = document.createElement('div');
+      overlay.id = 'treeSubtreeOverlay';
+      overlay.style.cssText = 'position:fixed;inset:0;background:rgba(20,30,40,0.55);z-index:10070;' +
+        'display:flex;align-items:center;justify-content:center;';
+      overlay.innerHTML =
+        '<div style="background:#fff;border-radius:8px;box-shadow:0 8px 30px rgba(0,0,0,0.3);' +
+        'width:min(900px,92vw);height:min(650px,86vh);display:flex;flex-direction:column;overflow:hidden;">' +
+          '<div style="display:flex;align-items:center;justify-content:space-between;padding:10px 14px;border-bottom:1px solid #e2e8ee;">' +
+            '<b id="treeSubtreeTitle" style="font-size:13px;color:#31485c;"></b>' +
+            '<button type="button" id="treeSubtreeCloseBtn" class="tree-tool">Close</button>' +
+          '</div>' +
+          '<div id="treeSubtreeCanvas" style="flex:1;overflow:auto;padding:8px;"></div>' +
+        '</div>';
+      document.body.appendChild(overlay);
+      overlay.addEventListener('click', function (ev) { if (ev.target === overlay) overlay.remove(); });
+      overlay.querySelector('#treeSubtreeCloseBtn').addEventListener('click', function () { overlay.remove(); });
+      document.addEventListener('keydown', function esc(ev) {
+        if (ev.key === 'Escape') { var o = document.getElementById('treeSubtreeOverlay'); if (o) o.remove(); }
+      });
+    }
+    var nLeaves = countLeaves(node);
+    overlay.querySelector('#treeSubtreeTitle').textContent = 'Subtree — ' + nLeaves + ' leaves';
+    var canvas = overlay.querySelector('#treeSubtreeCanvas');
+    var subRoot = cloneTree(node);
+    subRoot.len = 0;   // draw the subtree on its own, not offset by its length in the parent
+    canvas.innerHTML = buildTreeSVGString(subRoot, {
+      measure: measurer(st.fontFamily),
+      width: 850, height: 600, zoom: 1,
+      layout: st.layout === 'unrooted' ? 'unrooted' : 'rect',
+      labelSpacing: st.labelSpacing,
+      fontSize: st.fontSize,
+      fontFamily: st.fontFamily,
+      labelOrientation: st.labelOrientation,
+      groupOverlap: st.groupOverlap
+    });
+  }
+
+  function setTree(root, pushNewick) {
+    st.root = root;
+    draw();
+    if (pushNewick) {
+      var nwOut = document.getElementById('treeNewickOutput');
+      if (nwOut) nwOut.value = toNewick(st.root);
+    }
+  }
+
+  function loadFromNewick(nw) {
+    var root;
+    try { root = parseNewick(nw); } catch (e) { root = null; }
+    st.sourceNewick = nw;
+    st.original = root ? cloneTree(root) : null;
+    st.root = root;
+    draw();
+  }
+
+  function onCanvasClick(ev) {
+    // A real click-drag pan (see the mousedown/mousemove/mouseup wiring below) fires a
+    // native click on release too; suppress that one so panning never also swaps/re-roots.
+    if (st._suppressNextClick) { st._suppressNextClick = false; return; }
+    var hit = ev.target.closest ? ev.target.closest('.tree-hit') : null;
+    if (!hit || !st.root) return;
+    var id = parseInt(hit.getAttribute('data-node'), 10);
+    var node = nodeById(id);
+    if (!node) return;
+    showNodeInfo(node, hit.classList.contains('tree-branch-hit'));
+    if (st.mode === 'reroot') {
+      if (!hit.classList.contains('tree-branch-hit')) return;   // re-root needs a branch
+      setTree(rerootOnBranch(st.root, node), true);
+    } else {
+      if (!swapAt(node)) return;
+      setTree(st.root, true);
+    }
+  }
+
+  // Clicking a branch/node always shows a small info readout - independent of
+  // swap/re-root mode - so you don't have to switch modes just to see a branch
+  // length or how many leaves sit under a node.
+  function showNodeInfo(node, isBranch) {
+    var line = document.getElementById('treeInfoLine');
+    if (!line) return;
+    var nLeaves = countLeaves(node);
+    var isLeaf = !node.children.length;
+    var parts = [];
+    if (isLeaf) {
+      parts.push('<b>' + esc(node.name || '?') + '</b>');
+    } else {
+      parts.push(nLeaves + ' leaves below this node');
+    }
+    if (isBranch) parts.push('branch length ' + (node.len || 0).toFixed(6));
+    // swap mode on a tip: swapAt() has nothing to rotate, and the click used to show only the banner (colleague check 2026-11-07)
+    if (isLeaf && st.mode !== 'reroot') parts.push('nothing to swap on a tip, click an inner node');
+    line.querySelector('#treeInfoText').innerHTML = parts.join(' &middot; ');
+    var subBtn = line.querySelector('#treeInfoSubtreeBtn');
+    subBtn.style.display = (!isLeaf && nLeaves >= 2) ? '' : 'none';
+    subBtn.onclick = function () { openSubtreeModal(node); };
+    line.style.display = 'flex';
+  }
+
+  // ---------- UI ----------
+  function buildPanel() {
+    var nwOut = document.getElementById('treeNewickOutput');
+    if (!nwOut) return null;
+    var panel = document.getElementById('treeSvgOutput');
+    if (panel) return panel;
+
+    panel = document.createElement('div');
+    panel.id = 'treeSvgOutput';   // spacing lives in styles.css so full screen can override it
+    panel.innerHTML =
+      '<div id="treeSvgToolbar" style="display:flex;align-items:center;gap:6px;flex-wrap:wrap;' +
+      'font-size:11px;color:#31485c;padding:0 0 5px;">' +
+        '<span style="color:#6b8299;">Zoom</span>' +
+        '<button type="button" class="tree-tool" data-act="zoom-out" title="Zoom out">&minus;</button>' +
+        '<span id="treeZoomLabel" style="min-width:34px;text-align:center;">100%</span>' +
+        '<button type="button" class="tree-tool" data-act="zoom-in" title="Zoom in">+</button>' +
+        '<button type="button" class="tree-tool" data-act="zoom-fit" title="Fit the tree to the panel (rooted: back to 100%, its width; unrooted: the largest zoom at which the whole drawing, labels included, is inside the panel)">Fit</button>' +
+        '<span id="treeSpacingGroup" style="display:none;align-items:center;gap:6px;">' +
+          '<span style="width:1px;height:14px;background:#c5d2df;margin:0 2px;"></span>' +
+          '<span style="color:#6b8299;" title="How far apart unrooted-tree leaf labels are spaced, independent of Zoom">Label spacing</span>' +
+          '<button type="button" class="tree-tool" data-act="spacing-out" title="Less spacing">&minus;</button>' +
+          '<span id="treeSpacingLabel" style="min-width:34px;text-align:center;">100%</span>' +
+          '<button type="button" class="tree-tool" data-act="spacing-in" title="More spacing">+</button>' +
+        '</span>' +
+        '<span style="width:1px;height:14px;background:#c5d2df;margin:0 2px;"></span>' +
+        '<span style="color:#6b8299;" title="Independent of Zoom">Font size</span>' +
+        '<button type="button" class="tree-tool" data-act="font-smaller" title="Smaller text">&minus;</button>' +
+        '<span id="treeFontSizeLabel" style="min-width:30px;text-align:center;">12px</span>' +
+        '<button type="button" class="tree-tool" data-act="font-larger" title="Larger text">+</button>' +
+        '<select id="treeFontFamily" title="Label font" style="font-size:11px;">' +
+          TREE_FONT_FAMILIES.map(function (f) { return '<option value="' + esc(f.value) + '">' + esc(f.label) + '</option>'; }).join('') +
+        '</select>' +
+        '<span style="width:1px;height:14px;background:#c5d2df;margin:0 2px;"></span>' +
+        '<span style="color:#6b8299;">Layout</span>' +
+        '<label class="tree-mode"><input type="radio" name="treeLayout" value="rect" checked> rooted</label>' +
+        '<label class="tree-mode"><input type="radio" name="treeLayout" value="unrooted"> unrooted</label>' +
+        '<span id="treeUnrootedGroup" style="display:none;align-items:center;gap:6px;">' +
+          '<span style="width:1px;height:14px;background:#c5d2df;margin:0 2px;"></span>' +
+          '<label class="tree-mode"><input type="radio" name="treeOrientation" value="angled" checked> angled labels</label>' +
+          '<label class="tree-mode"><input type="radio" name="treeOrientation" value="horizontal"> horizontal labels</label>' +
+          '<span style="width:1px;height:14px;background:#c5d2df;margin:0 2px;"></span>' +
+          '<label class="tree-mode" title="Merge labels that would collide into one, with the omitted names listed after it in grey"><input type="checkbox" id="treeGroupOverlap"> group overlapping labels</label>' +
+        '</span>' +
+        '<span id="treeRootNote" style="display:none;color:#8a9bab;" title="UPGMA assumes equal rates (a molecular clock) and places the root itself; NJ trees have no root of their own">' +
+          'UPGMA trees are rooted by construction; this drawing hides the root</span>' +
+        '<span style="width:1px;height:14px;background:#c5d2df;margin:0 2px;"></span>' +
+        '<span style="display:inline-flex;align-items:center;gap:6px;">' +
+          '<span style="color:#6b8299;">Click</span>' +
+          '<label class="tree-mode"><input type="radio" name="treeClickMode" value="swap" checked> swap branches</label>' +
+          '<label class="tree-mode"><input type="radio" name="treeClickMode" value="reroot"> re-root</label>' +
+        '</span>' +
+        '<span style="width:1px;height:14px;background:#c5d2df;margin:0 2px;"></span>' +
+        '<button type="button" class="tree-tool" data-act="export-svg" title="Download the drawing as SVG">SVG</button>' +
+        '<button type="button" class="tree-tool" data-act="export-png" title="Download the drawing as PNG (2x)">PNG</button>' +
+        '<button type="button" class="tree-tool" data-act="fullscreen" title="Expand the tree to the whole window (Esc to leave)">Full screen</button>' +
+        '<button type="button" class="tree-tool" data-act="reset" title="Back to the computed tree">Reset</button>' +
+        '<span id="treeHint" style="color:#8a9bab;"></span>' +
+      '</div>' +
+      '<div id="treeInfoLine" style="display:none;align-items:center;gap:10px;font-size:11px;' +
+      'color:#31485c;background:#f3f6f9;border:1px solid #dde5ec;border-radius:5px;padding:4px 8px;margin-bottom:5px;">' +
+        '<span id="treeInfoText"></span>' +
+        '<button type="button" id="treeInfoSubtreeBtn" class="tree-tool" style="display:none;">View subtree</button>' +
+        '<button type="button" id="treeInfoCloseBtn" class="tree-tool" title="Dismiss">&times;</button>' +
+      '</div>' +
+      '<div id="treeSvgCanvas"></div>';
+    nwOut.parentNode.insertBefore(panel, nwOut);
+
+    panel.querySelector('#treeSvgToolbar').addEventListener('click', function (ev) {
+      var b = ev.target.closest('button[data-act]');
+      if (!b) return;
+      var act = b.getAttribute('data-act');
+      if (act === 'zoom-in') st.zoom = Math.min(4, st.zoom * 1.25);
+      else if (act === 'zoom-out') st.zoom = Math.max(0.25, st.zoom / 1.25);
+      else if (act === 'zoom-fit') st.zoom = st.layout === 'unrooted' && st.root ? fitUnrootedZoom() : 1;
+      else if (act === 'spacing-in') st.labelSpacing = Math.min(4, st.labelSpacing * 1.25);
+      else if (act === 'spacing-out') st.labelSpacing = Math.max(0.25, st.labelSpacing / 1.25);
+      else if (act === 'font-larger') st.fontSize = Math.min(28, st.fontSize + 1);
+      else if (act === 'font-smaller') st.fontSize = Math.max(6, st.fontSize - 1);
+      else if (act === 'export-svg') { exportSVG(); return; }
+      else if (act === 'export-png') { exportPNG(); return; }
+      else if (act === 'fullscreen') { setFullscreen(!st.full); return; }
+      else if (act === 'reset') {
+        if (st.original) {
+          st.root = cloneTree(st.original);
+          var nwOut2 = document.getElementById('treeNewickOutput');
+          if (nwOut2 && st.sourceNewick) nwOut2.value = st.sourceNewick;
+        }
+      }
+      draw();
+    });
+    panel.querySelector('#treeInfoCloseBtn').addEventListener('click', function () {
+      document.getElementById('treeInfoLine').style.display = 'none';
+    });
+    panel.querySelectorAll('input[name="treeClickMode"]').forEach(function (r) {
+      r.addEventListener('change', function () {
+        st.mode = r.value;
+        var hint = document.getElementById('treeHint');
+        if (hint) hint.textContent = st.mode === 'reroot' ? 'click a branch' : 'click a node';
+      });
+    });
+    panel.querySelectorAll('input[name="treeLayout"]').forEach(function (r) {
+      r.addEventListener('change', function () { st.layout = r.value; draw(); });
+    });
+    panel.querySelectorAll('input[name="treeOrientation"]').forEach(function (r) {
+      r.addEventListener('change', function () { st.labelOrientation = r.value; draw(); });
+    });
+    var fontFamilySel = panel.querySelector('#treeFontFamily');
+    if (fontFamilySel) {
+      fontFamilySel.value = st.fontFamily;
+      fontFamilySel.addEventListener('change', function () { st.fontFamily = fontFamilySel.value; draw(); });
+    }
+    var groupOverlapCb = panel.querySelector('#treeGroupOverlap');
+    if (groupOverlapCb) {
+      groupOverlapCb.addEventListener('change', function () { st.groupOverlap = groupOverlapCb.checked; draw(); });
+    }
+    document.addEventListener('keydown', function (ev) {
+      if (ev.key === 'Escape' && st.full) { ev.stopPropagation(); setFullscreen(false); }
+    }, true);
+    // The panel is resizable, so redraw to the new box when the user lets go.
+    if (typeof ResizeObserver === 'function') {
+      var pending = null;
+      new ResizeObserver(function () {
+        clearTimeout(pending);
+        pending = setTimeout(draw, 120);
+      }).observe(panel.querySelector('#treeSvgCanvas'));
+    }
+    var canvas = panel.querySelector('#treeSvgCanvas');
+    canvas.addEventListener('click', onCanvasClick);
+    // Click-drag to pan, matching iTOL. A small movement threshold (not just any mousedown-
+    // then-mouseup) keeps ordinary swap/re-root clicks from being treated as a pan.
+    (function () {
+      var dragging = false, startX = 0, startY = 0, startScrollX = 0, startScrollY = 0, moved = false;
+      var DRAG_THRESHOLD = 4;
+      canvas.addEventListener('mousedown', function (ev) {
+        if (ev.button !== 0) return;
+        dragging = true; moved = false;
+        startX = ev.clientX; startY = ev.clientY;
+        startScrollX = canvas.scrollLeft; startScrollY = canvas.scrollTop;
+      });
+      document.addEventListener('mousemove', function (ev) {
+        if (!dragging) return;
+        var dx = ev.clientX - startX, dy = ev.clientY - startY;
+        if (!moved && Math.hypot(dx, dy) < DRAG_THRESHOLD) return;
+        moved = true;
+        canvas.style.cursor = 'grabbing';
+        canvas.scrollLeft = startScrollX - dx;
+        canvas.scrollTop = startScrollY - dy;
+      });
+      document.addEventListener('mouseup', function () {
+        if (!dragging) return;
+        dragging = false;
+        canvas.style.cursor = '';
+        if (moved) st._suppressNextClick = true;
+      });
+    })();
+    // A mouse wheel zooms, matching iTOL/most tree viewers. On a touchpad two fingers scroll, natively, and a pinch zooms:
+    // the browser sends a pinch as wheel with ctrlKey, deltaY = -100 ln(scale), so exp(-deltaY / 100) is the pinch itself.
+    // Shift+wheel is left alone for the browser's horizontal pan. A wheel event does not say what sent it: a notch is
+    // a whole step on one axis, a touchpad sends small deltas, and a fast flick that grows from them stays a touchpad.
+    var touchpadUntil = 0, zoomAnchor = null;
+    function isMouseNotch(ev) {
+      if (ev.deltaMode !== 0) return true;
+      var small = ev.deltaX !== 0 || Math.abs(ev.deltaY) < 50 || !Number.isInteger(ev.deltaY);
+      if (small) touchpadUntil = ev.timeStamp + 400;
+      return !small && ev.timeStamp > touchpadUntil;
+    }
+    function zoomAtPointer(factor, ev) {
+      var z = Math.min(4, Math.max(0.25, st.zoom * factor));
+      if (z === st.zoom) return;
+      st.zoom = z;
+      var r = canvas.getBoundingClientRect();
+      var queued = !!zoomAnchor;
+      zoomAnchor = { x: ev.clientX - r.left, y: ev.clientY - r.top };
+      if (queued) return;
+      requestAnimationFrame(function () {   // one redraw a frame: a pinch sends many events
+        var a = zoomAnchor, svg = currentSvgEl();
+        zoomAnchor = null;
+        var w = svg ? +svg.getAttribute('width') : 0, h = svg ? +svg.getAttribute('height') : 0;
+        var fx = w ? (canvas.scrollLeft + a.x) / w : 0, fy = h ? (canvas.scrollTop + a.y) / h : 0;
+        draw();
+        svg = currentSvgEl();
+        if (!svg) return;
+        canvas.scrollLeft = fx * +svg.getAttribute('width') - a.x;
+        canvas.scrollTop = fy * +svg.getAttribute('height') - a.y;
+      });
+    }
+    canvas.addEventListener('wheel', function (ev) {
+      if (ev.shiftKey) return;
+      var notch = isMouseNotch(ev);
+      if (!notch && !ev.ctrlKey) return;
+      ev.preventDefault();
+      zoomAtPointer(notch ? (ev.deltaY < 0 ? 1.1 : 1 / 1.1) : Math.exp(-ev.deltaY / 100), ev);
+    }, { passive: false });
+    return panel;
+  }
+
+  function renderTreeSVG(newick, container) {
+    if (!container) return;
+    container.innerHTML = buildTreeSVGString(parseNewick(newick), {
+      measure: measurer(), width: container.clientWidth || 700, zoom: 1
+    });
+  }
+  window.renderTreeSVG = renderTreeSVG;   // exposed in case you want to call it directly
+
+  // ---------- wire into the existing Tree modal ----------
+  function refresh() {
+    var nwOut = document.getElementById('treeNewickOutput');
+    if (!buildPanel() || !nwOut) return;
+    // Only reload when the computed Newick actually changed, so re-rooting and
+    // swapping survive an incidental refresh.
+    if (nwOut.value && nwOut.value !== st.sourceNewick && nwOut.value !== toNewick(st.root || { name: '', len: 0, children: [] })) {
+      loadFromNewick(nwOut.value);
+    } else {
+      draw();
+    }
+  }
+  function init() {
+    var modal = document.getElementById('treeBuilderModal');
+    if (!modal) { setTimeout(init, 300); return; }   // wait for the modal to exist
+    buildPanel();
+    try {
+      new MutationObserver(function () {
+        if (modal.style.display && modal.style.display !== 'none') setTimeout(refresh, 20);
+      }).observe(modal, { attributes: true, attributeFilter: ['style'] });
+    } catch (e) {}
+    var btn = document.getElementById('buildTreeButton');
+    if (btn) btn.addEventListener('click', function () { setTimeout(refresh, 120); });
+    document.querySelectorAll('input[name="treeMethod"]').forEach(function (r) {
+      r.addEventListener('change', function () { setTimeout(refresh, 80); });
+    });
+  }
+  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', init);
+  else init();
+
+  // Exposed for tests.
+  window._treeDraw = {
+    parseNewick: parseNewick, toNewick: toNewick, rerootOnBranch: rerootOnBranch,
+    swapAt: swapAt, cloneTree: cloneTree, state: st, buildTreeSVGString: buildTreeSVGString
+  };

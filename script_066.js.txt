@@ -1,0 +1,679 @@
+[script.js lines 28523-29200 of ViewAlign fd8b8e4]
+// One pass over the rows, changing only those whose state differs. Was: remove the class
+// from every selected row, then one document-wide querySelectorAll per selected row to add
+// it back: 150 selected rows cost ~760 ms of script on a 316k-span alignment, plus a style
+// recalc over every row whose class was removed and re-added.
+function updateRowSelections() {
+    const sel = state.selectedRows;
+    // Only sequences can be selected rows. Anything else (the consensus line's -1, NaN) made
+    // Delete remove the wrong sequence and Copy / Move to top throw or insert undefined.
+    for (const v of sel) { const n = +v; if (!Number.isInteger(n) || n < 0) sel.delete(v); }
+    const els = document.querySelectorAll('.seq-line[data-seq-index], .seq-name[data-seq-index]');
+    for (let i = 0; i < els.length; i++) {
+        const e = els[i];
+        const raw = e.getAttribute('data-seq-index');
+        const want = sel.has(+raw) || sel.has(raw);
+        if (e.classList.contains('selected') !== want) e.classList.toggle('selected', want);
+    }
+    _updateSplitHint();
+    scheduleSelectionsPanelRefresh();
+    // Canvas draws selections on its overlay: without this, Ctrl+A said "All sequences selected." and showed nothing
+    if (isCanvasMode()) _canvasState.scheduleOverlay?.();
+}
+// Column highlight: toggle .column-selected on the spans of the columns that changed since
+// the last call, nothing else. Rows drawn later (render, windowed scroll) bake the class in
+// from state.selectedColumns, so syncing a column to the state is always correct.
+// History: first a classList change per span of every selected column (O(selected x rows)
+// per click), then one <style> rule listing `.seq-data > span[data-pos="N"]` for every
+// selected column. The rule made every change re-match that selector list against all
+// spans: on 316k spans one column cost ~1.7 s of style recalc, 201 columns 2.6 s, and
+// clearing 2 s. The delta costs one class change per span of the changed columns only.
+let _appliedColumnSel = new Set();
+// skipConsensus: leave the consensus row out (column selection; Highlight diffs marks it too)
+function _forEachSpanInColumns(cols, callback, skipConsensus = false) {
+    if (!cols.length) return;
+    const datas = document.querySelectorAll(skipConsensus ? '.seq-line:not(.consensus-line) > .seq-data' : '.seq-data');
+    for (let d = 0; d < datas.length; d++) {
+        const kids = datas[d].children;
+        if (!kids.length) continue;
+        // Spans are laid out in position order; breakpoint markers are extra children,
+        // so the span for pos sits at index (pos - first) or later.
+        let first = null;
+        let k0 = 0;
+        for (; k0 < kids.length; k0++) {
+            const r = kids[k0].getAttribute('data-pos');
+            if (r !== null) { first = +r; break; }
+        }
+        if (first === null) continue;
+        let last = first;
+        for (let k = kids.length - 1; k >= k0; k--) {
+            const r = kids[k].getAttribute('data-pos');
+            if (r !== null) { last = +r; break; }
+        }
+        for (let c = 0; c < cols.length; c++) {
+            const pos = cols[c];
+            if (pos < first || pos > last) continue;
+            for (let k = k0 + (pos - first); k < kids.length; k++) {
+                const r = kids[k].getAttribute('data-pos');
+                if (r === null) continue;
+                const p = +r;
+                if (p === pos) { callback(kids[k], pos); break; }
+                if (p > pos) break;
+            }
+        }
+    }
+}
+function updateColumnSelections() {
+    scheduleSelectionsPanelRefresh();
+    if (isCanvasMode()) _canvasState.scheduleOverlay?.();   // Canvas: the overlay holds the column selection too
+    const sel = state.selectedColumns;
+    const changed = [];
+    _appliedColumnSel.forEach(pos => { if (!sel.has(pos)) changed.push(pos); });
+    const next = new Set();
+    sel.forEach(pos => {
+        const n = Number(pos);
+        if (!Number.isInteger(n)) return;
+        next.add(n);
+        if (!_appliedColumnSel.has(n)) changed.push(n);
+    });
+    _appliedColumnSel = next;
+    // the edges of a run (.col-sel-l / .col-sel-r) change for the changed columns and their neighbours
+    const touched = new Set();
+    changed.forEach(p => { touched.add(p); touched.add(p - 1); touched.add(p + 1); });
+    // the consensus row is not part of a column selection (it was highlighted with it)
+    _forEachSpanInColumns([...touched].filter(p => p >= 0), (span, pos) => {
+        const on = next.has(pos);
+        span.classList.toggle('column-selected', on);
+        span.classList.toggle('col-sel-l', on && !next.has(pos - 1));
+        span.classList.toggle('col-sel-r', on && !next.has(pos + 1));
+    }, true);
+}
+
+let pendingNucDomUpdate = false;
+
+function detachNucSelectedHandlers(span) {
+    if (span.dataset.nucSelectedBound !== '1') return;
+    const handlers = span._nucSelectedHandlers;
+    if (handlers) {
+        span.removeEventListener('mouseover', handlers.mouseover);
+        span.removeEventListener('mouseout', handlers.mouseout);
+        span.removeEventListener('click', handlers.click);
+    }
+    delete span._nucSelectedHandlers;
+    delete span.dataset.nucSelectedBound;
+}
+
+function detachNucPendingHandlers(span) {
+    if (span.dataset.nucPendingBound !== '1') return;
+    const handlers = span._nucPendingHandlers;
+    if (handlers) {
+        span.removeEventListener('mouseover', handlers.mouseover);
+        span.removeEventListener('mouseout', handlers.mouseout);
+    }
+    delete span._nucPendingHandlers;
+    delete span.dataset.nucPendingBound;
+}
+
+function attachNucSelectedHandlers(span) {
+    if (span.dataset.nucSelectedBound === '1') return;
+    const mouseover = () => {
+        if (_pointerDragInProgress()) return;
+        showTooltipAt('Copy', span);
+    };
+    const mouseout = () => {
+        hideTooltip();
+    };
+    const click = (event) => {
+        event.stopPropagation();
+        event.preventDefault();
+        copySelected();
+    };
+    span.addEventListener('mouseover', mouseover);
+    span.addEventListener('mouseout', mouseout);
+    span.addEventListener('click', click);
+    span.dataset.nucSelectedBound = '1';
+    span._nucSelectedHandlers = { mouseover, mouseout, click };
+}
+
+function attachNucPendingHandlers(span) {
+    if (span.dataset.nucPendingBound === '1') return;
+    const mouseover = () => {
+        if (_pointerDragInProgress()) return;
+        showTooltipAt('Selection start - click another residue to complete the range (another row: a rectangle); in Edit mode Ctrl+click', span);
+    };
+    const mouseout = () => {
+        hideTooltip();
+    };
+    span.addEventListener('mouseover', mouseover);
+    span.addEventListener('mouseout', mouseout);
+    span.dataset.nucPendingBound = '1';
+    span._nucPendingHandlers = { mouseover, mouseout };
+}
+
+// All residue spans of a row (every block line of it) by alignment position, in one query
+function _rowSpansByPos(row) {
+    const byPos = new Map();
+    if (!alignmentContainer) return byPos;
+    const sel = row === CONSENSUS_ROW_INDEX ? '.seq-line.consensus-line .seq-data > span[data-pos]' : `.seq-line[data-seq-index="${row}"] .seq-data > span[data-pos]`;
+    alignmentContainer.querySelectorAll(sel).forEach(span => {
+        const pos = parseInt(span.dataset.pos, 10);
+        const list = byPos.get(pos);
+        if (list) list.push(span); else byPos.set(pos, [span]);
+    });
+    return byPos;
+}
+let _nucRowsTouched = new Map();   // row -> positions whose run-end classes may change in the current refresh
+function refreshNucleotideSelectionsImmediate() {
+    const container = alignmentContainer;
+    if (!container) return;
+    const desiredSelections = state.selectedNucs;
+    _nucRowsTouched = new Map();
+
+    // Remove selections that are no longer desired
+    for (const [row, posMap] of Array.from(state.domSelectedNucs.entries())) {
+        const desiredSet = desiredSelections.get(row);
+        if (!desiredSet || desiredSet.size === 0) {
+            for (const [pos, span] of Array.from(posMap.entries())) {
+                span.classList.remove('nuc-selected', 'nuc-sel-start', 'nuc-sel-end');
+                detachNucSelectedHandlers(span);
+                posMap.delete(pos);
+            }
+            state.domSelectedNucs.delete(row);
+            continue;
+        }
+        let t = null;
+        for (const [pos, span] of Array.from(posMap.entries())) {
+            if (!desiredSet.has(pos)) {
+                span.classList.remove('nuc-selected', 'nuc-sel-start', 'nuc-sel-end');
+                detachNucSelectedHandlers(span);
+                posMap.delete(pos);
+                if (!t) { t = new Set(); _nucRowsTouched.set(row, t); }
+                t.add(pos - 1); t.add(pos + 1);
+            }
+        }
+        if (posMap.size === 0) {
+            state.domSelectedNucs.delete(row);
+        }
+    }
+
+    // Add new selections: one DOM query per row that gained cells (a query per cell made a 30,000-cell
+    // rectangle cost ~90 ms per drag frame; GLM audit, v278)
+    const touched = _nucRowsTouched;   // row -> Set of positions whose run-end classes may have changed
+    desiredSelections.forEach((posSet, row) => {
+        const have = state.domSelectedNucs.get(row);
+        let missing = null;
+        posSet.forEach(pos => { if (!have || !have.has(pos)) (missing || (missing = [])).push(pos); });
+        if (!missing) return;
+        let byPos = null;   // the row's spans, queried once only when the span cache has no entry
+        let rowMap = have;
+        if (!rowMap) { rowMap = new Map(); state.domSelectedNucs.set(row, rowMap); }
+        let t = touched.get(row); if (!t) { t = new Set(); touched.set(row, t); }
+        missing.forEach(pos => {
+            const cached = getCachedSpan(row, pos);
+            let spans;
+            if (cached) spans = [cached];
+            else { if (!byPos) byPos = _rowSpansByPos(row); spans = byPos.get(pos); }
+            if (!spans) return;
+            spans.forEach(span => { span.classList.add('nuc-selected'); attachNucSelectedHandlers(span); rowMap.set(pos, span); });
+            t.add(pos - 1); t.add(pos); t.add(pos + 1);
+        });
+    });
+    // The first and last cell of each run of selected cells carry the frame's sides (styles.css), judged by
+    // the cells that exist on the page (a hidden column is not a neighbour: Canvas frames by shown slots the
+    // same way); only cells whose neighbours changed are touched, so a 30,000-cell rectangle drag stays cheap
+    // (a neighbour hidden by Variable sites only is on the page but not shown: it breaks the run; the layout
+    // reads of pass 1 are kept apart from the class writes of pass 2 so the browser lays out once)
+    const shownCache = new Map();
+    const shown = span => { let v = shownCache.get(span); if (v === undefined) { v = span.offsetParent !== null; shownCache.set(span, v); } return v; };
+    const writes = [];
+    touched.forEach((set, row) => {
+        const posMap = state.domSelectedNucs.get(row);
+        if (!posMap) return;
+        set.forEach(pos => {
+            const span = posMap.get(pos);
+            if (!span) return;
+            const left = posMap.get(pos - 1), right = posMap.get(pos + 1);
+            writes.push([span, !(left && shown(left)), !(right && shown(right))]);
+        });
+    });
+    writes.forEach(([span, start, end]) => { span.classList.toggle('nuc-sel-start', start); span.classList.toggle('nuc-sel-end', end); });
+
+    // Update pending indicator
+    if (state.domPendingNuc) {
+        const { span } = state.domPendingNuc;
+        span.classList.remove('nuc-pending');
+        detachNucPendingHandlers(span);
+        state.domPendingNuc = null;
+    }
+    if (state.pendingNucStart) {
+        const { row, pos } = state.pendingNucStart;
+        forEachRowSpanAtPosition(row, pos, (span) => {
+            if (!span.classList.contains('nuc-selected')) {
+                span.classList.add('nuc-pending');
+                attachNucPendingHandlers(span);
+                state.domPendingNuc = { row, pos, span };
+            }
+        });
+    }
+}
+
+function scheduleNucSelectionRefresh() {
+    if (pendingNucDomUpdate) return;
+    pendingNucDomUpdate = true;
+    const raf = (typeof window !== 'undefined' && window.requestAnimationFrame)
+        ? window.requestAnimationFrame.bind(window)
+        : (cb) => setTimeout(cb, 16);
+    raf(() => {
+        pendingNucDomUpdate = false;
+        refreshNucleotideSelectionsImmediate();
+        scheduleSelectionsPanelRefresh();
+    });
+}
+// EVENT LISTENERS
+function initializeAppUI() {
+    // This function is called once the DOM is fully loaded.
+
+    updateVersionIndicator();
+    initSelectionsPanel();
+    _initMafftAskPrefs();
+    checkSshServer();
+
+    // SSH fetch: Enter key and button
+    const sshPathInput = document.getElementById('sshPathInput');
+    const sshLoadButton = document.getElementById('sshLoadButton');
+    const checkQueueButton = document.getElementById('checkQueueButton');
+    if (sshPathInput) {
+        sshPathInput.addEventListener('keydown', (e) => {
+            if (e.key === 'Enter') {
+                e.preventDefault();
+                const serverKey = getSelectedServer();
+                fetchFileFromServer(sshPathInput.value, serverKey);
+            }
+        });
+    }
+    if (sshLoadButton) {
+        sshLoadButton.addEventListener('click', () => {
+            const serverKey = getSelectedServer();
+            fetchFileFromServer(document.getElementById('sshPathInput')?.value, serverKey);
+        });
+    }
+    if (checkQueueButton) {
+        checkQueueButton.addEventListener('click', () => {
+            checkMCQueueOnce();
+        });
+    }
+
+    const snapshotPathInput = document.getElementById('snapshotPathInput');
+    if (snapshotPathInput) {
+        snapshotPathInput.addEventListener('keydown', (e) => {
+            if (e.key === 'Enter') {
+                e.preventDefault();
+                openSnapshotFromManualPath();
+            }
+        });
+    }
+    refreshSnapshotList(true);
+
+    // Initialize source info
+    el('sourceInfo').innerHTML = 'No file loaded';
+    initSourceInfoInteractions();
+
+    // Initialize collapsible sections
+    try {
+        initializeCollapsibleSections();
+        restoreCollapsedState();
+    } catch (err) {
+        console.warn('Failed to initialize collapsible sections', err);
+    }
+
+    // No longer needed - hover handles all menu display
+    setTimeout(() => {
+        try {
+            // Clear any inline styles that might interfere with hover
+            document.querySelectorAll('.control-group').forEach(group => {
+                group.style.maxHeight = '';
+                group.style.display = '';
+            });
+        } catch (err) {
+            console.warn('Failed to clear menu styles', err);
+        }
+    }, 50);
+
+    // Use existing global DOM element references
+    let contextMenu = null;
+
+    if (dropZone) {
+        dropZone.addEventListener('dragover', (e) => {
+            e.preventDefault();
+            dropZone.style.borderColor = 'var(--dropzone-hover-border)';
+        });
+        dropZone.addEventListener('dragleave', () => {
+            dropZone.style.borderColor = 'var(--dropzone-border)';
+        });
+        dropZone.addEventListener('drop', async (e) => {
+            e.preventDefault();
+            dropZone.style.borderColor = 'var(--dropzone-border)';
+            // a BAM dropped with its .bai: the index goes with it (only the loaded region is then read)
+            const dropped = Array.from(e.dataTransfer.files || []);
+            const file = dropped.find(f => !/.(bai|csi|crai)$/i.test(f.name)) || dropped[0];
+            const droppedIndex = dropped.find(f => /.bai$/i.test(f.name)) || null;
+            if (!file) return;
+            // Chromium-only: capture a reusable handle (must call this
+            // synchronously off the drop event, before any await, but awaiting
+            // its result is fine) so Recent Files can actually re-read this file later.
+            const item = e.dataTransfer.items && e.dataTransfer.items[0];
+            const handlePromise = item && typeof item.getAsFileSystemHandle === 'function'
+                ? item.getAsFileSystemHandle().catch(() => null) : null;
+            if (await _routeReadsFile(file, droppedIndex)) return;
+            state.currentFilename = file.name;
+            state.currentFilePath = '';
+
+            if (handlePromise) {
+                const handle = await handlePromise; // null if unsupported or denied
+                if (handle && handle.kind === 'file') state._pendingFileHandle = handle;
+            }
+
+            try {
+                const { text } = await readSequenceFile(file);
+                _setInputText(text);
+                parseAndRender(true);
+            } catch (err) {
+                _fileReadFailed(file, err);
+            }
+        });
+        dropZone.addEventListener('click', async (e) => {
+            if (window.getSelection().toString()) return;
+            if (typeof window.showOpenFilePicker === 'function') {
+                try {
+                    const [handle] = await window.showOpenFilePicker({ multiple: false });
+                    const file = await handle.getFile();
+                    if (await _routeReadsFile(file)) return;
+                    state.currentFilename = file.name;
+                    state.currentFilePath = '';
+                    state._pendingFileHandle = handle;
+                    let text;
+                    try { text = (await readSequenceFile(file)).text; }
+                    catch (readErr) { _fileReadFailed(file, readErr); return; }   // the file, not the picker, failed
+                    _setInputText(text);
+                    parseAndRender(true);
+                } catch (err) {
+                    if (err && err.name === 'AbortError') return; // user cancelled the picker
+                    console.warn('showOpenFilePicker failed, falling back to classic file input', err);
+                    const fileInput = el('fileInput');
+                    fileInput.value = '';
+                    fileInput.click();
+                }
+                return;
+            }
+            const fileInput = el('fileInput');
+            fileInput.value = '';
+            fileInput.click();
+        });
+    }
+
+    el('fileInput')?.addEventListener('change', async (e) => {
+        const file = e.target.files[0];
+        if (!file) return;
+        state._pendingFileHandle = null;   // this path has no file handle (a stale one from a failed drop reopened the wrong file)
+        if (await _routeReadsFile(file)) return;
+        state.currentFilename = file.name;
+        state.currentFilePath = '';
+
+        readSequenceFile(file).then(({ text }) => {
+            _setInputText(text);
+            parseAndRender(true);
+        }).catch((err) => _fileReadFailed(file, err));
+    });
+
+    // Text typed or pasted by the user is not the file loaded before: forget its name
+    // (loading a file sets the box from code, which fires no 'input' event)
+    fastaInput?.addEventListener('input', () => {
+        _bigInputText = null;   // typed or pasted text replaces a big file held in memory
+        fastaInput.placeholder = _inputPlaceholder;
+        state.currentFilename = '';
+        state.currentFilePath = '';
+    });
+
+    fastaInput?.addEventListener('paste', () => {
+        setTimeout(() => {
+            parseAndRender(false);
+        }, 100);
+    });
+
+    // Attach listeners to all buttons
+    const buttonActions = {
+        'clearButton': () => _setInputText(''),
+        'loadButton': () => { if (_loadDiscardsEditsOk()) parseAndRender(false); },
+        'reverseComplementButton': reverseComplementSelected,
+        'reverseComplementAllButton': reverseComplementAll,
+        // Ctrl+C stays silent with nothing selected (it is pressed everywhere); the button says so
+        'copySelectedButton': () => {
+            if (!state.selectedRows.size && !state.selectedNucs.size) { showMessage('No sequences selected.', 2000); return; }
+            copySelected();
+        },
+        'copyAlignmentButton': copyAlignment,
+        'deleteSelectedButton': deleteSelected,
+        'undoButton': undoDelete,
+        'redoButton': redoAction,
+        'seqEditButton': () => openSeqEditor(),
+        'seqEditCloseBtn': closeSeqEditor,
+        'seqEditCancelBtn': closeSeqEditor,
+        'seqEditApplyBtn': seqEditApply,
+        'seqEditDegap': seqEditDegap,
+        'seqEditReverse': seqEditReverse,
+        'seqEditComplement': seqEditComplement,
+        'seqEditRevComp': seqEditRevComp,
+        'seqEditUppercase': seqEditUppercase,
+        'seqEditLowercase': seqEditLowercase,
+        'moveUpButton': moveSelectedUp,
+        'moveDownButton': moveSelectedDown,
+        'moveToTopButton': moveSelectedToTop,
+        'moveToBottomButton': moveSelectedToBottom,
+        'insertGroupConsensusButton': insertGroupConsensus,
+        'duplicateButton': duplicateSelected,
+        'openInNewTabButton': openSelectedInNewTab,
+        'openViewInNewTabButton': openViewInNewTab,
+        'buildTreeButton': openTreeBuilder,
+        'statsButton': openStats,
+        'repeatFinderMenuButton': openRepeatFinder,
+        'statsCloseBtn': closeStats,
+        'statsRecompute': () => openStats(),
+        'treeBuilderCloseBtn': closeTreeBuilder,
+        'treeCopyNewickBtn': copyTreeNewick,
+        'treeDownloadNewickBtn': downloadTreeNewick,
+        'selectAllButton': selectAllSequences,
+        'copyColumnsButton': copySelectedColumns,
+        'hideColumnsButton': hideSelectedColumns,
+        'hideUnselectedColumnsButton': hideUnselectedColumns,
+        'hideGappyColumnsButton': hideGappyColumns,
+        'revealColumnsButton': revealAllColumns,
+        'realignBlockButton': realignSelectedBlock,
+        'realignAllButton': realignAll,
+        'realignSelectedButton': realignSelected,
+        'addSequencesButton': openAddSequencesModal,
+        'addSeqPlusButton': openAddSequencesModal,
+        'blockSizeScreenBtn': setBlockSizeToScreen,
+        'addSeqJustAddButton': addSequencesJustAdd,
+        'addSeqSubmitButton': addSequencesAndAlign,
+        'addSeqCancelButton': closeAddSequencesModal,
+        'clusterNowButton': clusterSequences,
+        'previewTrimButton': previewTrimming,
+        'executeTrimButton': executeTrimming,
+        'undoTrimButton': undoTrimming,
+        'trimDropEmptyButton': removeGapColumns,
+        'clearSoftTrimButton': clearSoftTrimming,
+        'clusteringSavePresetButton': saveClusteringPreset,
+        // not passed directly: the click event arrived as `silent`, so Load never said it had loaded
+        'clusteringLoadPresetButton': () => loadClusteringPreset(),
+        'clusteringOptimalPresetButton': createOptimalPreset,
+        'clusteringProbeButton': analyzeClusterability,
+        'clusterGuideTreeButton': clusterByGuideTree,
+        'clusterClearTypesButton': clearTypePaint,
+        'clusterClearKmerButton': clearTypePaint,
+        'clusterClearSnpButton': clearTypePaint,
+        'blockMaskComputeButton': computeAndShowBlockMask,
+        'blockMaskClearButton': () => { clearBlockMask(); const s = el('blockMaskStatus'); if (s) s.textContent = ''; },
+        'blockMaskGroupButton': groupRowsByBlockMask,
+        'biclusterComputeButton': computeAndShowBicluster,
+        'biclusterClearButton': () => { clearBlockMask(); const s = el('blockMaskStatus'); if (s) s.textContent = ''; },
+        'biclusterGroupRowsButton': groupRowsByBlockMask,
+        'savePresetButton': savePreset,
+        'loadPresetButton': loadPreset,
+        'snapshotCreateTopButton': createSnapshot,
+        'exportSvgTopButton': exportVisibleViewportAsSvg,
+        'exportRtfButton': exportAlignmentAsRtf,
+        'exportSvgFullTopButton': exportFullAlignmentAsSvg,
+        'snapshotRefreshButton': refreshSnapshotList,
+        'snapshotOpenButton': openSelectedSnapshotFromInputMenu,
+        'snapshotPathOpenButton': openSnapshotFromManualPath,
+        'infoButton': openInfoModal,
+        'minimizeBtn': minimizeMenu,
+        'zoomInButton': () => adjustZoom(10),
+        'zoomOutButton': () => adjustZoom(-10),
+        'searchButton': searchMotif,
+        'searchPresetSaveBtn': saveSearchPreset,
+        'searchPresetLoadBtn': loadSearchPreset,
+        'searchPresetDeleteBtn': deleteSearchPreset,
+        'clearLastSearchButton': clearLastSearch,
+        'clearAllSearchesButton': clearAllSearches,
+        'copyConsensusButton': copyConsensus,
+        'copySelectedConsensusButton': copySelectedConsensus,
+        'degapBlockLeftButton': () => degapSelectedBlock('left'),
+        'degapBlockRightButton': () => degapSelectedBlock('right')
+    };
+
+    for (const id in buttonActions) {
+        el(id)?.addEventListener('click', buttonActions[id]);
+    }
+
+    ['trimKeepFrom', 'trimKeepTo'].forEach(id => {
+        const box = el(id);
+        if (!box) return;
+        box.addEventListener('change', () => { _applyKeepColsFromInputs(); debounceRender(); });
+        box.addEventListener('input', (e) => {
+            if (e.inputType === 'insertText' || e.inputType === 'deleteContentBackward' || e.inputType === 'deleteContentForward') return;
+            _applyKeepColsFromInputs();
+            debounceRender();
+        });
+    });
+
+    const trimBtn = el('executeTrimButton');
+    if (trimBtn) {
+        trimBtn.addEventListener('mouseenter', () => {
+            showTooltipAt(_trimButtonTooltipHtml(), trimBtn, { html: true, className: 'trim-tip' });
+        });
+        trimBtn.addEventListener('mouseleave', hideTooltip);
+        trimBtn.addEventListener('focus', () => {
+            showTooltipAt(_trimButtonTooltipHtml(), trimBtn, { html: true, className: 'trim-tip' });
+        });
+        trimBtn.addEventListener('blur', hideTooltip);
+    }
+
+    initializeGeneDocEditToolbar();
+
+    // Click outside to close Add Sequences modal
+    const addSeqModal = document.getElementById('addSeqModal');
+    if (addSeqModal) {
+        addSeqModal.addEventListener('click', (e) => {
+            if (e.target === addSeqModal) closeAddSequencesModal();
+        });
+    }
+
+    const treeBuilderModal = document.getElementById('treeBuilderModal');
+    if (treeBuilderModal) {
+        treeBuilderModal.addEventListener('click', (e) => {
+            if (e.target === treeBuilderModal) closeTreeBuilder();
+        });
+    }
+
+    // Click outside to close SeqEdit modal
+    const seqEditModal = document.getElementById('seqEditModal');
+    if (seqEditModal) {
+        seqEditModal.addEventListener('click', (e) => {
+            if (e.target === seqEditModal) closeSeqEditor();
+        });
+    }
+
+    // SeqEdit textarea: length on input, the undo history, and Cmd/Ctrl+Z (Undo), Cmd/Ctrl+Y and Cmd/Ctrl+Shift+Z (Redo)
+    const seqEditTextarea = document.getElementById('seqEditTextarea');
+    if (seqEditTextarea) {
+        seqEditTextarea.addEventListener('input', _updateSeqEditLength);
+                seqEditTextarea.addEventListener('input', _seqEditPushUndo);
+        seqEditTextarea.addEventListener('keydown', (e) => {
+            if ((e.ctrlKey || e.metaKey) && (e.key === 'z' || e.key === 'Z')) {   // Cmd as well as Ctrl (colleague check 2026-11-07)
+                e.preventDefault();
+                if (e.shiftKey) _seqEditRedo(); else _seqEditUndo();   // Cmd/Ctrl+Shift+Z is the platform's redo (it used to undo once more; GLM audit #2)
+            } else if ((e.ctrlKey || e.metaKey) && (e.key === 'y' || e.key === 'Y')) {
+                e.preventDefault(); _seqEditRedo();
+            }
+        });
+    }
+
+    // Undo/Redo dropdown buttons
+    const undoDropdownBtn = el('undoDropdownBtn');
+    if (undoDropdownBtn) {
+        undoDropdownBtn.addEventListener('click', (e) => {
+            e.stopPropagation();
+            showUndoRedoDropdown(undoDropdownBtn, state.deletedHistory, undoDelete, 'Undo');
+        });
+    }
+    const redoDropdownBtn = el('redoDropdownBtn');
+    if (redoDropdownBtn) {
+        redoDropdownBtn.addEventListener('click', (e) => {
+            e.stopPropagation();
+            showUndoRedoDropdown(redoDropdownBtn, state.redoHistory, redoAction, 'Redo');
+        });
+    }
+
+    // Initialize clustering preset list
+    updateClusteringPresetList();
+
+    // Auto-create and load "optimal" preset as default if not already present
+    setTimeout(() => {
+        const presets = safeLocalGet('clusteringPresets');
+        if (!presets['optimal']) {
+            // Create optimal preset silently
+            createOptimalPreset(true);
+        } else {
+            // Load existing optimal preset
+            const presetSelect = el('clusteringPresetList');
+            if (presetSelect) {
+                presetSelect.value = 'optimal';
+                loadClusteringPreset(true);
+            }
+        }
+    }, 100);
+
+    const searchInputEl = el('searchInput');
+    if (searchInputEl) {
+        searchInputEl.addEventListener('keydown', (e) => {
+            if (e.key === 'Enter') {
+                e.preventDefault();
+                searchMotif();
+            }
+        });
+    }
+    const reverseQueryButton = el('reverseComplementQueryButton');
+    if (reverseQueryButton && searchInputEl) {
+        reverseQueryButton.addEventListener('click', () => {
+            const raw = searchInputEl.value || '';
+            const motif = raw.trim().replace(/\s+/g, '').toUpperCase();
+            if (!motif) { showMessage('Type a motif in the Search box first.', 2500); return; }
+            searchInputEl.value = reverseComplement(motif);
+        });
+    }
+
+    minimizeBar?.addEventListener('click', expandMenu);
+    el('expandButton')?.addEventListener('click', expandMenu);
+
+    // UI listener wiring
+    attachUIListeners();
+
+    // Apply default consensus thresholds
+    setConsensusThresholdUI(DEFAULTS.consensusThreshold);
+    setGroupConsensusThresholdUI(DEFAULTS.groupConsensusThreshold);
+    setNameLengthUI(DEFAULTS.nameLength);
+
+    // Set initial state for controls
+    el('modeBlocks').checked = true;
+    el('modeSingle').checked = false;

@@ -1,0 +1,487 @@
+[macse-align.js lines 2264-2749 of ViewAlign fd8b8e4]
+                                    u = ss12; e = sl12; if (e === 1) go = spF[u] * hC[hb3 + spP[u]]; else if (e === 2) { go = spF[u] * hC[hb3 + spP[u]]; go += spF[u + 1] * hC[hb3 + spP[u + 1]]; } else { go = 0; for (q = 0; q < e; q++) go += spF[u + q] * hC[hb3 + spP[u + q]]; }
+                                    ps += (go | 0);
+                                    if (ps > best) { best = ps; cPc = 1; cDi = 2; cDj = 0; }
+                                }
+                            }
+                        }
+                        if (p2 !== NEG) {
+                            ps = p2 + inn;
+                            if (ps > best) {
+                                if (sd === 0) {
+                                    if (l1_1 > l2_3) { u = s2_3; e = l2_3; if (e === 1) s12 = cf2[u] * if1[o1_1 + ca2[u]]; else if (e === 2) { s12 = cf2[u] * if1[o1_1 + ca2[u]]; s12 += cf2[u + 1] * if1[o1_1 + ca2[u + 1]]; } else { s12 = 0; for (q = 0; q < e; q++) s12 += cf2[u + q] * if1[o1_1 + ca2[u + q]]; } }
+                                    else { u = s1_1; e = l1_1; if (e === 1) s12 = cf1[u] * if2[o2_3 + ca1[u]]; else if (e === 2) { s12 = cf1[u] * if2[o2_3 + ca1[u]]; s12 += cf1[u + 1] * if2[o2_3 + ca1[u + 1]]; } else { s12 = 0; for (q = 0; q < e; q++) s12 += cf1[u + q] * if2[o2_3 + ca1[u + q]]; } }
+                                    s12 |= 0; sd = 1;
+                                }
+                                ps += s12;
+                                if (ps > best) {
+                                    u = ss10; e = sl10; if (e === 1) go = spF[u] * hC[hb3 + spP[u]]; else if (e === 2) { go = spF[u] * hC[hb3 + spP[u]]; go += spF[u + 1] * hC[hb3 + spP[u + 1]]; } else { go = 0; for (q = 0; q < e; q++) go += spF[u + q] * hC[hb3 + spP[u + q]]; }
+                                    ps += (go | 0);
+                                    if (ps > best) { best = ps; cPc = 2; cDi = 2; cDj = 0; }
+                                }
+                            }
+                        }
+                    }
+                }
+                if (line >= 1) {   // (1, 0)
+                    rb = rowBase - 1 * RS + (lc3 - 0) * 3; p0 = T[rb]; p1 = T[rb + 1]; p2 = T[rb + 2];
+                    if (p0 !== NEG || p1 !== NEG || p2 !== NEG) {
+                        inn = a1_2 + a2_3; sd = 0;
+                        if (p0 !== NEG) {
+                            ps = p0 + inn;
+                            if (ps > best) {
+                                if (sd === 0) {
+                                    if (l1_2 > l2_3) { u = s2_3; e = l2_3; if (e === 1) s12 = cf2[u] * if1[o1_2 + ca2[u]]; else if (e === 2) { s12 = cf2[u] * if1[o1_2 + ca2[u]]; s12 += cf2[u + 1] * if1[o1_2 + ca2[u + 1]]; } else { s12 = 0; for (q = 0; q < e; q++) s12 += cf2[u + q] * if1[o1_2 + ca2[u + q]]; } }
+                                    else { u = s1_2; e = l1_2; if (e === 1) s12 = cf1[u] * if2[o2_3 + ca1[u]]; else if (e === 2) { s12 = cf1[u] * if2[o2_3 + ca1[u]]; s12 += cf1[u + 1] * if2[o2_3 + ca1[u + 1]]; } else { s12 = 0; for (q = 0; q < e; q++) s12 += cf1[u + q] * if2[o2_3 + ca1[u + q]]; } }
+                                    s12 |= 0; sd = 1;
+                                }
+                                ps += s12;
+                                if (ps > best) {
+                                    u = ss20; e = sl20; if (e === 1) go = spF[u] * hIE[hb3 + spP[u]]; else if (e === 2) { go = spF[u] * hIE[hb3 + spP[u]]; go += spF[u + 1] * hIE[hb3 + spP[u + 1]]; } else { go = 0; for (q = 0; q < e; q++) go += spF[u + q] * hIE[hb3 + spP[u + q]]; }
+                                    ps += (go | 0);
+                                    if (ps > best) { best = ps; cPc = 0; cDi = 1; cDj = 0; }
+                                }
+                            }
+                        }
+                        if (p1 !== NEG) {
+                            ps = p1 + inn;
+                            if (ps > best) {
+                                if (sd === 0) {
+                                    if (l1_2 > l2_3) { u = s2_3; e = l2_3; if (e === 1) s12 = cf2[u] * if1[o1_2 + ca2[u]]; else if (e === 2) { s12 = cf2[u] * if1[o1_2 + ca2[u]]; s12 += cf2[u + 1] * if1[o1_2 + ca2[u + 1]]; } else { s12 = 0; for (q = 0; q < e; q++) s12 += cf2[u + q] * if1[o1_2 + ca2[u + q]]; } }
+                                    else { u = s1_2; e = l1_2; if (e === 1) s12 = cf1[u] * if2[o2_3 + ca1[u]]; else if (e === 2) { s12 = cf1[u] * if2[o2_3 + ca1[u]]; s12 += cf1[u + 1] * if2[o2_3 + ca1[u + 1]]; } else { s12 = 0; for (q = 0; q < e; q++) s12 += cf1[u + q] * if2[o2_3 + ca1[u + q]]; } }
+                                    s12 |= 0; sd = 1;
+                                }
+                                ps += s12;
+                                if (ps > best) {
+                                    u = ss22; e = sl22; if (e === 1) go = spF[u] * hC[hb3 + spP[u]]; else if (e === 2) { go = spF[u] * hC[hb3 + spP[u]]; go += spF[u + 1] * hC[hb3 + spP[u + 1]]; } else { go = 0; for (q = 0; q < e; q++) go += spF[u + q] * hC[hb3 + spP[u + q]]; }
+                                    ps += (go | 0);
+                                    if (ps > best) { best = ps; cPc = 1; cDi = 1; cDj = 0; }
+                                }
+                            }
+                        }
+                        if (p2 !== NEG) {
+                            ps = p2 + inn;
+                            if (ps > best) {
+                                if (sd === 0) {
+                                    if (l1_2 > l2_3) { u = s2_3; e = l2_3; if (e === 1) s12 = cf2[u] * if1[o1_2 + ca2[u]]; else if (e === 2) { s12 = cf2[u] * if1[o1_2 + ca2[u]]; s12 += cf2[u + 1] * if1[o1_2 + ca2[u + 1]]; } else { s12 = 0; for (q = 0; q < e; q++) s12 += cf2[u + q] * if1[o1_2 + ca2[u + q]]; } }
+                                    else { u = s1_2; e = l1_2; if (e === 1) s12 = cf1[u] * if2[o2_3 + ca1[u]]; else if (e === 2) { s12 = cf1[u] * if2[o2_3 + ca1[u]]; s12 += cf1[u + 1] * if2[o2_3 + ca1[u + 1]]; } else { s12 = 0; for (q = 0; q < e; q++) s12 += cf1[u + q] * if2[o2_3 + ca1[u + q]]; } }
+                                    s12 |= 0; sd = 1;
+                                }
+                                ps += s12;
+                                if (ps > best) {
+                                    u = ss20; e = sl20; if (e === 1) go = spF[u] * hC[hb3 + spP[u]]; else if (e === 2) { go = spF[u] * hC[hb3 + spP[u]]; go += spF[u + 1] * hC[hb3 + spP[u + 1]]; } else { go = 0; for (q = 0; q < e; q++) go += spF[u + q] * hC[hb3 + spP[u + q]]; }
+                                    ps += (go | 0);
+                                    if (ps > best) { best = ps; cPc = 2; cDi = 1; cDj = 0; }
+                                }
+                            }
+                        }
+                    }
+                }
+                T[rowBase + lc3 * 3 + 0] = best;
+                cc = cPc << 2;
+                code |= (cc | cDi) << 6;
+                tb[tbRow + col] = code;
+            }
+        }
+        return 0;
+    }
+    // END GENERATED dpCore
+
+    // ------------------------------------------------------------------ WebAssembly build of the same kernel
+    // macse-dp-wasm.js holds dpCore compiled from tests/macse-port/dpcore.ts (generated from the same template). It is
+    // used when available; otherwise the JavaScript dpCore runs. Both give the same scores and traceback.
+    let wasmKernel = null, wasmTried = false;
+    function getWasmKernel() {
+        if (wasmTried) return wasmKernel;
+        wasmTried = true;
+        try {
+            let b64 = (typeof self !== 'undefined' && self.MacseDpWasm) || (typeof globalThis !== 'undefined' && globalThis.MacseDpWasm) || null;
+            if (!b64 && typeof require === 'function') { try { b64 = require('./macse-dp-wasm.js'); } catch (e) { b64 = null; } }
+            if (!b64 || typeof WebAssembly === 'undefined') return null;
+            const bytes = typeof Buffer !== 'undefined' ? new Uint8Array(Buffer.from(b64, 'base64')) : Uint8Array.from(atob(b64), c => c.charCodeAt(0));
+            const memory = new WebAssembly.Memory({ initial: 256, maximum: 65536 });
+            const inst = new WebAssembly.Instance(new WebAssembly.Module(bytes), { env: { memory, abort: () => { throw MacseError('wasm kernel abort'); } } });
+            wasmKernel = { memory, dpCore: inst.exports.dpCore, dpTile: inst.exports.dpTile };
+        } catch (e) {
+            wasmKernel = null;
+        }
+        return wasmKernel;
+    }
+    function runWasmDp(K, S1, S2, rowMin, rowMax, rowOff, tot, P1, P2) {
+        let off = 0;
+        const al = bytes => { const p = off; off += (bytes + 7) & ~7; return p; };
+        const lay = [];                                  // [ptr, typed array constructor, source array]
+        const put = (Ctor, src) => { const ptr = al(src.length * Ctor.BYTES_PER_ELEMENT); lay.push([ptr, Ctor, src]); return ptr; };
+        const pRowMin = put(Int32Array, rowMin), pRowMax = put(Int32Array, rowMax), pRowOff = put(Uint32Array, rowOff);
+        const pSc = al(8 * 12 * S2);
+        const a1 = [put(Float64Array, P1.internal), put(Int32Array, P1.cfStart), put(Int32Array, P1.cfLen), put(Int32Array, P1.cfAA),
+            put(Int32Array, P1.cfF), put(Int32Array, P1.inFront), put(Int32Array, P1.spStart), put(Int32Array, P1.spLen),
+            put(Int32Array, P1.spP), put(Int32Array, P1.spF)];
+        const a2 = [put(Float64Array, P2.internal), put(Int32Array, P2.cfStart), put(Int32Array, P2.cfLen), put(Int32Array, P2.cfAA),
+            put(Int32Array, P2.cfF), put(Int32Array, P2.inFront), put(Int32Array, P2.hC), put(Int32Array, P2.hIE), put(Int32Array, P2.hXIE)];
+        const pTb = al(2 * tot);
+        if (off > 4294967296 - 65536) throw MacseError('alignment needs more than 4 GB of memory');
+        const have = K.memory.buffer.byteLength;
+        if (off > have) {
+            try { K.memory.grow(Math.ceil((off - have) / 65536)); }
+            catch (e) { throw MacseError(`alignment needs ${Math.round(off / 1048576)} MB of memory, more than this browser allows`); }
+        }
+        const buf = K.memory.buffer;
+        for (const [ptr, Ctor, src] of lay) new Ctor(buf, ptr, src.length).set(src);
+        new Float64Array(buf, pSc, 12 * S2).fill(-Infinity);
+        const last = K.dpCore(S1, S2, pRowMin, pRowMax, pRowOff, pTb, pSc, ...a1, ...a2);
+        return { last, sc: new Float64Array(buf, pSc, 12 * S2), tb: new Uint16Array(buf, pTb, tot) };
+    }
+
+    class ProfileAligner {
+        constructor(ctx) { this.ctx = ctx; this.cur = [INS, 0, 0]; this.p1Coord = null; }
+
+        alignProfiles(set1, set2, bounds) {
+            const ctx = this.ctx;
+            const P1 = buildProfile(set1, ctx), P2 = buildProfile(set2, ctx);
+            const { t1, t2 } = this.dp(P1, P2, bounds);
+            return this.finish(P1, P2, t1, t2);
+        }
+
+        // ProfileAligner.alignProfiles after the dynamic programming: backtrack, gap restriction, frameshift positions.
+        finish(P1, P2, t1, t2) {
+            // ProfileAlignerBacktrack.backtrack
+            const bt = new SeqSet();
+            for (const [P, t] of [[P1, t1], [P2, t2]]) for (const sq of P.set.arr) {
+                const src = sq.acids, b = new Array(t.length); let cpt = 0;
+                for (let k = 0; k < t.length; k++) b[k] = t.charCodeAt(k) === 78 ? src[cpt++] : '-';
+                bt.add(new SeqNT(sq.name, removeUselessFrameshifts(b.join('')), sq.reliable));
+            }
+            let set = restrictNT(bt, false);
+            const kept = keptColumnsNT(set, false);
+            set = restrictNT(set, false);
+            let f1 = '', f2 = '';
+            for (let i = 0; i < kept.length; i++) if (kept[i]) { f1 += t1[i]; f2 += t2[i]; }
+            const toKept = t => { const k = new Uint8Array(t.length); for (let i = 0; i < t.length; i++) k[i] = t[i] !== '-' && t[i] !== '!' ? 1 : 0; return k; };
+            this.p1Kept = toKept(f1); this.p2Kept = toKept(f2);
+            this.p1Coord = new RestrictedCoordinates(this.p1Kept);
+            this.p1Coord.setFacingSite(new RestrictedCoordinates(this.p2Kept));
+            improveFrameshiftsPositions(set);
+            return set;
+        }
+
+        dp(P1, P2, bounds) {
+            const S1 = P1.S, S2 = P2.S, ctx = this.ctx;
+            const rowMin = new Int32Array(S1), rowMax = new Int32Array(S1), rowOff = new Float64Array(S1);
+            let tot = 0;
+            for (let l = 0; l < S1; l++) {
+                let a = 0, b = S2;
+                if (bounds) { a = bounds[l][0]; b = bounds[l][1]; }
+                rowMin[l] = a; rowMax[l] = b; rowOff[l] = tot; tot += Math.max(0, b - a);
+            }
+            if (tot > ctx.maxTracebackCells) throw MacseError(`alignment needs ${Math.round(tot * 2 / 1048576)} MB of traceback memory (limit ${Math.round(ctx.maxTracebackCells * 2 / 1048576)} MB)`);
+            // score rows [row slot + col*3 + matrix], -Infinity = not set (Java isSetCells false); traceback in the band
+            let tb, sc, last;
+            const K = ctx.useWasm === false ? null : getWasmKernel();
+            if (K) ({ tb, sc, last } = runWasmDp(K, S1, S2, rowMin, rowMax, rowOff, tot, P1, P2));
+            else {
+                tb = new Uint16Array(tot);
+                sc = new Float64Array(12 * S2).fill(-Infinity);
+                last = dpCore(S1, S2, rowMin, rowMax, rowOff, tb, sc, P1, P2);
+            }
+            // computeBacktrackPosition
+            let best = -Infinity, bm = -1;
+            for (let m = 0; m < 3; m++) { const v = sc[last + (S2 - 1) * 3 + m]; if (v !== -Infinity && v >= best) { best = v; bm = m; } }
+            if (bm < 0) throw MacseError('internal: no alignment path inside the band');
+            const parts1 = [], parts2 = [];
+            let line = S1 - 1, col = S2 - 1, m = bm;
+            while (line !== 0 || col !== 0) {
+                if (col < rowMin[line] || col >= rowMax[line]) throw MacseError('internal: traceback left the band');
+                const mv = tb[rowOff[line] + col - rowMin[line]];
+                let di, dj, pm;
+                if (m === DEL) { const x = mv >> 10; di = 0; dj = x & 3; pm = (x & 0xC) >> 2; }
+                else if (m === INS) { const x = mv >> 6; di = x & 3; dj = 0; pm = (x & 0xC) >> 2; }
+                else { dj = mv & 3; di = (mv & 0xC) >> 2; pm = (mv & 0x30) >> 4; }
+                if (di === 0 && dj === 0) throw MacseError('Infinite loop : ' + line + ' ' + col + '.');
+                parts1.push(TEMPLATE_FWD[di]); parts2.push(TEMPLATE_FWD[dj]);
+                line -= di; col -= dj; m = pm;
+            }
+            const t1 = parts1.reverse().join(''), t2 = parts2.reverse().join('');
+            if (t1.length > S1 + S2) throw MacseError('Crash.');
+            return { t1, t2 };
+        }
+    }
+
+    // ------------------------------------------------------------------ SP score (sequences.sp_scores.SPscoreLinear)
+    function spScoreLinear(setAA, ctx) {
+        const seqs = setAA.arr, n = setAA.sites(), M = ctx.matrix, c = ctx.costs;
+        const freq = new Int32Array(NAA * Math.max(n, 0));          // site-major: [site * NAA + amino byte]
+        for (const s of seqs) { const u = s.updated(); for (let site = 0; site < n; site++) { const t = u[site]; freq[site * NAA + (t < 91 ? A2B[t] : aByte(t))]++; } }
+        let subst = 0;
+        const used = new Int32Array(NAA);
+        for (let site = 0; site < n; site++) {
+            const f = site * NAA;
+            let nu = 0;
+            for (let a = 0; a < NAA; a++) if (freq[f + a] > 0) used[nu++] = a;
+            let siteScore = 0;
+            for (let x = 0; x < nu; x++) {
+                const ax = used[x], fx = freq[f + ax];
+                siteScore = (siteScore + Math.imul(idiv(Math.imul(fx, fx - 1), 2), M[ax * NAA + ax])) | 0;
+                for (let y = x + 1; y < nu; y++) siteScore = (siteScore + Math.imul(Math.imul(fx, freq[f + used[y]]), M[ax * NAA + used[y]])) | 0;
+            }
+            subst = (subst + siteScore) | 0;
+        }
+        const gapsFreq = new Int32Array(Math.max(n, 0)), closings = new Array(Math.max(n, 0));
+        for (const s of seqs) for (const iv of s.gapsIntervals()) {
+            for (let p = iv[0]; p <= iv[1]; p++) gapsFreq[p]++;
+            (closings[iv[1]] || (closings[iv[1]] = [])).push(iv);
+        }
+        let gapOpen = 0;
+        for (let site = 0; site < n; site++) {
+            const cl = closings[site];
+            if (!cl) continue;
+            let g = 0;
+            for (const iv of cl) {
+                const nb = seqs.length - gapsFreq[iv[0]];
+                const ext = site === n - 1 || iv[0] === 0;
+                g = (g + Math.imul(nb, ext ? c.gapOpTerm : c.gapOpInt)) | 0;
+            }
+            gapOpen = (gapOpen + g) | 0;
+            for (const iv of cl) for (let p = iv[0]; p <= iv[1]; p++) gapsFreq[p]--;
+        }
+        const score = f32((subst + gapOpen) | 0);
+        return f32(score / f32(10));
+    }
+
+    // ------------------------------------------------------------------ suffix tree and MEMs (programs.align.SuffixTree)
+    const INVALID_CHARS = '*!-X\u0001\u0002';
+    class NodeST {
+        constructor(begin, end, depth, parent, alen) {
+            this.begin = begin; this.end = end; this.depth = depth; this.parent = parent;
+            this.children = new Array(alen).fill(null); this.cc = -1; this.mask = 0; this.post = 0; this.link = null;
+        }
+        hasChildren() { for (const c of this.children) if (c) return true; return false; }
+        nextChild() { ++this.cc; while (this.cc < this.children.length) { if (this.children[this.cc]) return this.children[this.cc]; ++this.cc; } return null; }
+    }
+    class Mem {
+        constructor(p1, p2, len, rf1, rf2) {
+            this.posS1 = p1; this.posS2 = p2; this.length = len; this.rf1 = rf1 || 1; this.rf2 = rf2 || 1;
+            this.children = []; this.overlaps = []; this.nbPrevious = 0; this.maxScore = len; this.maxScoreSave = 0;
+        }
+        clearDag() { this.children = []; this.overlaps = []; this.maxScoreSave = this.maxScore; this.maxScore = this.length; }
+        tot() { return this.maxScore + this.maxScoreSave; }
+    }
+    const before = (n1, n2, len) => n1.posS1 + len < n2.posS1 && n1.posS2 + len < n2.posS2;
+    function addChildOverlap(n1, n2, direct) {
+        let o1, o2;
+        if (direct) { o1 = Math.max(n1.posS1 + n1.length - n2.posS1, 0); o2 = Math.max(n1.posS2 + n1.length - n2.posS2, 0); }
+        else { o1 = Math.max(n2.posS1 + n2.length - n1.posS1, 0); o2 = Math.max(n2.posS2 + n2.length - n1.posS2, 0); }
+        n1.overlaps.push(Math.max(o1, o2));
+        n1.children.push(n2); n2.nbPrevious++;
+    }
+    function linkIfCompatibleOverlap(a, b, direct) {
+        if (before(a, b, 0)) { if (direct) addChildOverlap(a, b, true); else addChildOverlap(b, a, false); }
+        else if (before(b, a, 0)) { if (direct) addChildOverlap(b, a, true); else addChildOverlap(a, b, false); }
+    }
+    function linkIfCompatible(a, b, direct) {
+        const add = (x, y) => { x.children.push(y); y.nbPrevious++; };
+        if (before(a, b, a.length)) { if (direct) add(a, b); else add(b, a); }
+        else if (before(b, a, b.length)) { if (direct) add(b, a); else add(a, b); }
+    }
+
+    class SuffixTree {
+        constructor(s1, s2, minMem, alphaName) {
+            const alpha = alphabetChars(alphaName);
+            this.alphabet = alpha.letters.replace(/X/g, '') + INVALID_CHARS;
+            this.s1 = s1; this.s2 = s2; this.minMem = minMem;
+            const a = s1[0] + '\u0001' + s1[1] + '\u0001' + s1[2], b = s2[0] + '\u0002' + s2[1] + '\u0002' + s2[2];
+            this.lim0 = a.length; this.lim1 = a.length + b.length + 1;
+            this.letters = a + '\u0001' + b + '\u0002';
+            this.alen = this.alphabet.length;
+            this.root = new NodeST(0, 0, 0, null, this.alen);
+            this.post = [];
+            this.build();
+            this.postOrder();
+            this.setMasks();
+        }
+        build() {
+            const L = this.letters, alen = this.alen, root = this.root;
+            const ab = new Int32Array(L.length);
+            for (let i = 0; i < L.length; i++) { const k = this.alphabet.indexOf(L[i]); ab[i] = (k << 24) >> 24; }   // (byte) cast
+            if (ab.some(v => v < 0)) throw MacseError('internal: character outside the distance alphabet');
+            let node = root, index = 0, tail = 0;
+            while (index < ab.length) {
+                let last = null;
+                while (tail >= 0) {
+                    let child = node.children[ab[index - tail]];
+                    while (child !== null && tail >= child.end - child.begin) {
+                        node = child;
+                        tail -= child.end - child.begin;
+                        child = child.children[ab[index - tail]];
+                    }
+                    if (child === null) {
+                        node.children[ab[index]] = new NodeST(index, ab.length, node.depth + node.end - node.begin, node, alen);
+                        if (last !== null) last.link = node;
+                        last = null;
+                    } else {
+                        const c = ab[child.begin + tail];
+                        if (c === ab[index]) { if (last === null) break; last.link = node; break; }
+                        const split = new NodeST(child.begin, child.begin + tail, node.depth + node.end - node.begin, node, alen);
+                        const nn = new NodeST(index, ab.length, child.depth + tail, split, alen);
+                        split.children[ab[index]] = nn;
+                        split.children[c] = child;
+                        child.parent = split; child.begin += tail; child.depth += tail;
+                        node.children[ab[index - tail]] = split;
+                        if (last !== null) last.link = split;
+                        last = split;
+                    }
+                    if (node === root) { --tail; continue; }
+                    node = node.link;
+                }
+                ++index; ++tail;
+            }
+        }
+        postOrder() {
+            let pos = 0, node = this.root;
+            while (node !== null) {
+                const nc = node.nextChild();
+                if (nc !== null) { node = nc; continue; }
+                this.post.push(node); node.post = pos++; node.cc = -1; node = node.parent;
+            }
+        }
+        setMasks() {
+            const i1 = this.lim0, i2 = this.lim1;
+            for (const node of this.post) {
+                let mc = 0;
+                for (const c of node.children) if (c) mc |= c.mask;
+                const rb = node.begin - node.depth;
+                if (rb <= i1 && i1 < node.end) node.mask = 1;
+                else if (i1 < rb && rb <= i2 && i2 < node.end) node.mask = 2;
+                node.mask |= mc;
+            }
+        }
+        validPrefixNodes() {
+            const n = this.post.length, v = new Uint8Array(n), L = this.letters;
+            v[n - 1] = 1;
+            for (let id = n - 2; id >= 0; id--) {
+                const node = this.post[id];
+                v[id] = v[node.parent.post];
+                if (v[id]) for (let i = node.begin; i < node.end; i++) if (INVALID_CHARS.indexOf(L[i]) >= 0) { v[id] = 0; break; }
+            }
+            return v;
+        }
+        mems() {
+            const valid = this.validPrefixNodes(), L = this.letters, minMem = this.minMem;
+            const lists = new Array(this.post.length);
+            const mems = [];
+            const newList = pos => { const nd = { pos, next: null }; return { head: nd, tail: nd }; };
+            const append = (dst, src) => {
+                if (src.head !== null) { if (dst.head === null) dst.head = src.head; else dst.tail.next = src.head; dst.tail = src.tail; }
+            };
+            const localMem = (node, child, lgMax, normal) => {
+                const id1 = normal ? 1 : 2, id2 = normal ? 2 : 1;
+                for (let li = lists[node.post][id1].head; li !== null; li = li.next) {
+                    for (let lj = lists[child.post][id2].head; lj !== null; lj = lj.next) {
+                        const left = li.pos > 0 && lj.pos > 0 && L[li.pos - 1] === L[lj.pos - 1] && INVALID_CHARS.indexOf(L[li.pos - 1]) < 0;
+                        if (lgMax >= minMem && !left) mems.push(normal ? new Mem(li.pos, lj.pos, lgMax) : new Mem(lj.pos, li.pos, lgMax));
+                    }
+                }
+            };
+            for (const node of this.post) {
+                lists[node.post] = [null, { head: null, tail: null }, { head: null, tail: null }];
+                const start = node.begin - node.depth;
+                if (!node.hasChildren()) {
+                    const tgt = lists[node.post][node.mask];
+                    if (!tgt) throw MacseError('internal: suffix tree leaf without mask');
+                    append(tgt, newList(start));
+                    continue;
+                }
+                const lg1 = node.depth + node.end - node.begin;
+                const parent = node.parent;
+                const validParent = parent === null || valid[parent.post] === 1;
+                const validNode = valid[node.post] === 1;
+                let lg2 = lg1;
+                if (validParent && !validNode) {
+                    lg2 = parent.depth + parent.end - parent.begin;
+                    if (lg1 >= minMem) for (let i = node.begin; i < node.end; i++) { if (INVALID_CHARS.indexOf(L[i]) >= 0) break; ++lg2; }
+                }
+                for (let ci = 0; ci < this.alen; ci++) {
+                    const child = node.children[ci];
+                    if (child === null) continue;
+                    if (validNode && validParent && lg1 >= minMem) { localMem(node, child, lg1, true); localMem(node, child, lg1, false); }
+                    append(lists[node.post][1], lists[child.post][1]);
+                    append(lists[node.post][2], lists[child.post][2]);
+                }
+                if (!validParent || validNode || lg2 < minMem) continue;
+                localMem(node, node, lg2, true);
+            }
+            return mems;
+        }
+        maxCompatibleMems(mems, overlap, direct) {
+            for (const m of mems) m.clearDag();
+            for (let i = 0; i < mems.length; i++) for (let j = i + 1; j < mems.length; j++) {
+                if (overlap) linkIfCompatibleOverlap(mems[i], mems[j], direct); else linkIfCompatible(mems[i], mems[j], direct);
+            }
+            const stack = [];
+            for (const m of mems) if (m.nbPrevious === 0) stack.push(m);
+            while (stack.length) {
+                const cur = stack.pop();
+                for (let c = 0; c < cur.children.length; c++) {
+                    const ch = cur.children[c];
+                    let ns = cur.maxScore + ch.length - 10;
+                    if (cur.rf1 !== ch.rf1) ns -= 30;
+                    if (cur.rf2 !== ch.rf2) ns -= 30;
+                    if (overlap) ns -= cur.overlaps[c];
+                    ns = Math.max(ns, ch.length);
+                    ch.maxScore = Math.max(ns, ch.maxScore);
+                    ch.nbPrevious--;
+                    if (ch.nbPrevious === 0) stack.push(ch);
+                }
+            }
+            let init = false, max = 0;
+            for (const m of mems) { if (init && m.maxScore <= max) continue; max = m.maxScore; init = true; }
+            return max;
+        }
+        filteredMems(mems, overlap, minFraction, maxDist) {
+            const dir = f32(this.maxCompatibleMems(mems, overlap, true));
+            this.maxCompatibleMems(mems, overlap, false);
+            const maxScore = dir;
+            const out = [];
+            const minLg = 3 * Math.min(this.s1[0].length, this.s2[0].length);
+            const distance = f32(1 - f32(dir / f32(minLg)));
+            if (maxDist > 0 && distance > maxDist) return out;
+            for (const m of mems) {
+                const through = f32(m.tot() - m.length);
+                const frac = f32(through / maxScore);
+                if (frac >= minFraction) out.push(m);
+            }
+            return out;
+        }
+        ntMems3RF(maxDist) {
+            const s1 = this.s1, s2 = this.s2;
+            const st1 = [0, s1[0].length + 1, s1[0].length + s1[1].length + 2];
+            const f2 = s1[0].length + s1[1].length + s1[2].length + 3;
+            const st2 = [f2, f2 + s2[0].length + 1, f2 + s2[0].length + s2[1].length + 2];
+            const conv = (p, st) => p < st[1] ? [(p - st[0]) * 3, 1] : (p < st[2] ? [(p - st[1]) * 3 - 2, 2] : [(p - st[2]) * 3 - 1, 3]);
+            const nt = this.mems().map(m => { const a = conv(m.posS1, st1), b = conv(m.posS2, st2); return new Mem(a[0], b[0], m.length * 3, a[1], b[1]); });
+            return this.filteredMems(nt, true, 0.8, maxDist === undefined ? -1 : maxDist);
+        }
+        memDist3RF() {
+            const mems = this.ntMems3RF();
+            const maxComp = this.maxCompatibleMems(mems, true, true);
+            const minLg = 3 * Math.min(this.s1[0].length, this.s2[0].length);
+            return f32(1 - f32(f32(maxComp) / f32(minLg)));
+        }
+    }
+
+    // ------------------------------------------------------------------ guide tree (programs.align.AlignmentDynamicTree)
+    function seqCons3RF(seqNT, ctx) {
+        const aa = seqNT.toAminos(ctx), alpha = alphabetChars(ctx.alphabet), r = [];
+        for (let rf = 0; rf < 3; rf++) r.push(translateAlphabet(aa.frameAminos(rf + 1).acids, alpha));
+        return r;
+    }
+    function consensusSequence(setAA, ctx, threshold) {   // SeqSetAA.computeConsensusSequence
+        const alpha = alphabetChars(ctx.alphabet), res = [];
+        for (let rf = 0; rf <= 2; rf++) {
+            const framed = frameSet(setAA, rf + 1);
+            const comp = framed.arr.map(s => translateAlphabet(s.acids, alpha));
+            const nbSites = framed.sites();
+            let out = '';
+            for (let site = 0; site < nbSites; site++) {
+                const fq = new Int32Array(NAA);
+                for (let k = 0; k < framed.arr.length; k++) { if (framed.arr[k].isGap(site)) continue; fq[aByte(comp[k].charCodeAt(site))]++; }
