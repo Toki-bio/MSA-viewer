@@ -1,0 +1,63 @@
+{
+  "findings": [
+    {
+      "confidence": 4,
+      "file": "script.js",
+      "line": 27868,
+      "quote": "        state.seqs[index].header = newHeader;",
+      "reasoning": "The editors seed both the Name field and the text record from fullHeader (openSeqEditor 27489 / openSeqEditorMulti 27534, per the handoff they write '>' + (fullHeader || header)). _getSeqEditMultiFasta takes each record's name from the '>' line (27626: currentHeader = trimmed.substring(1).trim();), so records[0].header = the long name 'Homo sapiens'. On Apply, 27844 (const newHeader = newFullHeader.split(/\\s+/)[0];) reduces the unedited long name to its first word, and 27868 overwrites state.seqs[index].header with it while 27869 restores the same fullHeader - so even a no-name-change apply rewrites the row's header. For a NEXUS row, header 'Homo_sapiens' and fullHeader 'Homo sapiens' differ by design: 8668 (seqs.push({ header: display.get(key), fullHeader: key, ... })) stores the underscored display name as header and the spaced key as fullHeader. A rename path also allows this divergence: 14494/14495 set header and fullHeader to the whole new name, so a spaced rename ('Homo sapiens') makes header two words long. Either way Apply shrinks the header to 'Homo'.",
+      "scenario": "Import a NEXUS matrix line 'Homo_sapiens ATGC...' -> row header 'Homo_sapiens', fullHeader 'Homo sapiens' (8668). Open the single-row Sequence editor (Name field shows 'Homo sapiens'), change one residue in the sequence text, click Apply: state.seqs[index].header becomes 'Homo' (27868) though the user only edited a residue. Wrong data: the row's name silently changes; name colours keyed by header (23256 uses q.header) detach, and the next export writes 'Homo' as the short id instead of 'Homo_sapiens'.",
+      "severity": "high",
+      "title": "seqEditApply single-row path silently renames a row whose header is not the first word of its long name (NEXUS 'Homo_sapiens' becomes 'Homo')",
+      "verdict": "defect"
+    },
+    {
+      "confidence": 4,
+      "file": "script.js",
+      "line": 27779,
+      "quote": "            state.seqs[idx].header = fullH.split(/\\s+/)[0];",
+      "reasoning": "Multi-record path has the same truncation rule as the single path: 27778 (const fullH = entries[i].header;) takes the defline as parsed at 27626, 27779 overwrites the row's header with the first whitespace word of that defline, 27780 overwrites fullHeader. When an edited record's defline keeps the row's long name (as seeded by openSeqEditorMulti 27555 '>' + (fullHeader || header)), this matches the single-path behavior - but for rows whose header differs from the first word of the fullHeader (NEXUS 8668: header from display.get(key), fullHeader = key), an untouched or sequence-only edited record still loses its underscored display name. Same for extra records creating new rows (27790/27792 derive header the same way), while the nicer name-preserving pattern exists in imports (9032) but is not applied here. Discriminates from finding 1's 27868 by path: this is the multi-match branch reached whenever more than one record is pasted/edited.",
+      "scenario": "Select two NEXUS-imported rows (both with header 'Homo_sapiens', fullHeader 'Homo sapiens'), open the multi Sequence editor, change one residue in one of the two records, Apply. The matching record's row header is rewritten to 'Homo' although its name was not edited; the affected state.seqs[idx].header (27779) is silently changed (name colours and any id-keyed features detach).",
+      "severity": "medium",
+      "title": "Multi-record path also rebuilds the header from the record defline's first word, corrupting NEXUS-style and renamed headers",
+      "verdict": "defect"
+    },
+    {
+      "confidence": 3,
+      "file": "script.js",
+      "line": 27792,
+      "quote": "                header: fullH.split(/\\s+/)[0],",
+      "reasoning": "A '>' line with no name (or spaces only) yields an empty record header: 27626 sets currentHeader = trimmed.substring(1).trim(), so the record lands in entries with header ''. Then 27778-27780 (by-name single-match branch) and 27790-27792 (extra-record branch) store header ''.split(/\\s+/)[0] = '' and fullHeader = '' on the row: the row's name is silently wiped. Unlike every import path, which guards against empty names (8735: const displayHeader = cleanHeader.split(/\\s+/)[0] || 'unnamed'; also 9032, 26991, 18133-18138 with the same trim+collapse+'unnamed' pattern), seqEditApply applies no fallback, so the result is a row with both header and fullHeader empty (it then renders via the 'row N' fallback at 27547 but exports as '>' with nothing).",
+      "scenario": "Open the multi Sequence editor on two rows; in one record's defline delete the name leaving just '>' (or '>   '); change a residue; Apply with matching record counts. That row's header and fullHeader both become '' (27778-27780) / the new record's row is created with header '' (27792). Result: silent loss of the row's name, later grouping/export/colour features that use q.header see an empty id (23256 falls back to 'unnamed' only after the damage is stored).",
+      "severity": "medium",
+      "title": "A record header '>' with no name (or spaces only) wipes the target row's name to '' - no 'unnamed' fallback inside seqEditApply",
+      "verdict": "defect"
+    },
+    {
+      "confidence": 3,
+      "file": "script.js",
+      "line": 27747,
+      "quote": "            indices.forEach(idx => { const q = state.seqs[idx]; if (!q) return; const k = q.fullHeader || q.header; if (!byName.has(k)) byName.set(k, []); byName.get(k).push(idx); });",
+      "reasoning": "When the record count no longer matches the opened rows (one record removed), matching switches to the by-name map built at 27747. For two rows sharing the name 'X', the key 'X' maps to both indices in selection/display order (indices.forEach pushes ascending). The surviving record's header 'X' therefore reaches the first (lowest-index) of the two same-named rows; the other row is left unchanged, and the count-based branches are skipped because the unmatched entry count/quantities the loop needs are read later at 27746-27760, not here. With two rows of the same name, no algorithm can tell which row the surviving record was meant for, and the code resolves it deterministically (first occurrence) rather than breaking the edit, so the case is handled coherently.",
+      "scenario": "Open the multi editor on two rows both named 'X', delete one of the two '>'-records from the text, Apply: the remaining record is assigned to the first (top) 'X' row, the second 'X' row is untouched. Deterministic and consistent with the (name, n-th occurrence) convention; correct behavior for an inherently ambiguous input.",
+      "severity": "none",
+      "title": "By-name matching is deterministic for duplicate names with a removed record: the row that comes first gets the surviving record",
+      "verdict": "ok"
+    },
+    {
+      "confidence": 4,
+      "file": "script.js",
+      "line": 27626,
+      "quote": "            currentHeader = trimmed.substring(1).trim();",
+      "reasoning": "The map key (27747) is q.fullHeader || q.header; the record header parsed back is the '>' line's content minus '>' and trimmed (27626). The editors seed each '>' line with the same q.fullHeader || q.header string (openSeqEditorMulti 27555), so a round trip only diverges if the row's fullHeader has leading/trailing whitespace. Every setter normalizes: rename trims the input (14495/14529); Add & Align and the paste/add paths use trim().replace(/\\s+/g, ' ') || 'unnamed' (26991-26995, 27280-27281, 18133-18138); parseFasta's _pushParsedFastaSequence derives fullHeader from a collapsed/trimmed cleanHeader (8734-8735, same 'unnamed' fallback); NEXUS stores fullHeader = the key built from parsed tokens (8668). Hence an unedited record's parsed header is character-for-character the map key, and the by-name lookup (catching the case where an unedited record must merge back) cannot fail for whitespace reasons.",
+      "scenario": "For any row imported or edited via the app, seeding the multi editor and immediately clicking Apply yields records whose header equals the q.fullHeader || q.header key (whitespace never leading/trailing, internal whitespace preserved identically by 27626), so the by-name path always matches unedited records. Covered as designed.",
+      "severity": "none",
+      "title": "By-name key vs record header can NOT diverge for an unedited record: the editors seed the '>' line with the same normalized value and trim() cannot change it",
+      "verdict": "ok"
+    }
+  ],
+  "counts": {
+    "findings": 5
+  },
+  "note": "Q15 part 2 answered with 5 findings: (a) defect - single (27868) and multi (27779/27792) paths derive the header from the long name's first word, so a NEXUS row 'Homo_sapiens'/'Homo sapiens' is silently renamed to 'Homo' after editing just one residue; (c) defect - a '>' line with no name or spaces only yields header '' and wipes the row's name with no 'unnamed' fallback unlike 8735/9032/26991; (b) ok - duplicate-name by-name matching (27747) deterministically assigns the surviving record to the first same-named row in display order; (d) ok - map key and parsed record header cannot differ for an unedited record because all fullHeader setters trim/collapse whitespace and 27626's trim() is a no-op on them. Quotes were verified by targeted greps; some flow-level traces rest on the handoff's stated behavior of 27489/27534/27746-27760, so confidence is 3-4 rather than 5."
+}

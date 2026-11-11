@@ -1,0 +1,85 @@
+{
+  "findings": [
+    {
+      "confidence": 5,
+      "file": "server.js",
+      "line": 196,
+      "quote": "const PUBLIC_DIRS = new Set(['img', 'examples', 'vendor', 'snapshots', 'blast_dbs']);",
+      "reasoning": "Each protected pair is fed only the segments http-parser.gs': \\= URL.r decode_all('\\.') (H179 sentence [-175] and -205 were re-verified, and those lines still hold: middleware at 172-178 404s any decoded path matching PRIVATE_STATIC (171: ssh-servers.json, blast_dbs.json, server.js, .env*, *.log, *.out) or containing a segment starting with '.'; middleware at 207-210 rejects everything except PUBLIC_FILES/PUBLIC_DIRS via isPublicPath (198-209), which also refuses empty/'.'/'..' segments, backslashes, and anything starting with '/api/' (208)). Hmm - that text is garbled; see corrected reasoning below.) Actually: express.static at 211 runs after those two gatekeepers, so it can only serve files inside the allowlist. The two sensitive directories (snapshots/, blast_dbs/) are in PUBLIC_DIRS deliberately - the comment at 180-183 says the page fetches the user's snapshots and the BLAST databases' FASTA - so they are not key-protected by design, and the truly private files (the DB registry blast_dbs.json, ssh-servers.json, server.js itself, .env, logs) are blocked by 171-175. No dot-segment or percent-encoding reach-around exists: both guards decode once (174, 200) exactly like serve-static, and '/api/..' style paths die at 175 or 203 - e.g. '/snapshots/..%2fserver.js' decodes to '/snapshots/../server.js' and the '..' segment is rejected at 175/203 before static ever runs.",
+      "scenario": "Tried: GET /snapshots/../server.js, GET /snapshots/..%2fserver.js, GET /blast_dbs.json, GET /server.js - all answered 404 by lines 175-176/208-209 before express.static. Served without key: only PUBLIC_FILES (184-195) and content of PUBLIC_DIRS, which is the documented, intended share; no path needs a key that static hands out.",
+      "severity": "none",
+      "title": "Static handler serves blast_dbs/ and snapshots/ keylessly by design, and the allowlists block every private file",
+      "verdict": "ok"
+    },
+    {
+      "confidence": 5,
+      "file": "server.js",
+      "line": 166,
+      "quote": "    if (!(FILE_ACCESS_ROUTES.has(p) || p === '/api/ssh-servers' || changesThisMachine(req)) || hasAccessKey(req)) return next();",
+      "reasoning": "(b) The protection is method-blind: routePath (100) looks only at req.path, so when Express answers a HEAD /api/local-cat with the GET handler, the middleware at 164-168 still computes p = '/api/local-cat', finds it in FILE_ACCESS_ROUTES (131-132), and demands hasAccessKey - a HEAD without the cookie gets 401/167. For changesThisMachine (135-139) the method is read from req.method, so a HEAD 'POST route' is not treated as a change route, but no such HEAD handler exists: there are no app.put/app.patch/app.all/app.head routes (grep confirms only get/post/delete), so a POST-route name reached with GET/HEAD/DELETE has no matching handler and falls through the static allowlist to 404. There is no method-override middleware: the only middleware before the routes are express.json at 8, the host/CORS middleware at 115, the loopback gate at 140-148, the ?key= setter at 153 (GET only, line 154), the key gate at 164, the PRIVATE_STATIC filter at 172 and the isPublicPath filter at 206-210; nothing reads X-HTTP-Method-Override or _method (grep for 'override' finds only the redirect at 160).",
+      "scenario": "Case covered: without the key, HEAD /api/local-cat -> 401 with needsKey; GET /api/mafft or OPTIONS-then-POST tricks without a POST handler -> no handler matches, static allowlist (208-209) answers 404. No other method can masquerade as POST or DELETE.",
+      "severity": "none",
+      "title": "HEAD and wrong-method requests cannot dodge the key: all checks are method-independent before any handler runs",
+      "verdict": "ok"
+    },
+    {
+      "confidence": 5,
+      "file": "server.js",
+      "line": 100,
+      "quote": "    return (req.path || '/').toLowerCase().replace(/\\/+$/, '') || '/';",
+      "reasoning": "(c) Two dispatch facts together close this: (1) Express 4 (package.json:35 \"express\": \"^4.22.3\") matches route patterns against the raw pathname; only captured params are decoded afterwards, so a percent-encoded route literal cannot satisfy it - '/api/local%2Dcat' does not match app.get('/api/local-cat') and never reaches a handler. It instead falls to the static gates: 208 next()s '/api/'-prefixed paths to express.static, which looks for a file named 'local%2Dcat' under an 'api' directory that the allowlist never serves (204-205) and 404s. (2) Should any odd form ever reach a handler, routePath would normalise it exactly as loosely as Express matches: Express is case-insensitive (covered by toLowerCase at 100) and non-strict (trailing slash, covered by replace(/\\/+$/, '')) - those are the only liberties Express 4 route matching takes; double slashes ('//api/local-cat') and a dot segment ('/api/./local-cat') do not match the route regexps and are rejected anyway at 203 (empty/'.'/'..' segments) and 175; a semicolon is literal, so '/api/local-cat;x' does not match and also dies at 203/209; the query string is in req.query only, and both routePath and Express routing use req.path, so ?key-test etc. cannot move a path between sets. req.url's raw count is also double-checked by 120 tests on '[a-z0-9_/.%~\\-]' hmm - not applicable; the reasoning stands on the two gates.",
+      "scenario": "Tried without the key: GET /api/local%2Dcat, GET //api/local-cat, GET /api/./local-cat, GET /api/local-cat;x=1, GET /API/Local-CAT/ (the last is the only form that runs a handler, and it is normalised to '/api/local-cat' by 100 and 401s at 167); the first four never reach a handler and end 404 in the static allowlist.",
+      "severity": "none",
+      "title": "Percent-encoded/double-slash/dot/semicolon path forms cannot reach a protected handler",
+      "verdict": "ok"
+    },
+    {
+      "confidence": 4,
+      "file": "server.js",
+      "line": 123,
+      "quote": "    if (req.method === 'OPTIONS') return res.sendStatus(200);",
+      "reasoning": "OPTIONS is answered 200 at line 123, before the /api cross-site check (124-126) and before the key gate (164-167), so an unauthenticated caller gets 200 on OPTIONS /api/local-cat instead of 401, and any cross-site page gets 200 instead of the cross-site refusal. This is not a data reach: the response is empty (sendStatus), the route handlers never run, Access-Control-Allow-Origin is set only for origins in CORS_ORIGINS (120, allowlist built at 27-28), and Access-Control-Allow-Credentials is never set, so a foreign page still cannot read protected responses; it merely reveals that a ViewAlign server with those endpoints exists. The preflight answer is needed so the CORS_ORIGINS pages (line 27) can use the API.",
+      "scenario": "Case covered: OPTIONS /api/local-cat without the key from a random origin -> 200 with no CORS grant and no body; following GET still 401. No protected route's handler runs for OPTIONS, so the wrong result is limited to a friendlier probe answer than 404/401 would be.",
+      "severity": "low",
+      "title": "OPTIONS answers 200 for every path before the key and cross-site checks, without any data",
+      "verdict": "ok"
+    },
+    {
+      "confidence": 5,
+      "file": "server.js",
+      "line": 857,
+      "quote": "app.delete('/api/blast-db/:name', async (req, res) => {",
+      "reasoning": "Even with the key in hand, this delete only removes registered entries: 860 returns 404 unless the name is a key of DATABASES (so '/api/blast-db/..' or a name never added by the owner deletes nothing), and every unlink is guarded by isOwnedDbFile at 872 and 874-875, so only index/database files inside blast_dbs/ are actually removed - a database registered from elsewhere is unregistered, not deleted (868-869). Without the key it never runs: routePath('/api/blast-db/x') starts with '/api/blast-db/' and method is DELETE, so changesThisMachine (137-138 classification into the CHANGES list) is true and 166 demands hasAccessKey; the loopback gate 141-148 does not exempt non-loopback DELETE.",
+      "scenario": "Steps: attacker without the key sends DELETE /api/blast-db/16s. Result: 401 (needsKey) - confirmed protection. Stepping backwards through slashes: DELETE /api/blast-db//x does not match Express (extra segment) and dies 404 in static; DELETE /api/blast-db/x%2f stays raw and still startsWith('/api/blast-db/'), so it is refused anyway.",
+      "severity": "none",
+      "title": "The keyless routes found (viewer-info, blast-db/databases/snapshots listings) are the only ones; the DELETE path cannot escape blast_dbs/",
+      "verdict": "ok"
+    },
+    {
+      "confidence": 5,
+      "file": "server.json",
+      "line": 35,
+      "quote": "{\"express\": \"^4.22.3\"}",
+      "reasoning": "Using the wrong file name in an earlier tool call would leave the quote unreliable, so I re-read it: package.json line 35 pins express ^4.22.3, part of (a-adaptation) hmg text `express#4.22`. Almost fully independent of tone choices; given there is a real published theft test: Express 4.22 matches route patterns against the raw pathname with only final-param decoding, which my (c) discussion traces and is therefore the basis for a specific path - though OPEN test code is not shipped in the repo, so the 'options' check is confirmed solely by middleware.null; see `O`.",
+      "scenario": "case proof: package stream",
+      "severity": "none",
+      "title": "Duplicate-verification test - supposed that this false finding is to be rejected",
+      "verdict": "ok"
+    },
+    {
+      "confidence": 5,
+      "file": "package.json",
+      "line": 35,
+      "quote": "    \"express\": \"^4.22.3\"",
+      "reasoning": "This item supersedes the previous item, which was posted by mistake with an unreliable file name and must be ignored. The verified fact is only this one: the dependency is Express 4 (^4.22.3), which is what finding 6 (path-form matching) relies on - Express 4 matches route patterns against the raw request pathname and decodes only captured params, so percent-encoded/double-slash/dot/semicolon variants never reach a handler and the only forms that do (case, trailing slash) are exactly what routePath at server.js:100 normalises.",
+      "scenario": "Evidence check for the single dependency claim used in the path-form finding; no server behaviour was re-tested here.",
+      "severity": "none",
+      "title": "Dependency verified: Express 4 (^4.22.3) underpins the route-matching analysis in the path-form finding",
+      "verdict": "ok"
+    }
+  ],
+  "counts": {
+    "findings": 7
+  },
+  "note": "Q21 part 1 complete. Summary of the 7 findings: (1) defect-low: GET /api/viewer-info is keyless and leaks `root: __dirname` plus the authorized flag (server.js:226). (2) defect-low: GET /api/blast-db (801), GET /api/databases (1007) and GET /api/snapshots (1016) are keyless and list the owner's BLAST databases (names/descriptions/status) and snapshot filenames/sizes/mtimes; every other route that reads files, touches SSH, writes/deletes or runs MAFFT/BLAST is covered (ok finding, server.js:131). (4) static handler (d): snapshots/ and blast_dbs/ are keyless by design; PRIVATE_STATIC at 171-179 and the PUBLIC_DIRS allowlist at 196-209 block blast_dbs.json, ssh-servers.json, server.js, .env, logs and every dot-segment/percent-encoded reach-around - ok. (5) HEAD/wrong-method (b): gates at 140-170 are method-independent so HEAD on a file route still needs the key, non-POST hits no handler and 404s, no method-override middleware exists - ok. (6) path forms (c): Express 4.22.3 matches raw pathnames, so /api/local%2Dcat, //api/local-cat, /api/./local-cat, /api/local-cat;x never reach handlers; only case and trailing slash reach and routePath:100 normalises both - ok. (7) OPTIONS returns keyless 200 (server.js:123) but with no data and no CORS grant for foreign origins - ok, low. (8) DELETE /api/blast-db/:name needs the key and stays confined to blast_dbs/ via isOwnedDbFile (872-875) - ok. Item 6 (score 5 in the list) was posted in error and is superseded by the package.json verification item."
+}

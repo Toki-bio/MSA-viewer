@@ -1,0 +1,85 @@
+{
+  "findings": [
+    {
+      "confidence": 5,
+      "file": "script.js",
+      "line": 22968,
+      "quote": "    const preset = presets[presetName];",
+      "reasoning": "For v337 clustering presets come back via Object.assign(Object.create(null), value), so inherited names (toString, hasOwnProperty, constructor) can never match a preset key. The three call sites only do own-property operations: read (22968 presets[presetName]), write (22897 presets[presetName] = preset), delete (23043 delete presets[presetName]), plus Object.keys(presets).sort() in the list builder around 23013-23023 and JSON.stringify(presets) on save (23044). Nested preset objects (trimming, clustering, timestamp fields) originate from JSON.parse and keep ordinary prototypes, so new Date(presets[name].timestamp) (23022) gets Object.prototype methods as before. No method call, instanceof, or template-string conversion of the prototype-less object itself anywhere on these paths.",
+      "scenario": "User saves, loads, renames or deletes a clustering preset named toString / hasOwnProperty / __proto__: with the pre-v336 ordinary-object store, presets['hasOwnProperty'] could resolve to the function on the prototype and loadClusteringPreset would then access a function object and throw on field access; the Object.create(null) store makes these plain own properties. All traced uses work identically.",
+      "severity": "none",
+      "title": "Clustering preset store: all three safeLocalGet callers (save 22896, load 22967, delete 23042) use only own-property operations",
+      "verdict": "ok"
+    },
+    {
+      "confidence": 5,
+      "file": "script.js",
+      "line": 29030,
+      "quote": "        if (!presets['optimal']) {",
+      "reasoning": "The auto-created optimal preset checks presets['optimal'] (hot path; own-property read, but the result is allocated in the previous iteration / was intended non-null) on the Object.create(null) store. With an ordinary-object store, a stored preset literally named toString / valueOf would make this branch report a falsy value for the (prototype) function returned; the null prototype removes that class of confusion. createOptimalPreset / loadClusteringPreset downstream only read missing keys and return undefined, exactly as before. No method is called on the store itself.",
+      "scenario": "Startup path: the setTimeout at 29028 reads the store and redirects to createOptimalPreset(true) or loads the preset; own-property access on a null-prototype object behaves as expected either way.",
+      "severity": "none",
+      "title": "Auto-created 'optimal' clustering preset check at 29029-29030 is safe on the prototype-less store",
+      "verdict": "ok"
+    },
+    {
+      "confidence": 4,
+      "file": "script.js",
+      "line": 32270,
+      "quote": "    presets: safeLocalGet('seqColourPresets'),",
+      "reasoning": "colourState.presets is a live reference to the Object.create(null) clone. Every use traced (grep 'colourState.presets', lines 32563/32580-32667) is prototype-kind-agnostic: Object.keys(colourState.presets).sort() in buildColourPresetList (~32607), own-key reads colourState.presets[presetName] where the VALUES are arrays from JSON.parse (new Map(colourState.presets[presetName]) at 32587, quota arrays), delete colourState.presets[name] (32639) and rewrite through JSON.stringify (32641) via safeLocalSet. Template literals in the list builder interpolate ${presetName} / the array's contents, never the prototype-less object itself, so ${obj} never throws; no hasOwnProperty, instanceof, apply, or spread into a constructor-checked context exists.",
+      "scenario": "User opens custom colouring, loads/saves/deletes a named colour preset, including names that collide with Object.prototype members; own-property semantics on the null-prototype store keep list/load/delete working where a naive 'x in presets' or prototype-chained lookup would misfire on the old ordinary object.",
+      "severity": "none",
+      "title": "colourState.presets (seqColourPresets store) is only consumed via Object.keys, own-key get/set/delete and JSON.stringify",
+      "verdict": "ok"
+    },
+    {
+      "confidence": 4,
+      "file": "script.js",
+      "line": 32587,
+      "quote": "        colourState.mappings = new Map(colourState.presets[presetName]);",
+      "reasoning": "Line 32587 passes the seqName-colour binding map to the Map constructor wrapped in a guard so colourState.presets[presetName] reads an own key off the Object.create(null) store, always undefined for absent presets. The init path at 32270 sees a prototype-less store with mapping keyed by preset name ('A1', 'A2', ..., 'A974/3'); no template-literal interpolation of the store, no key-prototype lookups (no hasOwnProperty / toString on the prototype-less object). The new Map gets plain primitives to own-bar object mappings from each preset's stored message object, itself parsed by JSON.parse and therefore prototype-full, so v336's Shadow-in-bindings (prototype-poisoning of a HashMap key only) does not apply. The stored presets that should never be reachable (labels like 'toString' or '__proto__' inside a preset's map array) simply work.",
+      "scenario": "Restoring a saved colour preset named after any short sequence; Object.keys still enumerates it; binding lookups go through new Map with ordinary key semantics.",
+      "severity": "none",
+      "title": "Colour preset values (arrays) flow into new Map(...) — value not the null-prototype shell, so ok",
+      "verdict": "ok"
+    },
+    {
+      "confidence": 3,
+      "file": "script.js",
+      "line": 20997,
+      "quote": "    const p = safeLocalGet(SEARCH_PRESETS_KEY, {});",
+      "reasoning": "The search-presets caller stores into a module variable rebuilt as Object.assign(Object.create(null), p) at 20987 (read: creating an orphan clone of the stored store, keys are preset names, values are ordinary arrays of field-name strings from JSON.parse). All traced uses are prototype-neutral: Object.keys(p).forEach(...) building dataset metadata, own-key lookups _searchPresets[name] (including 21021 typeahead.setAdapter(_searchPresets[typeahead.datasetId])), delete p[name], and JSON.stringify(p) on save. The HTML builder around 8299-8306 interpolates escaped keys (via the _geEsc helper) and array members, never the prototype-less object, so no ${obj} conversion and no method call happens.",
+      "scenario": "User saves a search preset under any name (including inherited-looking names such as 'constructor'): pre-v336 a name colliding with Object.prototype could surface a function where an array was expected and break the typeahead; the null-prototype store isolates keys correctly.",
+      "severity": "none",
+      "title": "Search preset store is cloned into another Object.create(null) shell and used only by own-key operations",
+      "verdict": "ok"
+    },
+    {
+      "confidence": 3,
+      "file": "script.js",
+      "line": 35211,
+      "quote": "    const p = safeLocalGet(DOT_PRESETS_KEY, {});",
+      "reasoning": "The dot-plot preset client routes through _dotPresetLoad / _dotPresetCapture: presets[name] / presets[n] reads and delete p[name] on the Object.create(null) store (the _dotPresets grep hits around 35212, 35217 and the captured store over the entry-key field, including preset values built by object literals in _dotPresetCapture, i.e. nested objects with ordinary prototypes). The a null-prototype warehouse for the store. Template interpolations (around 35224 and 35310) interpolate the key and the preset's colour fields (strings), never the shell, and there is no instance-of, apply/call or toString call on the shell in the traced pass.",
+      "scenario": "User saves, deletes or loads a dot-plot preset; own-property behaviour of the null-prototype store is identical for every operation that this UI performs.",
+      "severity": "none",
+      "title": "Dot-plot preset shell is only copied into the preset dataset dropdown and JSON round-tripped; nested values keep their prototypes",
+      "verdict": "ok"
+    },
+    {
+      "confidence": 3,
+      "file": "script.js",
+      "line": 20987,
+      "quote": "    _searchPresets = Object.assign(Object.create(null), p);",
+      "reasoning": "The v336 change makes three stores live as Object.create(null) shells (search 20987/needing only own-key semantics, clustering 23042/22968/29030, dot 35211/35217 and colourState.presets 32270). I traced every listed call site (98, 20997, 22896, 22939, 22967, 23013, 23042, 29029, 32270, 35211) plus every grep hit for colourState.presets and the brkStyle path into applyBrkStyle (87-98) and saveBrkStyle: every resulting operation is either a property get/set/delete, Object.keys, Object.entries-free iteration, JSON.stringify/parse, or conversion of nested values which retain ordinary prototypes from JSON.parse (the Object.assign clone is shallow, verified at the safeLocalGet return). No hasOwnProperty call, instanceof, ${obj} template or concat with the object, spread into a Set/Map constructor expecting identity, or 'x in store' inherited-name dependence exists; the one own-property in-check I found on this family (dot presets) checks a real key, which behaves identically. The anspatholy: the null prototype is not just harmless here but is the fix for the prototype-poisoning workflows covered above.",
+      "scenario": "Regression-coverage summary for the handoff question; no throw-or-misuse path found for the Object.create(null) return of safeLocalGet.",
+      "severity": "none",
+      "title": "No traced consumer of a safeLocalGet result performs a prototype-dependent operation on the returned shell",
+      "verdict": "ok"
+    }
+  ],
+  "counts": {
+    "findings": 7
+  },
+  "note": "Audited every caller of safeLocalGet (script.js 98, 20997, 22896, 22939, 22967, 23013, 23042, 29029, 32270, 35211) plus the later uses of colourState.presets (grep hits around 32563-32667) and the brk style passed to applyBrkStyle (87-98) and later brkStyle uses. The Object.create(null) return is shallow, so only the top-level stores are prototype-less; nested preset objects retain Object.prototype from JSON.parse. Every traced operation on the shells is an own-property read/write/delete, Object.keys iteration, JSON.stringify round-trip, or interpolation of keys/nested string values — never a method call, instanceof, ${obj}/string concat of the shell, or inherited-name 'in' check. Net result: 7 'ok' findings, no defect; preset names colliding with Object.prototype members now behave as plain keys (the intended v336 fix). Quotes for the clustering/colour lines were read directly; quotes for lines 98, 20987, 20997, 35211 carry confidence 3-4 as they came from grep/read outputs that were partially trimmed by the tool harness."
+}

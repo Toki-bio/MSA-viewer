@@ -1,0 +1,107 @@
+{
+  "findings": [
+    {
+      "file": "server.js",
+      "line": 816,
+      "quote": "    const safeName = name.replace(/[^a-zA-Z0-9._-]/g, '_');",
+      "reasoning": "The allow-set [a-zA-Z0-9._-] keeps '.', so POST /api/blast-db can register DATABASES['.'] or DATABASES['..'] (line 836, then saved at 840) - yes, the registry IS written with such names; no separator can survive (lines 816-818), so no '/..\\' is possible. Then in DELETE (858) dbName='..' and line 866 does path.join(dbDir, '..') which normalises to the parent dir, so f = basePath + ext at 871 becomes e.g. '/app/.nhr', a candidate OUTSIDE blast_dbs. The same happens in formatDatabase (332: path.join(dbDir, dbName)) and in the POST cleanup (848). However every unlink goes through isOwnedDbFile (849, 872, 874), whose realpath check (263-265) rejects paths outside BLAST_DB_DIR, so no file outside blast_dbs is ever unlinked; the wrong result is litter and confusion: a DB named '.' writes blast_dbs/..fa + blast_dbs/..nhr (outBase+'/app/blast_dbs '+' variants), while the DELETE looks for '/app/blast_dbs.nhr', so the real index files are never found and stay behind.",
+      "scenario": "Owner types name '.' (or '..') in the Add-database panel; POST registers it. makeblastdb writes blast_dbs/..nhr etc. Deleting the DB unlinks only the FASTA; the stale ..nhr/..nin/..nsq files stay in blast_dbs forever and the delete route even probes /app/blast_dbs.nhr (outside the folder, harmlessly rejected by isOwnedDbFile).",
+      "severity": "low",
+      "title": "The DB-name sanitiser keeps '.'/'..', so the registry can be written with such names; only isOwnedDbFile confines the damage",
+      "verdict": "defect",
+      "confidence": 4
+    },
+    {
+      "file": "server.js",
+      "line": 265,
+      "quote": "        return real.startsWith(dirReal + path.sep);",
+      "reasoning": "dirReal comes from fs.realpathSync(BLAST_DB_DIR) (263), which never ends with a separator, and real from fs.realpathSync(f) (264). Requiring dirReal + path.sep after the prefix means a sibling directory such as blast_dbs-other does not pass: '/app/blast_dbs-other/x.nhr' does not start with '/app/blast_dbs/'. Without the + path.sep it would have been a prefix-match bug.",
+      "scenario": "A file /app/blast_dbs-other/mydb.nhr (or any path whose normalised real form merely shares the prefix) is never accepted as owned, so no delete route will unlink it.",
+      "severity": "none",
+      "title": "Prefix test uses dirReal + path.sep, so a sibling folder like 'blast_dbs-other' never counts as owned",
+      "verdict": "ok",
+      "confidence": 5
+    },
+    {
+      "file": "server.js",
+      "line": 262,
+      "quote": "        if (!st.isFile()) return false;",
+      "reasoning": "261 uses fs.lstatSync(f), which does not follow the final component, so a symlink inside blast_dbs/ has isFile() false and isOwnedDbFile returns false at 262; the DELETE route then only unregisters (isOwnedDbFile at 874 false, no unlink at 875) and the link target outside blast_dbs is untouched - exactly the claimed 'never a link itself'.",
+      "scenario": "Owner creates blast_dbs/mydb.fa -> /home/owner/secret.fa; even if such an entry is registered, DELETE /api/blast-db/mydb just unregisters it; /home/owner/secret.fa is never unlinked.",
+      "severity": "none",
+      "title": "A symlink inside blast_dbs/ pointing outside is never unlinked: lstatSync sees the link, not the target",
+      "verdict": "ok",
+      "confidence": 5
+    },
+    {
+      "file": "server.js",
+      "line": 264,
+      "quote": "        const real = fs.realpathSync(f);",
+      "reasoning": "lstatSync (261) only skips the FINAL component: for blast_dbs/sub/x.nhr where sub is a symlink to /home/owner, st.isFile() is true (it is a regular file behind the link), but fs.realpathSync (264) resolves the parent symlink too, so real does not start with dirReal + path.sep (265) and the file is kept. This is the fail-closed direction: the server may leave index files behind, never deletes a file that physically lives outside blast_dbs.",
+      "scenario": "blast_dbs/sub is a symlink to /home/owner/dbs with x.nhr inside; the delete route's isOwnedDbFile check returns false and /home/owner/dbs/x.nhr is left alone (stale, but safe).",
+      "severity": "none",
+      "title": "A regular file reached through a symlinked sub-folder of blast_dbs is correctly kept: realpathSync resolves the parent too",
+      "verdict": "ok",
+      "confidence": 5
+    },
+    {
+      "file": "server.js",
+      "line": 263,
+      "quote": "        const dirReal = fs.realpathSync(BLAST_DB_DIR);",
+      "reasoning": "If blast_dbs itself is a symlink, dirReal is the resolved target directory, and a real DB file's realpath (264) then does start with dirReal + path.sep (265), so it counts as owned and the DELETE route unlinks it (872, 875). That is the right answer: those files physically ARE the server's own databases, just stored in a linked folder; the only thing the link remark at 256 protects against is the file itself being a link (lstatSync at 261).",
+      "scenario": "Owner moves blast_dbs elsewhere and leaves a symlink; creating then deleting a database still clears both the FASTA and the makeblastdb index files under the resolved directory.",
+      "severity": "none",
+      "title": "blast_dbs/ itself being a symlink: dirReal is the resolved target, so the server's own DB files in it are correctly deleted",
+      "verdict": "ok",
+      "confidence": 4
+    },
+    {
+      "file": "server.js",
+      "line": 262,
+      "quote": "        if (!st.isFile()) return false;",
+      "reasoning": "On Windows both compared paths are produced by fs.realpathSync (263, 264), which returns the on-disk canonical form (actual casing, 8.3 short names expanded), and both use the same path.sep in test 265, so a request path spelled with different case or a short name resolves to the same canonical string as dirReal; a '..'-containing name is normalised away by realpath/resolve before the comparison. Also no dbName containing '/' or '\\' can be registered (816), so a case/.. trick cannot route the unlink outside blast_dbs.",
+      "scenario": "On Windows a registry path written as BLAST_DBS\\xyz.NHR-style still resolves through realpathSync to the disk casing that matches realpathSync(BLAST_DB_DIR), so the file is still recognised as owned.",
+      "severity": "none",
+      "title": "Case-different or 8.3/relative-alias paths on Windows: both sides of the comparison come from realpathSync, so casing/aliases match",
+      "verdict": "ok",
+      "confidence": 3
+    },
+    {
+      "file": "server.js",
+      "line": 93,
+      "quote": "    return a === '127.0.0.1' || a === '::1' || a === '::ffff:127.0.0.1';",
+      "reasoning": "The list is exact-match, so '::ffff:7f00:1', '::ffff:127.0.0.2' and '127.0.0.2' - all loopback per 127.0.0.0/8 - are rejected atMiddleware 141 (if (ALLOW_REMOTE_FILE_ACCESS || isLoopbackClient(req)) return next()) with 403 'File and SSH access is limited to this machine'. The error direction is fail-closed: it locks out a legitimate local client rather than letting a remote one in (no remote string equals any listed literal). In practice unreachable with the default HOST '127.0.0.1' (26); it only bites when the owner sets HOST=0.0.0.0/:: and then browses via 127.0.0.2. '::ffff:7f00:1' is never produced by Node (it prints IPv4-mapped as '::ffff:127.0.0.1'), so that spelling is theoretical.",
+      "scenario": "Owner runs HOST=0.0.0.0 npm start, then opens http://127.0.1 or 127.0.0.2:PORT/... (an IP literal, so 87 allows the Host header): every file/SSH/DB/MAFFT route answers 403 although the browser is on this machine; the fix would be testing the 127.0.0.0/8 range.",
+      "severity": "low",
+      "title": "isLoopbackClient misses other loopback addresses (127.0.0.2, ::ffff:127.0.0.2, ::ffff:7f00:1) - direction: locks out",
+      "verdict": "defect",
+      "confidence": 4
+    },
+    {
+      "file": "server.js",
+      "line": 91,
+      "quote": "    if (req.headers['x-forwarded-for'] || req.headers['x-real-ip']) return false;",
+      "reasoning": "A reverse proxy on the same machine (nginx/caddy or node HttpProxy) connects from 127.0.0.1 but is trusted to add X-Forwarded-For, so the guard returns false before even looking at remoteAddress (92) and the owner's own request fails the file/DB/MAFFT gate at 141 - direction: locks out, never lets in (a spoofable XFF can only REDUCE access, it cannot grant it). The answer to 'what if a local reverse proxy is used' is: with XFF/real-IP headers it is locked out of those routes (workaround ALLOW_REMOTE_FILE_ACCESS=1, line 33); the residual risk is only if the owner runs a proxy that does NOT set these headers, in which case remote clients arrive as 127.0.0.1 and pass 93.",
+      "scenario": "Owner runs the viewer behind a local nginx (proxy_pass to 127.0.0.1:3000, default XFF on): /api/local-cat, blast-db add/delete and MAFFT all return 403 even though the client is this machine and holds the access key.",
+      "severity": "low",
+      "title": "Any X-Forwarded-For/X-Real-IP header forces isLoopbackClient false: a standard local reverse proxy is locked out (never let in)",
+      "verdict": "defect",
+      "confidence": 4
+    },
+    {
+      "file": "server.js",
+      "line": 141,
+      "quote": "    if (ALLOW_REMOTE_FILE_ACCESS || isLoopbackClient(req)) return next();",
+      "reasoning": "A request through a Tailscale address reaches the page (TAILSCALE_IP is in ALLOWED_HOSTS, 30-31) but its req.socket.remoteAddress is a 100.x.y.z address, which matches none of the three literals at 93, so isLoopbackClient returns false and line 141 403s the file/SSH/DB/MAFFT routes unless ALLOW_REMOTE_FILE_ACCESS=1 was set knowingly (33). That is the documented design (19-20: 'answer only clients on this machine unless ALLOW_REMOTE_FILE_ACCESS=1'), and the direction is fail-closed: a Tailscale visitor cannot read local files even with the DB name - they are refused by default. So the intended answer (refuse remote, allow only after an explicit opt-in) is given.",
+      "scenario": "Another Tailscale node opens http://TAILSCALE_IP:3000 and calls /api/local-cat or DELETE /api/blast-db/x: 403 'File and SSH access is limited to this machine' unless the owner explicitly exported ALLOW_REMOTE_FILE_ACCESS=1.",
+      "severity": "none",
+      "title": "A request through a Tailscale address is refused by the file/DB routes by design, exactly as intended",
+      "verdict": "ok",
+      "confidence": 4
+    }
+  ],
+  "counts": {
+    "findings": 9
+  },
+  "note": "server.js audit (Q20): isOwnedDbFile is sound on the prefix/symlink cases (path.sep prevents sibling 'blast_dbs-other'; lstat never follows the final link; realpath resolves symlinked parent folders; a symlinked blast_dbs/ still correctly deletes its own DB files; Windows casing handled because both sides come from realpathSync). Real defect (low): the name sanitiser keeps '.', so the registry CAN be written with '.' / '..' entries, whose join/normalisation makes the delete and makeblastdb paths diverge (stray '...fa.nhr' files left; candidate unlinks outside blast_dbs are caught only by isOwnedDbFile). isLoopbackClient is exact-match on three strings: other loopback addresses (127.0.0.2, ::ffff:127.0.0.2, ::ffff:7f00:1) are locked out when HOST=0.0.0.0 (fail-closed); any X-Forwarded-For/X-Real-IP header forces false, locking out a standard local reverse proxy (fail-closed, never lets in; residual risk only a proxy that strips those headers); a Tailscale-sourced request is refused with 403 unless ALLOW_REMOTE_FILE_ACCESS=1 - exactly the documented intent."
+}

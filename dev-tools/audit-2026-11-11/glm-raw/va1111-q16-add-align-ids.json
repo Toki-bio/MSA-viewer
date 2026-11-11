@@ -1,0 +1,74 @@
+{
+  "findings": [
+    {
+      "confidence": 5,
+      "file": "script.js",
+      "line": 27289,
+      "quote": "    let fasta = sources.map((q, i) => `>r${i}\\n${q.sent}\\n`).join('');",
+      "reasoning": "Every source — the existing rows (state.seqs.map at 27278) and the pasted records (sources.push at 27281) — is serialised as '>r{index}'. No row is ever sent to MAFFT under its own name, so a pasted sequence literally named 'r0' or 'r12' goes out under a different generated id (r{nExisting}, r{nExisting+1}, ...), and an existing row named 'r3' goes out as 'r3' only because it IS row index 3. The aligner output can therefore contain the token 'rN' only for a row we sent as id rN: ids cannot collide with real names in the output because no real name exists in the input. The comment at 27273-27276 states this is deliberate (prior name-based matching bug, audit M14). The FASTA is what reaches the guard/aligner: 27301 passes it to _mafftAlignWithUi (26388) which awaits _mafftAlignWithUiRun(fasta, ...) (26391).",
+      "scenario": "Paste a FASTA record with defline 'r0' into Add & Align alongside an alignment whose rows include one named 'r12'. All rows go out as '>r0', '>r1', ... '>rN' with no real name in the input; MAFFT can only return the ids it was given, so the result maps back one-to-one. No collision is possible in this flow.",
+      "severity": "none",
+      "title": "Add & Align sends every row (existing and pasted) under a generated id, never under its own name — an id/real-name collision in the aligner input is impossible",
+      "verdict": "ok"
+    },
+    {
+      "confidence": 5,
+      "file": "script.js",
+      "line": 27321,
+      "quote": "            const q = sourceById.get(id), a = alignedById.get(id);",
+      "reasoning": "alignedById is keyed by the first token of the returned name (27312), which for this run is always an id ('rN'). build(id) pulls the ORIGINAL record q from sourceById (line 27288: keyed 'r' + i over the same sources array used to build the FASTA) and the aligned letters from alignedById, then line 27323 restores the row's real header/fullHeader from q, not from the aligner output. So a pasted row named 'r0' that was sent as id 'r12' comes back matched to source r12 and is stored with header 'r0' and its own pasted letters — the name 'r0' plays no role in the matching, and the id 'r12' is discarded after the run. order (27325-27327) is built from the same id keys, so no lookup can miss.",
+      "scenario": "Existing rows 'A','B' plus a pasted row named 'r0'. Output rows r0,r1,r2 map back by id; the new row keeps header 'r0' and its own sequence. It cannot be confused with existing row 0 even though its name looks like that row's id.",
+      "severity": "none",
+      "title": "The aligner result is mapped back strictly by internal id; a pasted row keeps its own name and letters from the source record, not from the output name",
+      "verdict": "ok"
+    },
+    {
+      "confidence": 5,
+      "file": "script.js",
+      "line": 26433,
+      "quote": "    const byName = new Map(recs.map(r => [r.name, r]));",
+      "reasoning": "_mafftAlignWithUiRun (26450) applies the guard to the same FASTA it was handed (line 26452), which for Add & Align is the id-only text built at 27289. The guard parses that text into recs, so each r.name is a token like 'r5' with no spaces; byName's keys are ids and nothing else. The aligner output headers are the same ids, so at 26436 `byName.get(o.name)` hits directly; the first-token fallback at 26436 is a no-op for ids. A pasted name such as 'r0' never enters this map because the pasted records were serialised as ids at the source (27281-27289) before the guard ever saw the text. If a row were to vanish, the run errors out (26445-26446) — it does not silently mispair an id with a wrong row. Ids and pasted names are never mixed in one map.",
+      "scenario": "Run Add & Align with a pasted row containing lowercase/ambiguous residues and a name equal to an id ('r2'). The sent FASTA contains only '>r0..>rN', the guard's recs and byName contain only those ids, and the residue restore keys each id to its own guarded record. No id/name cross-contamination.",
+      "severity": "none",
+      "title": "_alignerRestoreResidues' byName map contains only ids in the Add & Align path — ids and pasted names are never mixed in one map",
+      "verdict": "ok"
+    },
+    {
+      "confidence": 4,
+      "file": "script.js",
+      "line": 26185,
+      "quote": "    return m ? state.seqs[+m[1]] || null : null;",
+      "reasoning": "_alignRowIds is set true at 27299 before the run, but state.seqs at that moment still holds only the old rows (sources for the sent FASTA were snapshotted from state.seqs at 27278); the new rows exist only in the local sources array. So _alignIdRow('r12') with nExisting <= 12 returns state.seqs[12] = undefined -> null, and _alignIdName (26187) falls back to the raw id. Consequently, when a row's residue count does not round-trip, the error message built at 26441-26446 uses the shown name and displays 'r12' instead of the pasted row's real name; the same fallback affects the _nonCodingRows warning text at 26307. No data is wrong — only the message text. For ids below nExisting the mapping does land on the correct row (ids are assigned in state.seqs order), so there is no mis-identification either.",
+      "scenario": "Paste records including one named 'A' whose residue set forces the placeholder path with a count mismatch. The toast/error says the aligner returned N residues for \"r12\" instead of \"A\". Cosmetic only; the alignment and the row's name/letters are still correct.",
+      "severity": "low",
+      "title": "During Add & Align, ids of the NEW rows resolve to no row, so residue-restore error and non-coding warnings name a pasted row by its raw id ('r12') instead of its pasted name",
+      "verdict": "defect"
+    },
+    {
+      "confidence": 4,
+      "file": "script.js",
+      "line": 27263,
+      "quote": "                if (count > 1) skip = false;",
+      "reasoning": "The only place a real name is sent under its own name in this flow is the --adjustdirection pre-pass: 27253 builds '>' + state.seqs[0].header plus the pasted text. _adjustDirection (24154) is index-based — it compares seqs[i] to seqs[0] by k-mers (24180-24193) and pushes outputs in order — so even if a pasted record carries the same defline as state.seqs[0].header, no row can be matched to the wrong one; the flipped set (24193, keyed by header) is only console-logged at 27268-27270. The aligned new text is then re-read by position (parseMafftOutput at 27279).",
+      "scenario": "First row named 'r0'; the user pastes another record deflined 'r0'. The pre-pass still flips/keeps each row by its own content and the new rows are extracted by position (skip until count > 1), so no row's letters are swapped or lost.",
+      "severity": "none",
+      "title": "The adjust-direction pre-pass does use real names, but its result is consumed positionally, so a duplicate name cannot misassign rows",
+      "verdict": "ok"
+    },
+    {
+      "confidence": 5,
+      "file": "script.js",
+      "line": 27274,
+      "quote": "come back by id, as in Realign All. By name, an existing row named like a new one was taken for",
+      "reasoning": "Lines 27273-27276 document that ids were introduced in Add & Align precisely to fix the old name-based matching ('an existing row named like a new one was taken for new and moved, rows sharing a name got one row's letter case, and a name over 254 characters came back cut (audit M14)'). The implementation matches the stated intent: single id namespace (27288-27289), id-keyed result map (27312-27313), id-driven build (27320-27327). No mixing of name- and id-keyed lookups remains in this path.",
+      "scenario": "Regression guard for the fixed bug: an existing row and a pasted row sharing a name, or a 255-character defline. With ids, both rows come back as separate rows with their own letters and names.",
+      "severity": "none",
+      "title": "The change is intentional and documented: name-based matching in Add & Align was the old bug these ids were introduced to fix",
+      "verdict": "ok"
+    }
+  ],
+  "counts": {
+    "findings": 6
+  },
+  "note": "Q16 answered: no id/real-name collision is possible in Add & Align. All rows — existing and pasted — are sent as generated ids 'r{index}' (script.js 27289), never under their own names, so MAFFT can only return ids it was given; the result is mapped back strictly by id (27312, 27321) and a pasted row named 'r0'/'r12' keeps its name from the local source record, not from the aligner output. _alignerRestoreResidues' byName map sees only the guard's recs parsed from the same id-only FASTA, so ids and pasted names are never mixed. Only real (cosmetic, low) issue found: during the run _alignIdRow (26185) looks ids up in state.seqs, which still holds only the old rows, so ids of NEW rows resolve to null and the residue-restore error / non-coding warnings name a pasted row by its raw id ('r12') instead of its pasted name. The adjust-direction pre-pass does send real names but its output is consumed positionally (27256-27266), so duplicate names there cannot misassign rows."
+}

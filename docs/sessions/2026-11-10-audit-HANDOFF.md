@@ -201,3 +201,15 @@ Not done yet:
 - Reads: a SAM opened as an alignment still shows `=` as a letter; unclear errors for a cut-off BAM.
 - Server: Windows path forms in `/api/local-cat` are untested; dev pages give 404 under the server unless
   `STATIC_SERVE_ALL=1`.
+
+## GLM check results (local Claude Code, 2026-11-11)
+
+- **Batches 1-2 (v332, v333), tasks 1-10:** done. 11 real findings, all fixed with checks "GLM 1110 #1" to "#11"
+  on the local branch `glm-1110-on-main` (on top of 9688515); it is pushed to main once the full suite passes.
+  Report: `dev-tools/audit-2026-11-10/glm-check.md` (comes with that push).
+- **Batch 3 to v337, tasks 11-21:** done on 9688515, NOT fixed. Report with verdicts, proposed minimal fixes and
+  the check to write first: `dev-tools/audit-2026-11-11/glm-check.md`. Real: 2 medium (Sequence editor Apply
+  renames rows and loses their colour, one-row and multi-row; pages.yml `cancel-in-progress: true` lets an older
+  run cancel the newer deploy), 7 low (Stockholm blocks without blank lines, mid-block `#=GC`, numbered all-gap
+  record, empty `>` name in the editor, Rename with spaces, rename-onto-existing undo colour = M15 part,
+  `r12` id in an error). Fixing them is for this session; ask the owner before the M15-part one.

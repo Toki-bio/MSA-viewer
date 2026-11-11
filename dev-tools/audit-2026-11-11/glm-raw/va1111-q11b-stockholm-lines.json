@@ -1,0 +1,74 @@
+{
+  "findings": [
+    {
+      "title": "Stockholm blocks separated by no blank line (and no #=GC) split every sequence into one row per block",
+      "verdict": "defect",
+      "file": "script.js",
+      "line": 8696,
+      "quote": "        if (!t) { rows.blockEnd(); continue; }   // a blank line ends a block",
+      "reasoning": "The occurrence counter is reset only by line 8696 (blank line) and line 8697 (#=GC line); no other line resets it. _interleavedRows.add (8369-8375) computes n = seenInBlock.get(name) || 0 and builds key = name + '\\u0000' + n (8372), creating a new row (8373) when that key is missing. If a two-block Stockholm file has sequence lines for block 2 following block 1 with no blank line and no #=GC line between them (a #=GS or #=GR line there does not help, since line 8698 just continues before any blockEnd call), block 2's 'seqA' becomes key 'seqA\\u0000 1' and gets a separate row holding only block 2's piece.",
+      "scenario": "Load a Stockholm file whose blocks are concatenated without blank-line separators (e.g. hmmbuild/esl-reformat style output emitted without blank lines, no #=GC at the block end): instead of N full-length rows the viewer shows 2N rows, each containing only one block's piece, so the alignment is wrong and every sequence is fragmented.",
+      "severity": "high",
+      "confidence": 4
+    },
+    {
+      "title": "#=GC line placed between two duplicate-named sequence lines inside one block wrongly joins them into one row",
+      "verdict": "defect",
+      "file": "script.js",
+      "line": 8697,
+      "quote": "        if (t.startsWith('#=GC')) { rows.blockEnd(); continue; }   // per-column lines close a block too",
+      "reasoning": "Line 8697 resets seenInBlock (8368) unconditionally, including for a #=GC line interleaved between sequence lines of one block. After the reset, the next occurrence of a name reads n = 0 (8370), so it lands on the same key 'name\\u0000 0' as the row placed before the #=GC line, and rows.get(key).seq += piece (8374) appends into that earlier row: two distinct sequences whose names collide (the exact case the v334 (name, n-th occurrence) keying was added for) are merged and one row is lost. Note the reset can only join rows, never split one block into two rows, so the 'split' half of the question does not occur; mainstream writers (Pfam/Rfam, HMMER) place #=GC after all sequence lines of a block, where the reset is the desired behaviour.",
+      "scenario": "A Stockholm block contains two sequences whose lines share a name (names truncated to the same short string by the producer) and a '#=GC RF' (or #=GC SS_cons) line sits between them (some writers put per-column lines first or interspersed): the second sequence's piece is appended to the first row, its own row is never created, and that row ends up twice as long as its block neighbours.",
+      "severity": "low",
+      "confidence": 5
+    },
+    {
+      "title": "#=GC line as block separator (or first in a block) joins rows correctly; it never splits one block into two rows",
+      "verdict": "ok",
+      "file": "script.js",
+      "line": 8368,
+      "quote": "            blockEnd() { seenInBlock = new Map(); }",
+      "reasoning": "For the normal layout (#=GC at the end of a block, or '#=GC RF' written before the sequence lines of a block), the reset at 8697/8368 is exactly what lets the next block's occurrence of each name resume at n = 0 (8370) and hit the existing key (8372-8374), so the pieces concatenate into one row per sequence. A #=GC line coming first in a block merely resets an already-empty map, so it changes nothing for unique names. Because the reset can only lower n back to 0 for the next line, a name seen before and after a #=GC line is joined, not split into two rows; splitting is impossible from this path.",
+      "scenario": "A two-block Stockholm separated only by '#=GC RF' lines with no blank line (unique names) loads as N full-length rows, one row per sequence, joined across blocks correctly.",
+      "severity": "none",
+      "confidence": 5
+    },
+    {
+      "title": "#=GR sequence-feature lines between sequence lines are skipped without ending the block and without becoming rows",
+      "verdict": "ok",
+      "file": "script.js",
+      "line": 8698,
+      "quote": "        if (t.startsWith('#')) continue;",
+      "reasoning": "A line '#=GR <seqname> PP ...' does not match line 8695 (only '# STOCKHOLM' or '#=GF set inAlign), is not a blank line (8696) and does not start with '#=GC' (8697), so it falls to line 8698 and continues. No blockEnd is called, so the block stays open and the nth-occurrence counting in _interleavedRows (8370-8371) is untouched, and the row-creating match at 8700-8702 is never reached for it, so it is never taken as a row.",
+      "scenario": "HMMER/Infernal Stockholm output that writes a '#=GR <name> PP <string>' line after every sequence line inside each block: those annotation lines are ignored and the sequence rows are joined block-by-block as intended.",
+      "severity": "none",
+      "confidence": 5
+    },
+    {
+      "title": "#=GS lines at the top or between blocks have no effect on rows (but do not act as block separators)",
+      "verdict": "ok",
+      "file": "script.js",
+      "line": 8700,
+      "quote": "        const m = t.match(/^(\\S+)\\s+(.+)$/);",
+      "reasoning": "A '#=GS <name> <text>' line is dispatched at line 8698 (t.startsWith('#')) before the name/sequence match at 8700 can see it, and 8695-8697 do not match it either #=GF, #=GC, header). So it is skipped everywhere: rows.add is never called with its text, and unlike a blank line (8696) or #=GC line (8697) it also does not call blockEnd. Consequence: GS lines above the first block or inside the header are pure no-ops for rows; only if a writer used a #=GS line as the sole separator between blocks would the no-reset hole of the first finding apply (that is the blank-line gap again, not a GS-specific effect).",
+      "scenario": "A Stockholm file with ':=GS seqX AC P12345' style description lines between the #=GF header lines and the first block, or between blocks (with blank lines also present) loads with exactly one row per sequence, unchanged by the GS lines.",
+      "severity": "none",
+      "confidence": 4
+    },
+    {
+      "title": "A Stockholm file without the '# STOCKHOLM' header line never reaches parseStockholm and is rejected with a clear error",
+      "verdict": "ok",
+      "file": "script.js",
+      "line": 15619,
+      "quote": "        } else if (/^# STOCKHOLM/m.test(inputText)) {",
+      "reasoning": "Detection at 15619 requires the literal '# STOCKHOLM' header somewhere in the text, so a headerless Stockholm body (only #=GF/#=GS lines and 'name SEQ' lines) is not routed to parseStockholm; even if it were, line 8695 sets inAlign only on that header or on '#=GF', and line 8704 returns null for zero rows. With no '>' anywhere the loader falls through to parseFasta (15648), which returns null, and line 15650 throws 'No valid sequences found'. The format mandates the '# STOCKHOLM 1.0' header, so rejecting such a file is correct: no wrong rows are built, and the user gets an error message instead of a misparsed alignment (though the message is not Stockholm-specific).",
+      "scenario": "Paste a Stockholm alignment whose '# STOCKHOLM 1.0' line was stripped: the file fails to load with 'No valid sequences found' rather than producing silently wrong rows.",
+      "severity": "none",
+      "confidence": 4
+    }
+  ],
+  "counts": {
+    "findings": 6
+  },
+  "note": "Audit of parseStockholm (8683-8705) with _interleavedRows (8364-8381) complete. 6 findings recorded: (a) #=GR lines are correctly skipped by line 8698 without ending the block or becoming a row (ok); (b) #=GS lines anywhere are skipped by 8698 before the row match at 8700 and have no row effect (ok); (c) the #=GC blockEnd at 8697 never splits a block into two rows #=GC can only rejoin occurrences; a block whose only separator is a #=GC line joins correctly (ok), but a #=GC line interleaved between two duplicate-named sequence lines within one block wrongly merges them into a single row (low-severity defect, contrived layout); (d) a headerless Stockholm is rejected #=STOCKHOLM required at 15619, null from 8704, error at 15650) (ok), while a Stockholm with no blank-line separators (and no #=GC between blocks) splits every sequence into one short row per block + wrong data (high-severity defect, unusual but possible writer layout)."
+}

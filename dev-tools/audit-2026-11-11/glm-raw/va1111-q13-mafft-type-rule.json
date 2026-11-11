@@ -1,0 +1,63 @@
+{
+  "findings": [
+    {
+      "file": "script.js",
+      "line": 23977,
+      "quote": "    if (seqType === '1') args.push('-b', '62');",
+      "reasoning": "_alignerGuardInput decides the run's type by MAFFT's own >75% rule: line 26421 `const protein = !(letters && acgt / letters > 0.75);` and picks the placeholder ph='X' vs 'N' from it (26422), while the comment at 26411-26413 explicitly says 'not by isProteinAlignment()'. But getMafftExtraArgs pushes a protein scoring matrix purely from the UI dropdown: 23977-23978 (`if (seqType === '1') args.push('-b', '62'); else if (seqType === '0') args.push('-j', '200');`) with no reference to the guard's verdict. _confirmMafftJob (26090-26123) only ever changes the '-E' guide-tree count, and _runMafftInWorker passes {fasta, extraArgs} straight to the worker (26171), which is the post-swap fasta produced by the guard (26451, 26468, 26612). So when the guard judges nucleotide (ratio > 0.75) while the dropdown says a protein matrix, MAFFT is handed nucleotide text (which it will itself classify 'd') plus -b 62/--jtt, a protein scoring matrix. Whether disttbfast errors out or silently aligns DNA under BLOSUM cannot be established (MAFFT is not in this repo), but the two disagree about the type and neither is corrected.",
+      "scenario": "Load a DNA alignment whose letters are > 75% A/C/G/T/N (so the guard and MAFFT both judge nucleotide), set the MSA type dropdown to a protein matrix (seqType '1', BLOSUM62 — the code at 8712/14282 also renders such an alignment as protein), and realign. The guard behaves as if the run were nucleotide (unknown letters swapped to N in gapless rows, 26422-26424) while getMafftExtraArgs still sends '-b 62', so MAFFT runs its nucleotide scoring against a protein matrix flag, i.e. an undefined/inconsistent alignment instead of one chosen by a single consistent type.",
+      "severity": "medium",
+      "title": "Guard decides type by MAFFT's rule (26421) but the UI matrix flag (-b 62 / -j 200) is sent regardless, so MAFFT can be given a protein matrix for a run the viewer judged nucleotide",
+      "verdict": "defect",
+      "confidence": 3
+    },
+    {
+      "file": "script.js",
+      "line": 26421,
+      "quote": "    const protein = !(letters && acgt / letters > 0.75);",
+      "reasoning": "Letters counted: 26416 `const c = r.seq.charCodeAt(i) & ~32;` with 26417 `if (c < 65 || c > 90) continue;` — the mask clears only bit 5, so exactly ASCII A-Z (65-90) and a-z (97-122 -> 65-90) pass; '-' (45), '.' (46), '*' (42), '?' (63 -> 31) are all excluded, exactly the characters MAFFT's `if( isalpha( c ) ) nChar++` (after `tolower`) accepts/rejects in the C locale. Base set: 26419 `c === 65 || c === 67 || c === 71 || c === 84 || c === 85 || c === 78` = A,C,G,T,U,N — identical to MAFFT's `c == 'a' || c == 't' || c == 'g' || c == 'c' || c == 'u' || c == 'n'`, including U/u and N/n, excluding the other IUPAC codes in both. Threshold and direction: viewer `acgt / letters > 0.75`, MAFFT `atgcfreq = (double)atgcnum / total; if( atgcfreq > 0.75 )` — same strict '>' at the same 0.75, i.e. protein iff ratio <= 0.75 (or no letters) on both sides. Summation: 26415 `for (const r of recs) for (let i = 0; i < r.seq.length; i++)` accumulates one global acgt/letters pair over every residue of every record — MAFFT sums `total += nsite;` and `atgcnum += ...` over ALL sequences the same way. The swap never changes indexing (the guard counts recs of the input fasta, MAFFT counts the records it receives, 26428 recs -> one record each).",
+      "scenario": "Any input: viewer and MAFFT classify the same letters the same way, at the same cutoff and strictness, over the same pooled residue counts, so the pre-swap and (per the next finding, post-swap) ratio can be compared one-for-one.",
+      "severity": "none",
+      "title": "(a) Count matches MAFFT exactly: same letter set, same ACGTUN set, same >0.75 strict threshold, same sum over all rows",
+      "verdict": "ok",
+      "confidence": 5
+    },
+    {
+      "file": "script.js",
+      "line": 26424,
+      "quote": "    const swap = (seq) => /[-.]/.test(seq) ? seq.replace(/[*?]/g, ph) : seq.replace(unknown, ph);",
+      "reasoning": "MAFFT computes atgcfreq on the text it receives, i.e. after the substitution of line 26424, because the guard's returned fasta (26428) is what _runMafftInsideWorker actually runs (26451/26468/26612 -> 26171 -> mafft-worker.js runDisttbfast, which writes exactly that string to /input.fa, mafft-worker.js 21). Nucleotide direction (viewer ratio_v > 0.75, ph='N', unknown=/[*?EFIJLOPQZefijlopqz]/): every letter the swap replaces (E,F,I,J,L,O,P,Q,Z) was counted as a letter but NOT as ACGTUN by both sides (26419); after it becomes N it is counted by MAFFT in atgcnum, while nsite (denominator) is unchanged — in gapless rows. In gapped rows only '*' and '?' become N, and those were not letters for either side, so MAFFT's atgcnum rises and nsite is unchanged too. So MAFFT's post-swap ratio is >= ratio_v > 0.75, i.e. it stays 'd'. Protein direction (ratio_v <= 0.75, ph='X', unknown=/[*?UOuo]/): U was counted in acgt (code 85 included at 26419) and O was a letter outside ACGTUN; both become X, which MAFFT counts as a letter outside the a/t/g/c/u/n set — so atgcnum can only fall (by the U's) and nsite is unchanged; '*' and '?' become X too, adding non-ATGC letters to nsite. So ratio_m <= acgt/(letters) <= 0.75, i.e. MAFFT stays 'p'. Neither substitution can move the ratio across the 0.75 boundary. (In gapped rows the protein swap also only replaces * and ? -> X, same direction.)",
+      "scenario": "A 76% A/T/G/C DNA mix with many I letters in gapless rows: the viewer says nucleotide, the N-swap raises MAFFT's ratio so MAFFT also says 'd'. A protein under 75% that contains many U's: the viewer says protein, the X-swap removes the U's from MAFFT's numerator and adds X to its denominator, so MAFFT stays 'p'. No input makes the two sides disagree on the type via the swap.",
+      "severity": "none",
+      "title": "(b) The placeholder swap can never push MAFFT's ratio to the other side of 0.75: nucleotide swaps only raise it, protein swaps only lower or leave it",
+      "verdict": "ok",
+      "confidence": 5
+    },
+    {
+      "file": "mafft-worker.js",
+      "line": 27,
+      "quote": "    const args = [...baseArgs, ...extraArgs];",
+      "reasoning": "getMafftExtraArgs (23960) can only push '-f' (23970), '-h' (23971), '-E' (23972, guide-tree count) and the matrix flags '-b 62' / '-j 200' (23977-23978); it returns seqType/adjustDir/reorder/reorderOnly (23986) for the viewer's own bookkeeping, never as MAFFT args. _confirmMafftJob only rewrites or appends '-E' (26108-26119). _runMafftInWorker sends these extraArgs verbatim (26171), and the worker's only additions are the input file and a default '-E': 26405 `const baseArgs = hasE ? ['-i', '/input.fa'] : ['-i', '/input.fa', '-E', '2'];` (wait, worker lines 24-26). No '-A', '-N', '--amino' or '--nucleotide' is constructed anywhere on this path (grep for --amino/--nucleotide/'-A'/'-N' args found no MAFFT args), so MAFFT is left at dorp==NOTSPECIFIED and its own `if( dorp == NOTSPECIFIED ) { if( atgcfreq > 0.75 ) dorp = 'd'; else dorp = 'p'; }` decides the type. Whether the '-b 62'/'-j 200' matrix flags themselves also fix dorp inside disttbfast cannot be checked here (MAFFT is not in this repo); from the viewer's side no explicit type-fixing argument is sent.",
+      "scenario": "Every realign/region-align/Add&Align run: the viewer only supplies gap penalties, guide-tree count and (optionally) a scoring matrix, so MAFFT's >75% rule is always the operative type decision — which is exactly why the guard mirrors it at 26421.",
+      "severity": "none",
+      "title": "(c) No argument fixing the type is passed to MAFFT: only -i/-E/-f/-h/-b/-j reach disttbfast, so MAFFT's own rule always applies to the swapped text",
+      "verdict": "ok",
+      "confidence": 4
+    },
+    {
+      "file": "script.js",
+      "line": 26427,
+      "quote": "    if (!changed) return { fasta, recs };",
+      "reasoning": "With no letters at all (empty seqs, or rows of '-'/'.' only), 26421 `!(letters && ...)` short-circuits before the 0/0 division and gives protein=true, so ph='X' (26422). Line 26424's gapped branch replaces only '*' and '?', which a gap-only row cannot contain, so no substitution changes any row and 26427 returns the original fasta unchanged; MAFFT receives the same text. On MAFFT's side total==0, so atgcfreq = (double)0/0 = NaN and `NaN > 0.75` is false, i.e. dorp = 'p' — nucleotide would need a strictly positive ratio of > 0.75, which an all-gap input cannot produce. Both sides answer 'protein' / weigh nothing, consistently (MAFFT may still fail later on empty sequences, but it fails the same text the viewer classified, with no type disagreement between the two). Only-gaps rows that DO contain '*' still count 0 letters on both sides (isalpha('*') false; code 42 excluded at 26417), so the answer stays protein in both.",
+      "scenario": "A row whose sequence is only '-' and '.': the guard's `letters &&` guard avoids 0/0, keeps the fasta byte-identical, and both viewer and MAFFT classify it as protein ('p'), so there is no divergence on empty/gap-only input.",
+      "severity": "none",
+      "title": "(d) Empty input and all-gaps input: both sides decide protein, without dividing by zero",
+      "verdict": "ok",
+      "confidence": 4
+    }
+  ],
+  "counts": {
+    "findings": 5
+  },
+  "note": "Q13 audit complete, 5 findings appended. Summary: (a) the guard at script.js 26414-26421 counts exactly MAFFT's letters (ASCII A-Za-z via charCodeAt & ~32 in 65..90) against exactly MAFFT's set (A,C,G,T,U,N incl. lowercase/notation * ? - . excluded on both sides), with the same strict `> 0.75` threshold, the same '<= 0.75 -> protein' direction, pooled over every residue of every record like MAFFT's `total`/`atgcnum` over all sequences; the `letters &&` short-circuit covers the 0/0 case. (b) the placeholder swap cannot flip MAFFT's classification: nucleotide swaps (E,F,I,J,L,O,P,Q,Z -> N, and *? -> N even in gapped rows) only raise MAFFT's post-swap ratio above the viewer's already >0.75 value; protein swaps (U,O -> X, *? -> X) remove U's from the numerator and add X to the denominator, only lowering a ratio that was already <=0.75. (c) no type-fixing argument reaches MAFFT: getMafftExtraArgs (23960-23990) emits only -f/-h/-E/-b/-j, _confirmMafftJob only rewrites -E, and the worker adds only -i /input.fa / -E 2 (mafft-worker.js 24-27), so disttbfast's own rule decides the run. (d) empty and all-gaps input: both sides end at protein without dividing by zero, no divergence. One defect flagged (medium, conf 3): when the MSA type dropdown selects a protein matrix, -b 62/-j 200 is still sent for a run the guard has judged nucleotide (26421 explicitly ignores isProteinAlignment per its 26411-26413 comment), so MAFFT can be given a protein matrix over nucleotide-swapped text; the actual disttbfast behaviour can't be confirmed since MAFFT is not in the repo."
+}

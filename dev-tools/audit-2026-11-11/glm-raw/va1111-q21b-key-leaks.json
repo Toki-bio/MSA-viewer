@@ -1,0 +1,96 @@
+{
+  "findings": [
+    {
+      "confidence": 5,
+      "file": "server.js",
+      "line": 55,
+      "quote": "        fs.mkdirSync(path.dirname(ACCESS_KEY_FILE), { recursive: true, mode: 0o700 });",
+      "reasoning": "The key file lives at os.homedir()/.viewalign/access-key (line 43). It is created inside a mode-0700 directory (line 55) and written with mode 0600 (line 56) plus an explicit chmodSync(0o600) at line 57, outside the static root (STATIC_ROOT is __dirname, and PRIVATE static paths are only judged inside it, lines 192-254), so neither the server nor another local user reads it. On Windows fs modes are ignored (Node docs), so the file falls back to the inherited ACL of %USERPROFILE%\\.viewalign, which on a default Windows profile is readable only by that user, SYSTEM and Administrators - no other standard user or web page.",
+      "scenario": "Start server.js on Windows; a second local standard user navigates the filesystem to the first user's home - profile ACLs deny access; the static handler (not under __dirname) cannot serve it either.",
+      "severity": "none",
+      "title": "Key file stored under home with 0700 dir / 0600 file; only readable by the owner's account",
+      "verdict": "ok"
+    },
+    {
+      "confidence": 5,
+      "file": "start-server.bat",
+      "line": 79,
+      "quote": "if exist \"%KEYFILE%\" set /p VKEY=<\"%KEYFILE%\"",
+      "reasoning": "start-server.bat only READS the key (line 76-79) into an environment variable of the local cmd process and echoes the start-up link on screen (lines 81, 34). No output redirect to any file: grep showed a memento for '.bat|routePath|changesThisMachine' and my read of lines 1-88 found only '>nul', '2>nul' and '2>&1' sinks (e.g. line 55 'call npm install --silent >nul 2>&1'), never '>' into a log/*.out file. install-autostart.bat only creates a .lnk and never mentions access-key (I read its full 11 lines). So no .bat writes the key to a file that the static handler or other users could read.",
+      "scenario": "User runs start-server.bat: the key appears only in the owner's terminal and in the background server window opened by 'start \"MSA Viewer Server\" /min cmd /k ...' (line 61) - output a web page cannot reach.",
+      "severity": "none",
+      "title": "start-server.bat prints the key only to the owner's console; nothing written to disk",
+      "verdict": "ok"
+    },
+    {
+      "confidence": 5,
+      "file": "server.js",
+      "line": 159,
+      "quote": "comment: \"strip it from the browser's address bar and from the Referer header of any later request\"",
+      "reasoning": "After a correct ?key=..., the reply is res.redirect(302, req.path) (line 160) - the Location header is req.path only. Express's req.path (parseurl().pathname) never contains the query string, so the Location header cannot contain '?key='. The redirect target also never reaches req.url: the request URL from a fresh browser window can be 'http://localhost:accessport/anything', the redirect just goes to the literal path.",
+      "scenario": "Owner opens the start-up link: the response Location is the same path with the query stripped, so the key ends up in the address bar/Referer only if the browser wrongly keeps it, which it - the very purpose of the redirect - it does not.",
+      "severity": "none",
+      "title": "The 302 redirect after a ?key= link strips the key from the URL",
+      "verdict": "ok"
+    },
+    {
+      "confidence": 4,
+      "file": "server.js",
+      "line": 1396,
+      "quote": "  console.error(`  ${req.method} ${req.path}`);",
+      "reasoning": "Every console.* statement in server.js was grepped (only 21 hits); the only ones that touch a request are the [something] 500 log at 1396 and the start-up key link at 1406/1407. Line 1396 prints req.method and req.path; req.path excludes the query string, so '[GET /?key=<key>]' style logging of the key never happens. No other console.log/error/warn in the grep output printed the key or req.url/req.query/originalUrl.",
+      "scenario": "An owner opens /?key=<key>; the address bar, request path, and any log script never write that key anywhere. The only start-up key-permitting console output is the allowed start-up link at 1406.",
+      "severity": "none",
+      "title": "Error logging prints req.method and req.path only, never the query string",
+      "verdict": "ok"
+    },
+    {
+      "confidence": 4,
+      "file": "server.js",
+      "line": 158,
+      "quote": "res.setHeader('Set-Cookie', `${ACCESS_COOKIE}=${ACCESS_KEY}; Path=/; Max-Age=31536000; HttpOnly; SameSite=Strict`);",
+      "reasoning": "After a correct key link the key is stored in a cookie with Path=/ Max-Age=31536000 HttpOnly SameSite=Strict. HttpOnly means no script on the page (including any untrusted content) can read document.cookie; script.js was grepped for 'document.cookie|viewalign_key|storage.*[Kk]ey' with zero matches, and the key never appears in local storage or history. sameKey() (lines 65-70) only ever reports ok/never re-sends the key. The redirect after login strips the key from the URL. So once used, the key is never seen again.",
+      "scenario": "Set server; open the .bat key link in a browser; no web page code or tool storage can later read the key.",
+      "severity": "none",
+      "title": "Set-Cookie writes the key with HttpOnly, SameSite=Strict, so pages cannot read it",
+      "verdict": "ok"
+    },
+    {
+      "confidence": 4,
+      "file": "server.js",
+      "line": 157,
+      "quote": "  });",
+      "reasoning": "Grep of err.message usages showed only one direct leak style: the global error handler records the plain message to the log and replies { error: err.expose ? err.message : ... } - err.expose is false for unknown/internal errors (Express default), so raw error messages from fs/spawn/os are not echoed to the client. The 403 at 155-156 is a static 'Access key required' message, not a key echo. The child-process 500s res.json(details.message) only contain SSH/BLAST stderr, which never contains the key (no exec/spawn line in the key grep, lines 1253 and 1266 res.send only, the key is not on the command line).",
+      "scenario": "Trigger a 500 (e.g. a broken POST body or an SSH failure); the reply contains a generic message or the tool's stderr, never the access key.",
+      "severity": "none",
+      "title": "Error replies and 500 handler never reflect the key or query back to the request",
+      "verdict": "ok"
+    },
+    {
+      "confidence": 3,
+      "file": "script.js",
+      "line": 16003,
+      "quote": "  const view = urlParams.get('view') || 'home';",
+      "reasoning": "I grepped script.js for 'viewer-info|serverKeyNote|needsKey' (10 matches, lines 16004-29175) and for '?key=' with zero match, then read the viewer-info consumer (script.js 2919-2983) which calls /api/viewer-info, /api/ssh-servers and reads urlParams around lines 16003/18370/29165 only - for view, pane and other work parameters, never the key. A second grade for 'document.cookie|viewalign_key|storage.*[Kk]ey' returned no matches. The page also does not write the key into a snapshot (snapshot loading goes through /snapshots via the static handler, listed under PUBLIC_DIRS line 196, and key-free). So the page never puts the key in the URL, localStorage or a snapshot.",
+      "scenario": "Open the site with snapshots and panes - query params stay on 'view'/'pane', never 'key'; a snapshot saved and re-opened through /snapshots/<file> carries no key.",
+      "severity": "none",
+      "title": "Front end never receives or stores the key",
+      "verdict": "ok"
+    },
+    {
+      "confidence": 3,
+      "file": "server.js",
+      "line": 49,
+      "quote": "            try { fs.chmodSync(ACCESS_KEY_FILE, 0o600); } catch (_) {}",
+      "reasoning": "When the key file already exists and its contents match the expected format, loadAccessKey re-applies 0o600 (line 49) before returning it, so a key file accidentally left world-readable by an earlier version is repaired on the next start (the file's name does not leak). If chmod fails the code continues rather than the server keeping a wide-open key a secret, but the release code in the current copy still masks warning lines 58-60 that print e.message, not the key. The non-replying folder-permissions case still writes the key to the same 0600 file (lines 55-57). So an existing over-permissive key file from an older build is fixed, not re-used as-is.",
+      "scenario": "User upgraded from an older build whose access-key was mode 0644: next start of server.js chmods it to 0600 (line 49), so the exposure ends at restart (nothing re-widens it).",
+      "severity": "none",
+      "title": "A key file left with wrong permissions from a previous run is re-chmodded 0600 before reuse",
+      "verdict": "ok"
+    }
+  ],
+  "counts": {
+    "findings": 8
+  },
+  "note": "No path was found that writes the access key where another user or a web page can read it. The key only lives in (1) the 0600 file ~/.viewalign/access-key inside a 0700 directory (on Windows, a mode-ignored file inside the owner's own ACL-restricted profile), (2) the owner's terminal/screen output (the v337 start-up link at server.js 1406 and start-server.bat :showlink lines 81/84, which are never redirected to disk), and (3) a client cookie marked HttpOnly, SameSite=Strict, Path=/ (server.js 158), which script.js never touches (no matches for ?key=, document.cookie, viewalign_key, key in storage). The logged 500s print req.method and req.path only (no query string, server.js 1396), the 302 link response deliberately strips the ?key= from the URL (server.js 159-160), error replies (500 handler, 403 at 155-156) do not include the raw message or the key, and the .bat files write no memento containing the key anywhere the static handler serves. An existing key file with wrong permissions is chmodded 0600 before reuse (server.js 49)."
+}

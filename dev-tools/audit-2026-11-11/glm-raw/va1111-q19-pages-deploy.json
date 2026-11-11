@@ -1,0 +1,74 @@
+{
+  "findings": [
+    {
+      "title": "(d) REAL: an older commit's pages run cancels the newer commit's in-flight deploy, then deploys nothing, leaving the site on an even older version",
+      "verdict": "defect",
+      "file": ".github/workflows/pages.yml",
+      "line": 24,
+      "quote": "  cancel-in-progress: true",
+      "reasoning": "Both pages runs share group `pages` (lines 22-24) with cancel-in-progress. Concrete order: push A (older) then push B (newer); B's Tests finishes first (Tests never auto-cancels on main: tests.yml line 17 `cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}`), so B's pages run starts; A's Tests finishes a minute later while B is at configure-pages/uploader/deploy-pages (lines 62-75). A's pages run enters group `pages` and cancels the running B deploy. A then hits the superseded check (lines 44-61): B's successful run IS in the list (line 53) and `git merge-base --is-ancestor \"$THIS_SHA\" \"$sha\"` (line 55) is true, so line 61 sets superseded=yes and every deploy step is gated off (lines 63, 67, 70, 74 `steps.newest.outputs.superseded != 'yes'`). Net effect: B's deployment was killed before it published, A deploys nothing, and B's pages run will never re-run (a workflow_run fires once), so the public site stays on whatever was deployed before B - an even older snapshot - until someone pushes again or dispatches manually.",
+      "scenario": "Push commit A, then commit B to main. B's Tests finishes at T; A's Tests finishes at T+1min while B's pages job is inside actions/deploy-pages@v4 (line 75). A's pages run cancels B's job, then decides `Not deployed: the later commit $sha has passed its tests already.` (line 57) and deploys nothing. Site remains on the pre-B commit; B (tested green) is not published.",
+      "severity": "medium",
+      "confidence": 4
+    },
+    {
+      "title": "(e) workflow_dispatch deploys the head commit of ANY selected branch, with no test gate and no superseded check",
+      "verdict": "ok",
+      "file": ".github/workflows/pages.yml",
+      "line": 40,
+      "quote": "          ref: ${{ github.event.workflow_run.head_sha || github.sha }}",
+      "reasoning": "For a manual run `github.event.workflow_run` is null, so the fallback `github.sha` wins: the tip of the branch the workflow was dispatched on (it may be any branch, per line 14 `workflow_dispatch:`). The `if` at lines 29-31 short-circuits on `github.event_name == 'workflow_dispatch'`, bypassing the conclusion/event test entirely, and the superseded step is skipped (`if: github.event_name == 'workflow_run'`, line 46), so an untested, even non-main commit is built (line 68 `tools/build-site.sh _site`) and published (line 75). Note the file header documents this as the owner's choice: line 2 `# on demand (Actions > Deploy to GitHub Pages > Run workflow; that one does not wait)`. It is an intentional escape hatch that requires write access to the repo, so I record it as ok - but it is the one path that can publish a commit whose Tests never ran.",
+      "scenario": "A maintainer runs Deploy to GitHub Pages from a feature branch whose Tests failed (or never ran): the site is updated to that branch's tip github.sha with no check that it passed. Documented as intended (line 2), gated by repo write permission.",
+      "severity": "none",
+      "confidence": 4
+    },
+    {
+      "title": "(c) Ancestor check is correct for the ordinary two-push race, because fetch-depth: 0 makes the newer sha visible and the older run skips",
+      "verdict": "ok",
+      "file": ".github/workflows/pages.yml",
+      "line": 55,
+      "quote": "              if git cat-file -e \"$sha^{commit}\" 2>/dev/null && git merge-base --is-ancestor \"$THIS_SHA\" \"$sha\";",
+      "reasoning": "Checkout is of the tested sha but with `fetch-depth: 0` (line 41), so origin/main's later commits (including B's sha, since checkout@v4 with depth 0 fetches all refs) are present for the `git cat-file -e` test, and `--is-ancestor` decides A is superseded when B already passed. The successful run list comes from `gh api ... runs?branch=main&event=push&status=success` (line 53). If B finished first, the site already holds B; A's run silently skips and cannot overwrite it. The reverse order (A finished first and deployed, B still running) is also fine: B later deploys and last write wins. This is correct for the common case.",
+      "scenario": "Push A then B on main; B's Tests finishes first and deploys; A's Tests finishes last -> line 57 notice, nothing deployed, site keeps B.",
+      "severity": "none",
+      "confidence": 5
+    },
+    {
+      "title": "(c) per_page=30: with >30 successful pushes interleaved, the newer commit's successful run falls out of the window and the older commit deploys over it",
+      "verdict": "defect",
+      "file": ".github/workflows/pages.yml",
+      "line": 53,
+      "quote": "          for sha in $(gh api \"repos/${GITHUB_REPOSITORY}/actions/workflows/${WORKFLOW_ID}/runs?branch=main&event=push&status=success&per_page=30\" --jq '.workflow_runs[].head_sha'); do",
+      "reasoning": "The API returns the 30 newest matching runs. If, while commit A's Tests was still running, 30 or more later pushes to main each had a successful Tests run (Tests can take up to two hours: tests.yml line 23 `timeout-minutes: 150`, and main runs are never cancelled mid-flight per tests.yml line 17), then B - the run A was actually racing with - is not in the list, line 54 `[ \"$sha\" = \"$THIS_SHA\" ] && continue` never sees an ancestor, line 61 writes superseded=no, and A is deployed over the newest site. The window scales by one page only; no pagination loop and no fallback (e.g. querying the head of main) exists.",
+      "scenario": "On a day with 40 rapid pushes to main, the tests of the first push drift past all others and finish last; every newer successful run except the 30 newest (which include commit #2, the ancestor of all) is outside per_page=30 - concretely: if 31 pushes happen between pushing A and A's Tests ending, A's ancestor run is 31st in the list, A sees no ancestor, builds _site from its own old head_sha (line 40) and publishes it over the current version.",
+      "severity": "low",
+      "confidence": 3
+    },
+    {
+      "title": "(a) A failed, cancelled or timed-out Tests run cannot reach any deploy step",
+      "verdict": "ok",
+      "file": ".github/workflows/pages.yml",
+      "line": 31,
+      "quote": "      (github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.event == 'push')",
+      "reasoning": "The trigger fires on `types: [completed]` (line 12) for every conclusion, but the single job's `if` (lines 29-31) also requires `github.event.workflow_run.conclusion == 'success'`; `failure`, `cancelled` and `timed_out` conclusions fail the test, so the job is skipped and no step (checkout line 37, build line 68, deploy line 75) runs. A timed-out Tests run gets conclusion `timed_out` from tests.yml line 23 `timeout-minutes: 150`, likewise blocked. Same for a Tests run started by `workflow_dispatch` (tests.yml line 9): event != 'push' fails the second half.",
+      "scenario": "Test suite times out after 150 min; the pages run that follows evaluates conclusion 'timed_out', the `if` is false, and nothing is published.",
+      "severity": "none",
+      "confidence": 5
+    },
+    {
+      "title": "(b) A pull_request Tests run cannot reach the deploy, even one whose fork branch is also named main",
+      "verdict": "ok",
+      "file": ".github/workflows/pages.yml",
+      "line": 13,
+      "quote": "    branches: [main]",
+      "reasoning": "Two independent gates: the workflow_run trigger only fires for runs on main (line 13) - for a PR that is the PR's head branch, so only a PR whose head branch is literally `main` (e.g. from a fork) even starts the pages workflow. That run then fails the job `if`, because a Tests run triggered by tests.yml line 8 `pull_request:` has `github.event.workflow_run.event == 'pull_request'`, which never equals `'push'` in line 31. Fork PRs run the same pull_request path, so the result is the same: job skipped, no step runs.",
+      "scenario": "A fork PR whose branch is named `main` opens a passing Tests run; pages.yml fires, the `if` at lines 29-31 is false (event is pull_request), and the fork's head_sha is never checked out or deployed.",
+      "severity": "none",
+      "confidence": 5
+    }
+  ],
+  "counts": {
+    "findings": 6
+  },
+  "note": "Q19 answered with 6 findings: (a) ok - conclusion/event gate blocks failed/cancelled/timed-out runs; (b) ok - pull_request runs never satisfy event == 'push', even fork PRs headed by a branch named main; (c) ok for the ordinary two-push race (fetch-depth: 0 + merge-base --is-ancestor), but low-severity defect: per_page=30 without pagination can miss the ancestor run after >30 interleaved successful pushes; (d) real defect (medium): cancel-in-progress in group `pages` lets the older commit's run cancel the newer commit's in-flight deploy and then skip (superseded), leaving the site on the pre-newer version with no automatic re-run of the cancelled deploy; (e) workflow_dispatch deploys github.sha (the tip of whichever branch it is dispatched on) with no test gate and no superseded check - documented as an intentional owner escape hatch (verdict ok)."
+}

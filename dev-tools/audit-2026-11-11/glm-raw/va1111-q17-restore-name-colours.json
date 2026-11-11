@@ -1,0 +1,85 @@
+{
+  "findings": [
+    {
+      "file": "script.js",
+      "line": 17446,
+      "quote": "function _restoreNameColours(saved, namesBefore) {",
+      "reasoning": "_migrateColourMapping (294) unconditionally does colourState.mappings.set(newName, ...) for a rename, overwriting any colour the other row already had under B. When undoDelete undoes the rename it calls _restoreNameColours (17650): loop 1 (delete names present before but not after the restore) skips B because the untouched row is still named B, and loop 2's guard `!namesBefore.has(n) && saved.has(n)` skips B because B was present before, so B's colour in `saved` (the pre-rename snapshot pushUndo stored at 17453) is never re-applied. The restored row A does get its colour back.",
+      "scenario": "Rows 'B' and 'A'; colour B red, colour A blue; rename A->B (allowed, _commitSeqRename at 14487 only rejects empty/too-long/same names); Undo. Result: B is left blue instead of red; its original colour is lost until the user re-applies it.",
+      "severity": "medium",
+      "title": "Undo of rename A->B never restores the original colour when another row is also named B",
+      "verdict": "defect",
+      "confidence": 4
+    },
+    {
+      "file": "script.js",
+      "line": 17396,
+      "quote": "function deleteSelected() {",
+      "reasoning": "deleteSelected removes rows and pushes undo but never touches colourState.mappings (grep shows only two mappings.delete call sites, 298 and 20450, both in rename/RevComp paths). So a plain delete leaves the deleted rows' colour keys in place, while replaying the same delete through redoAction's _restoreNameColours at 17695 (loop 1 deletes every name in namesBeforeRedo that is absent from namesNow) erases them.",
+      "scenario": "Colour row 'foo' red, delete 'foo' (colour memory stays), Undo, Redo -> the foo->red mapping is gone. Compare: delete 'foo' without Redo and later re-import a row named 'foo' -> it silently renders red. Identical data states, opposite colour memory.",
+      "severity": "low",
+      "title": "Delete drops nothing but Redo of the same delete erases the deleted rows' colour keys",
+      "verdict": "defect",
+      "confidence": 3
+    },
+    {
+      "file": "script.js",
+      "line": 17446,
+      "quote": "function _restoreNameColours(saved, namesBefore) {",
+      "reasoning": "pushUndo (17453) snapshots colourState.mappings at push time (before the mutation), so `saved` contains the deleted row's key. After the delete pop in undoDelete, namesBeforeUndo is built from state.seqs without the deleted row, and after the state restore namesNow contains it again; the restore loop's else-branch (`!namesBefore.has(n) && saved.has(n)`) re-sets its entry via colourState.mappings.set, and applyColourToSeqNames repaints.",
+      "scenario": "Colour row 'foo' red, delete it, Undo -> 'foo' is back and still red.",
+      "severity": "none",
+      "title": "Undo of a row delete restores the deleted row's colour (case a)",
+      "verdict": "ok",
+      "confidence": 4
+    },
+    {
+      "file": "script.js",
+      "line": 17446,
+      "quote": "function _restoreNameColours(saved, namesBefore) {",
+      "reasoning": "After the rename A->B, _migrateColourMapping moved the mapping A->c to B; on undo, B is in namesBefore and absent from namesNow (no other row named B), so loop 1 deletes mappings.delete('B'), and A falls into the else-branch and is re-set from `saved`. Only the shared-name case (previous finding) misbehaves.",
+      "scenario": "Colour A red, rename A->B, Undo -> A is red again, B has no colour.",
+      "severity": "none",
+      "title": "Undo of a rename A->B (no duplicate B) removes B's colour and restores A's (case b)",
+      "verdict": "ok",
+      "confidence": 4
+    },
+    {
+      "file": "script.js",
+      "line": 17396,
+      "quote": "function deleteSelected() {",
+      "reasoning": "_restoreNameColours only deletes a key when the name vanishes from state.seqs and only re-sets keys that namesBefore lacks; a reorder produces identical name sets, so every key is on both sides of both loops and nothing is touched. The colour map is keyed by seq.header, which a reorder does not change.",
+      "scenario": "Sort/reorder rows (including sortSequencesByColor) -> no colour change after Undo or Redo.",
+      "severity": "none",
+      "title": "Undo of a reorder makes no colour change (case c)",
+      "verdict": "ok",
+      "confidence": 4
+    },
+    {
+      "file": "script.js",
+      "line": 17446,
+      "quote": "function _restoreNameColours(saved, namesBefore) {",
+      "reasoning": "The name is present in namesBefore and namesNow on the undo path, so loop 1 spares it and the else-branch skips it (it is in namesBefore), leaving the later colour intact. On redo, the redo entry's colours snapshot is taken at 17640 from colourState.mappings BEFORE _restoreNameColours mutates it, and the same two conditions keep the name untouched, so the later colour survives the round trip.",
+      "scenario": "Colour row 'foo' red after an earlier step, Undo, Redo -> 'foo' is still red.",
+      "severity": "none",
+      "title": "A colour given to a still-present name after a step survives Undo and Redo (case e)",
+      "verdict": "ok",
+      "confidence": 4
+    },
+    {
+      "file": "script.js",
+      "line": 17561,
+      "quote": "function applyRowSeqPatch(rowIndex, afterSeq, skipDom) {",
+      "reasoning": "undoDelete's patch branch (17626-17633) and redoAction's corresponding branch (17672-17679) `return last` before the _restoreNameColours call at 17650/17695, and pushUndoRowPatch (17512) stores no colours. That is safe: applyRowSeqPatch rebuilds the row with '{ ...state.seqs[rowIndex], seq: nextSeq, gaplessPositions }' (17570-17574), so the header that keys colours is preserved and no colour could have changed with the step.",
+      "scenario": "Undo/Redo of a seq-edit patch -> name colours are exactly as before, nothing dropped.",
+      "severity": "none",
+      "title": "row-seq patch entries skip the colour code and cannot matter (case f)",
+      "verdict": "ok",
+      "confidence": 4
+    }
+  ],
+  "counts": {
+    "findings": 7
+  },
+  "note": "Audited _restoreNameColours across the six sub-questions. Two defects: (b) shared-name rename undo leaves the surviving row with the migrated colour and never re-applies its own from the snapshot; (d) delete leaves colour keys behind while Redo of the same delete erases them. Cases (a), (c), (e), (f) and the duplicate-free part of (b) are correct."
+}

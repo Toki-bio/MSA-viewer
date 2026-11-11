@@ -1,0 +1,74 @@
+{
+  "findings": [
+    {
+      "confidence": 4,
+      "file": "script.js",
+      "line": 12455,
+      "quote": "    return q.header + ' ' + full;",
+      "reasoning": "When header is genuinely not the start of fullHeader, _fastaDefline writes \"name + space + long name\" (12455), so the defline begins with the short name. Read-back strips exactly one '>' (8734) and takes the first word (8735) as header, with the whole cleaned line stored as fullHeader (8739): the name comes back first and the long name survives intact. The one gap: if the short name itself contains a space, 8735 keeps only its first word - which is exactly finding 1, since Rename (14494/14495) is the only setter that can put a spaced name in .header; every other setter derives header from the first word of fullHeader (27779, 27844).",
+      "scenario": "A NEXUS-style row (header \"Homo_sapiens\", fullHeader \"Homo sapiens\") is written as \">Homo_sapiens Homo sapiens\" and reads back as header \"Homo_sapiens\" with long name \"Homo sapiens\" preserved.",
+      "severity": "none",
+      "title": "The 12455 branch (name first, then long name) round-trips correctly because the parser names rows by the defline's first word",
+      "verdict": "ok"
+    },
+    {
+      "confidence": 5,
+      "file": "script.js",
+      "line": 14529,
+      "quote": "        const newName = input.value.trim();",
+      "reasoning": "The rename UI only trims (14529) and _commitSeqRename only rejects empty or unchanged names (14487: `if (!newName || !state.seqs[index] || newName === state.seqs[index].header) return false;`). It then sets BOTH fields: 14494 `state.seqs[index].header = newName;` and 14495 `state.seqs[index].fullHeader = newName;`. So a spaced name makes full === header === \"mus mus\"; _fastaDefline (12452-12456) line 12454 `if (!full || !q.header || full.startsWith(q.header)) return full;` returns \"mus mus\" and the file gets \">mus mus\". On read-back, parseFasta keeps the whole defline (8863 `header = isPir ? '>' + line.slice(4) : line;`) and _pushParsedFastaSequence keeps only the first word: 8735 `const displayHeader = cleanHeader.split(/\\s+/)[0] || 'unnamed';`. The Sequence editor deliberately avoids this by deriving the short name from the first word (27844 `const newHeader = newFullHeader.split(/\\s+/)[0];`, 27779 `state.seqs[idx].header = fullH.split(/\\s+/)[0];`); Rename is the one path that does not.",
+      "scenario": "Double-click a row name, type \"mus mus\", press Enter, then Save (or Copy) and reopen the file: the defline is \">mus mus\" and the row comes back named \"mus\". Any name colour assigned to \"mus mus\" also fails to match after reload.",
+      "severity": "medium",
+      "title": "Rename accepts a name with a space, but the defline read back keeps only the first word, so the saved/loaded row gets a different name",
+      "verdict": "defect"
+    },
+    {
+      "confidence": 4,
+      "file": "script.js",
+      "line": 12454,
+      "quote": "    if (!full || !q.header || full.startsWith(q.header)) return full;",
+      "reasoning": "Case (a). The hypothesised state (header \"seq1\", fullHeader \"seq10 Homo\") cannot be produced: Rename sets both fields to the same string (14494, 14495 `state.seqs[index].fullHeader = newName;`), and the Sequence editor always derives the short name from the first word of the long name (27844, 27779), so full.startsWith(header) is trivially true with full === header === \"seq1\". _fastaDefline returns full = \"seq1\"; the written defline is \">seq1\" and the row reads back as \"seq1\" (8735). The prefix trap would only fire if some code set .header alone; today every .header setter also sets .fullHeader (14494/14495) or derives it from fullHeader's first word (27779; 27868 `state.seqs[index].header = newHeader;` with newHeader built at 27844).",
+      "scenario": "Rename a row whose long name was \"seq10 Homo\" to \"seq1\": full is \"seq1\", defline written \">seq1\", name read back \"seq1\". No name is lost.",
+      "severity": "none",
+      "title": "(a) The prefix trap (name \"seq1\", long name \"seq10 Homo\") is unreachable from Rename, which overwrites the long name too",
+      "verdict": "ok"
+    },
+    {
+      "confidence": 4,
+      "file": "script.js",
+      "line": 8734,
+      "quote": "    const cleanHeader = header.replace(/^>/, '').trim().replace(/\\s+/g, ' ');",
+      "reasoning": "Case (c). Rename to \">seq\" is accepted (14529 trims only; 14487 does not reject it) and sets header=fullHeader=\">seq\"; _fastaDefline returns the full text unchanged (12454) so the line written is \">>seq\". parseFasta treats any line starting with '>' as ONE defline: 8857 `if (line.startsWith('>')) {` and 8863 `header = isPir ? '>' + line.slice(4) : line;` keep the whole line; 8734 strips exactly one leading '>' leaving \">seq\", and 8735 names the row \">seq\". So ViewAlign round-trips the strange name (no data loss, no extra record), at the cost of an ambiguous \">>seq\" line for other tools. A '>' elsewhere in the name (\"seq>1\") also round-trips.",
+      "scenario": "Rename a row to \">seq\", Save, reload: the file contains \">>seq\" (ambiguous for outside tools, and MAFFT/BLAST may error on it) but ViewAlign reads the row back as \">seq\".",
+      "severity": "low",
+      "title": "(c) A name starting with '>' round-trips (parser strips only one '>') but exports a line \">>seq\" that other tools may reject or split",
+      "verdict": "defect"
+    },
+    {
+      "confidence": 5,
+      "file": "script.js",
+      "line": 14487,
+      "quote": "    if (!newName || !state.seqs[index] || newName === state.seqs[index].header) return false;",
+      "reasoning": "Case (d). An empty name cannot be produced: the input is trimmed at 14529 and 14487 rejects the empty string. An empty fullHeader (possible only from parsing a bare \">\" line) makes _fastaDefline's `!full` guard (12454) return \"\" (not undefined), so a bare \">\" is written; on read-back header = \">\" (8863), 8734 strips the '>' leaving \"\", and 8735's `|| 'unnamed'` names the row \"unnamed\" (8739 stores fullHeader: cleanHeader = \"\"). No row is dropped. I did not find any other route to an empty fullHeader, so the claim covers the parse-then-save cycle and Rename.",
+      "scenario": "Type only spaces in the rename box: nothing changes (14487 rejects). A file with a bare \">\" line: row loads as \"unnamed\", saves as \">\", reloads as \"unnamed\" again.",
+      "severity": "none",
+      "title": "(d) Empty names are impossible from Rename (guard at 14487) and an empty long name degrades to a bare '>' that reads back as 'unnamed', so no row is lost",
+      "verdict": "ok"
+    },
+    {
+      "confidence": 4,
+      "file": "script.js",
+      "line": 8739,
+      "quote": "        seqs.push({ header: displayHeader, fullHeader: cleanHeader, seq: processedSeq, gaplessPositions: gaplessPositions, rc: false });",
+      "reasoning": "Case (e). Rename row 2 to row 1's name: both rows then have identical header and fullHeader; _fastaDefline writes one \">name\" line per row and parseFasta pushes one record per '>' line unconditionally (8863 header = line when `line.startsWith('>')` at 8857; then _pushParsedFastaSequence pushes at 8739) with no dedup, so both rows and their sequences survive with the same name. I did NOT verify the downstream by-name lookups made by seqEditApply (27725), which the prompt says matches records to rows by name, so with duplicate names that matching is ambiguous; I only claim the save/read-back cycle is lossless.",
+      "scenario": "Rename row 2 to row 1's name, Save, reload: two records \">name\" are read back as two rows both named \"name\"; nothing merged or dropped, but later by-name lookups get the first match only.",
+      "severity": "none",
+      "title": "(e) Two rows renamed to one name both survive the round-trip as two separate records with the same name",
+      "verdict": "ok"
+    }
+  ],
+  "counts": {
+    "findings": 6
+  },
+  "note": "Q15 part 1 answered. Summary of what is written and what name comes back, all traced in script.js: (a) Rename sets BOTH header and fullHeader to the new name (14494/14495), so a name that is a prefix of the old long name's first word simply replaces the long name; defline \">seq1\" reads back \"seq1\" — the hypothesised header=\"seq1\"/fullHeader=\"seq10 Homo\" state is unreachable from Rename, and the only other .header setters (27779, 27868 via 27844) derive the header from the long name's first word, keeping startsWith true — so the 12454 branch can never silently drop a short name today. (b) DEFECT: Rename only trims (14529) and only rejects empty names (14487); \"mus mus\" is stored in header and fullHeader, _fastaDefline returns the untouched full text (12454), the file gets \">mus mus\", and _pushParsedFastaSequence keeps only the first word (8735) — the row reloads as \"mus\", a different name (medium; name colours keyed by the spaced name also break). (c) \">seq\" is accepted by Rename; written as \">>seq\"; ViewAlign's parser treats the line as ONE defline (8857/8863) and strips exactly one '>' (8734), so the row still reads back as \">seq\" — no data loss inside ViewAlign, but the exported file has an ambiguous \">>seq\" line (low). (d) Empty name blocked by 14487; an empty long name yields a bare \">\" that reads back as \"unnamed\" (8735) — no row lost. (e) Duplicate names are written as duplicate \">name\" records and both rows reload unchanged (8739 pushes per '>' line with no dedup; downstream by-name lookups in the Sequence editor were not traced). The 12455 branch (name first, then long name) round-trips correctly because 8735 names rows by the defline's first word. Most serious finding: Rename's lack of the first-word normalisation that every other code path performs."
+}

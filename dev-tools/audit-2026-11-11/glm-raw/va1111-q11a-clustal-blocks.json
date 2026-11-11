@@ -1,0 +1,74 @@
+{
+  "findings": [
+    {
+      "confidence": 5,
+      "file": "benchmark.js",
+      "line": 46,
+      "quote": "        out += '\\n';",
+      "reasoning": "The viewer's ONLY Clustal writer is toClustal (benchmark.js:39; grep 'CLUSTAL' in script.js finds only the parser comment at 8353, and server.js has none). After each 60-column block its output loop appends a lone newline (line 46), and the header itself ends with a blank line ('...alignment\\n\\n', line 40). parseClustal never sees adjacent blocks: 'if (!line.trim()) { rows.blockEnd(); continue; }' (script.js:8391) fires at every block boundary and resets seenInBlock (8368), so each block's lines re-use key name+occurrence n=0 and append to the same row (8372-8374). The rows-doubling hazard would need a writer emitting blocks with no blank/whitespace separator; no writer in the repo, including the viewer's own, produces that.",
+      "scenario": "Open a .aln produced by the viewer's writer (header at line 40, per-block blank line at 46): parseClustal returns one row per sequence of full length, not one row per block line.",
+      "severity": "none",
+      "title": "(a) The viewer's only Clustal writer always ends every block with a blank line, so parseClustal never sees unseparated blocks",
+      "verdict": "ok"
+    },
+    {
+      "confidence": 5,
+      "file": "script.js",
+      "line": 8391,
+      "quote": "        if (!line.trim()) { rows.blockEnd(); continue; }   // a blank line ends a block",
+      "reasoning": "A conservation line written as only spaces trims to '' at 8391, and one written as a truly empty line also has !line.trim() true; both take the blockEnd branch seenInBlock = new Map() (8368). The block therefore ends and the next block's pieces are appended to occurrence n=0 keys (8370-8372) of the existing rows - same behaviour as the ordinary blank separator, so a block with no conserved columns cannot make the parser merge two blocks into one (which would have doubled the per-block occurrence counter and split rows).",
+      "scenario": "Clustal file where a block with no conserved position ends with an all-blank conservation line (or an empty line): the block still ends, rows keep one entry per sequence per block.",
+      "severity": "none",
+      "title": "(b) Conservation line that is empty or all spaces still ends the block (caught by the blank-line branch, not 8392)",
+      "verdict": "ok"
+    },
+    {
+      "confidence": 5,
+      "file": "script.js",
+      "line": 8392,
+      "quote": "        if (/\\s/.test(line)) { rows.blockEnd(); continue; }   // so does the conservation line under a block",
+      "reasoning": "The alternative writer convention in (b) - a conservation line with '.'/'*'/: characters - starts with the writer's indent, matches /^\\s/ at 8392 (tested as a literal leading space at script.js:8392 via test('^\\s') on the line) and also calls rows.blockEnd(). Either convention (empty line, spaces-only, or marked line) therefore produces exactly one blockEnd before the next block's rows, and _interleavedRows resets 'seenInBlock = new Map()' (8368), so keys stay stable across blocks.",
+      "scenario": "A Clustal block followed by a conventional ' *:.*' conservation line: block ends once, next block appends to the same rows.",
+      "severity": "none",
+      "title": "(b) A conservation line with content (indent + . * : marks) also ends the block",
+      "verdict": "ok"
+    },
+    {
+      "confidence": 4,
+      "file": "script.js",
+      "line": 8394,
+      "quote": "        const m = line.match(/^(\\S+)\\s+(\\S+)(?:\\s+\\d+)?\\s*$/);",
+      "reasoning": "The optional group '(?:\\s+\\d+)?' absorbs a Clustal-style trailing residue count ('NAME ACGT-- 25' -> m[1]='NAME', m[2]='ACGT--') and '\\s*$' absorbs trailing spaces, so rows.add(m[1], m[2]) at 8396 gets exactly the sequence piece with no digits attached; the count never lands in the row sequence. The count branch matches only when preceded by whitespace, so a sequence token ending in digits (e.g. 'ACGT12') still parses whole when no count follows.",
+      "scenario": "Open a standard Clustal W/O file that right-pads a residue count after each block line: counts are not appended into the sequences and the trailing blanks never turn a row into dust.",
+      "severity": "none",
+      "title": "(c) Trailing residue count after the sequence is dropped; the row name and sequence are parsed correctly",
+      "verdict": "ok"
+    },
+    {
+      "confidence": 5,
+      "file": "script.js",
+      "line": 8372,
+      "quote": "            const key = name + '\\u0000' + n;",
+      "reasoning": "add() (8369-8374) counts occurrences per name within the current block: seenInBlock.get(name)||0 (8370) then increment (8371), so a second 'X' line in the SAME block gets n=1 and a distinct key 'X\\u00001' -> its own row created at 8373 ('if (!rows.has(key)) rows.set(key,...)'). In every following block both X lines again occur as n=0 and n=1 (seenInBlock was reset at each blockEnd, 8368), so their 60-column pieces land on the right rows - the v334 fix for the old 'keyed by name alone' doubling bug noted in the comment at 8361-8363.",
+      "scenario": "A Clustal file whose writer truncated two differently-named sequences to the same short name 'X' in every block: parseClustal returns two rows 'X' of full length instead of one row of doubled length plus a lost sequence.",
+      "severity": "none",
+      "title": "(c) Two sequences with the same name inside ONE block yield two distinct rows (v334 occurrence key)",
+      "verdict": "ok"
+    },
+    {
+      "confidence": 4,
+      "file": "script.js",
+      "line": 8388,
+      "quote": "            if (line.trim()) started = true;",
+      "reasoning": "ToClustal's first line is the header 'CLUSTAL W (1.82) multiple sequence alignment' (benchmark.js:40), which _isClustalInput also requires (`/^(CLUSTAL|...)/` at 8358). parseClustal consumes it via the !started branch at 8387-8389 (set started, continue) so it is never mistaken for a row; the blank line after the header then harmlessly does blockEnd at 8391. Also toClustal (benchmark.js:44) pads names to width 12 and separates sequence by a space, matching the name/sequence split in the regex at 8394, and it writes no conservation line at all - so part (b)'s empty-conservation variants never arise from the viewer's own writer.",
+      "scenario": "Round-trip: generate .aln with toClustal, load it: header skipped, one row per sequence, pieces joined across blocks.",
+      "severity": "none",
+      "title": "Header line of a Clustal file is skipped and never parsed as a row",
+      "verdict": "ok"
+    }
+  ],
+  "counts": {
+    "findings": 6
+  },
+  "note": "Handoff Q11 part 1 (Clustal) audited: all six checks come out ok. Key evidence: the viewer's only Clustal writer is benchmark.js:39 toClustal, which always ends every block with a blank line (benchmark.js:46) and whose header ends '\\n\\n' (line 40), so the rows-doubling unseparated-block input is never produced in the repo (grep 'CLUSTAL' in script.js finds only the parser + comment at 8353; server.js has no Clustal code). parseClustal (script.js:8382-8399) ends a block on blank, spaces-only, or indented conservation lines (8391-8392), drops the trailing residue count via '(?:\\s+\\d+)?\\s*$' (8394), and _interleavedRows keys rows by name+\\0+occurrence (8370-8372), so duplicate names within one block yield separate rows. No defects found; confidence 4-5 per finding."
+}

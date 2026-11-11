@@ -1,0 +1,96 @@
+{
+  "findings": [
+    {
+      "file": "script.js",
+      "line": 8870,
+      "quote": "                raw += line.replace(/[_~]/g, '-').replace(/\\s/g, '');",
+      "reasoning": "Case (b). For a numbered/interleaved FASTA writer's record that is all gaps ('------ 60\\n------ 120'), line 8869 still strips digits from `seq` ('-...-'), but line 8870 keeps them in `raw` ('------60------120'). Line 8736 `const states = raw !== undefined && _fastaStateRow(raw);` calls `_fastaStateRow` (8732: `/\\d/.test(rawNoSpace) && /^[0-9?.\\-]+$/.test(rawNoSpace)`), which is true (digits present, only 0-9/?/-/.), so line 8737 takes the states branch and makes processedSeq from `raw` — the writer's column numbers become residues. Before v334 this record went through line 8869's digit stripping and the gap row was correct. This is a NEW wrong result (row length no longer matches the other rows).",
+      "scenario": "Load a FASTA written by an interleaved/numbered writer in which one record's block is entirely gaps, e.g. '>seqX\\n------------ 60\\n------------ 120'. The parsed row's seq becomes '------------60------------120' instead of 24 gaps; the alignment is corrupted by 6 digit residues and Save FASTA writes the position numbers as sequence.",
+      "severity": "high",
+      "title": "All-gap record with trailing position numbers is now a 'state row': the writer's line numbers become residues",
+      "verdict": "defect",
+      "confidence": 5
+    },
+    {
+      "file": "script.js",
+      "line": 27598,
+      "quote": "    return _fastaStateRow(compact) ? compact : compact.replace(/\\d+/g, '');",
+      "reasoning": "Case (b) in the Sequence editor. `_seqEditCleanSeq` (27596-27599) removes spaces (27597: `String(text || '').replace(/\\s+/g, '')`) and then applies the SAME `_fastaStateRow` test (27598) instead of unconditionally deleting digits. `_getSeqEditMultiFasta` (27613) feeds each record's accumulated non-'>' lines (27629 `currentSeq += trimmed;`) into it at 27624/27633. An all-gap record pasted with position numbers ('------------ 60') compact-checks out as a state row, so its digits survive as residues; the old code path (comment 27594-27595, audit M13) always stripped them. Letter-containing records fail `/^[0-9?.\\-]+$/` and are unaffected.",
+      "scenario": "In the Sequence editor textarea paste '>seqX\\n------------ 60\\n------------ 120' and Apply: the row's seq carries '60' and '120' as residues instead of pure gaps.",
+      "severity": "high",
+      "title": "Sequence editor `_seqEditCleanSeq` keeps digits of an all-gap numbered record — same new wrong result as parseFasta",
+      "verdict": "defect",
+      "confidence": 4
+    },
+    {
+      "file": "script.js",
+      "line": 8732,
+      "quote": "function _fastaStateRow(rawNoSpace) { return /\\d/.test(rawNoSpace) && /^[0-9?.\\-]+$/.test(rawNoSpace); }",
+      "reasoning": "Case (a). A .qual file ('>read1' then '40 40 38 20 ...') is byte-identical in shape to this test after line 8870 strips spaces: raw is all digits, `/\\d/` is true, so line 8736 sets states and line 8737 keeps raw as residues. Before v334, line 8869 stripped all digits and the record became an EMPTY row — already garbage. So this is not a new *class* of failure, but the new result is a subtler wrong one: a plausible-looking '404038 20...' residue row that is saved and aligned instead of an obviously empty row. The same applies to case (d): a '>h' header whose only content is a line of numbers (with blank lines between) — the blank lines never reach the `else if (header)` branch? No: line 8850 trims each line, line 8856 skips empty ones only via `if (!line || ...) continue`, wait — empties are skipped at 8856, so '>read1\\n\\n40 40' still accumulates raw='4040' via 8870 and becomes a digit-residue record instead of the empty row it was before.",
+      "scenario": "Import a FASTA-format .qual file (or paste one): ViewAlign shows rows whose residues are the quality scores ('40 40 38 20' -> '40403820...'), treats them as sequence characters, gaps/mismatches against nothing, and Save FASTA writes scores as sequences. Previously these records parsed to empty rows.",
+      "severity": "medium",
+      "title": "A FASTA .qual record ('40 40 38 20 ...') now becomes a residue row of those digits — was already garbage before, but silently different garbage",
+      "verdict": "defect",
+      "confidence": 4
+    },
+    {
+      "file": "script.js",
+      "line": 8859,
+      "quote": "                    _pushParsedFastaSequence(seqs, header, isPir ? seq.replace(/\\*$/, '') : seq, isPir ? undefined : raw);",
+      "reasoning": "Confirmed. Both push sites pass `isPir ? undefined : raw` (8859 and the identical final-record push at 8874), so for a PIR/NBRF record (header matched by PIR_HEADER at 8846) `raw` is undefined. Line 8736 `const states = raw !== undefined && _fastaStateRow(raw);` then short-circuits to false and line 8737 always takes the sanitise branch. A PIR record can never be treated as a state row, even if its sequence body were all digits.",
+      "scenario": "Load a PIR file ('>P1;name' with title line and '*'-terminated sequence, e.g. a numeric-ish '>P1;x\\n...\\n1234*'): the record is sanitised via 8737 (digits -> removed per _sanitizeFastaSequence at 8726), never via the states branch.",
+      "severity": "none",
+      "title": "PIR path passes raw = undefined, so a PIR record is never a state row — confirmed",
+      "verdict": "ok",
+      "confidence": 5
+    },
+    {
+      "file": "script.js",
+      "line": 8856,
+      "quote": "            if (!line || line.startsWith(';')) continue; // ';' lines are comments in Pearson FASTA",
+      "reasoning": "Case (d), the empty record itself. A record with no body text accumulates raw = '' (reset at 8861), and `_fastaStateRow('')` is false because line 8732 requires `/\\d/.test(rawNoSpace)`. The `\\d` guard means the empty record is NOT a state row; line 8736 gives states = false and 8737 sanitises '' to ''. Same empty row as before v334. (The numbers quoted in the question, when they appear under the SAME header, make the record non-empty — that is the .qual-shaped record already reported. When they appear under a LATER '>' they attach to that header instead.)",
+      "scenario": "Parse '>read1\\n>read2\\nACGT...': read1 keeps seq '' exactly as before the change; nothing new happens to empty records.",
+      "severity": "none",
+      "title": "A truly empty record (raw = '') is correctly not a state row — unchanged behaviour",
+      "verdict": "ok",
+      "confidence": 5
+    },
+    {
+      "file": "script.js",
+      "line": 8869,
+      "quote": "                seq += line.replace(/[_~]/g, '-').replace(/[\\s\\d]/g, '');",
+      "reasoning": "Case (c), pasted ruler. In parseFasta a bare line before any '>' never enters the acculumator: line 8865 `} else if (header) {` drops it, so a ruler pasted without a header line is ignored entirely (no rows) — correct. A ruler pasted UNDER an existing record that has letters (the normal case, e.g. 'ACGT...' plus a '....|....| 40' ruler) makes raw contain '|' or letters, so `/^[0-9?.\\-]+$/` fails, `states` at 8736 is false, and line 8869 still strips the digits from `seq` — unchanged. The only ruler that changes anything is one whose record is entirely digits/gaps (a bare '>ruler' header with '10 20 30' body), which is the .qual-shaped record already reported (garbage in, garbage out both before and after).",
+      "scenario": "Paste an alignment with a numbered ruler line after the last sequence line, or any ruler after a letter-containing record: digits are still deleted as layout, the rows parse unchanged.",
+      "severity": "none",
+      "title": "A pasted ruler line adjacent to real residues: digits are still stripped (regex fails on non-digit chars)",
+      "verdict": "ok",
+      "confidence": 4
+    },
+    {
+      "file": "script.js",
+      "line": 27624,
+      "quote": "                result.push({ header: currentHeader, seq: _seqEditCleanSeq(currentSeq) });",
+      "reasoning": "Case (a)/(d) in the Sequence editor. `_getSeqEditMultiFasta` (27613-27635) collects each record's non-'>' lines (27629) and runs `_seqEditCleanSeq` at 27624. The .qual record '40 40 38 20' compacts (27597) to '40403820', which passes `_fastaStateRow` (8732: all chars in [0-9?.-] and a digit present), so 27598 returns it verbatim as the record's seq. Same for the single-record path `_getSeqEditSequence` (27600-27609), which drops only '>' lines (27607) and passes the rest to 27598. Previously the editor always deleted digits (comment 27593-27595), yielding an EMPTY record — already garbage — so this is not a new failure class, but the row now silently carries quality scores as residues instead of being visibly empty.",
+      "scenario": "Paste '>read1\\n40 40 38 20 9' into the Sequence editor and Apply: the row's seq becomes '404038209' residues and is written back to state/output instead of an empty row.",
+      "severity": "medium",
+      "title": "Sequence editor keeps a .qual record's digits as residues — was already garbage before (empty record), now subtler garbage",
+      "verdict": "defect",
+      "confidence": 4
+    },
+    {
+      "file": "script.js",
+      "line": 27609,
+      "quote": "    return _seqEditCleanSeq(seq);",
+      "reasoning": "The case the test was written for stays fixed. Pasted GenBank-style text '1 acgtacgt acgtacgt' (or any ruler mixed with real residues) accumulates letters into `seq` (27604-27608), the compact (27597) contains 'a'/'c'/'g'/'t', so `_fastaStateRow`'s `/^[0-9?.\\-]+$/` (8732) fails and `_seqEditCleanSeq`'s else branch `compact.replace(/\\d+/g, '')` still deletes the digits — exactly the audit-M13 behaviour described in the comment at 27593-27595. Only records that are EXCLUSIVELY digits and gap signs take the states branch.",
+      "scenario": "Paste '1 acgtacgt acgtacgt 20' into the Sequence editor: the row keeps 'acgtacgtacgtacgt' and drops '1'/'20', as intended.",
+      "severity": "none",
+      "title": "Numbered GenBank-style text in the editor still loses its position numbers correctly (letters present -> not a state row)",
+      "verdict": "ok",
+      "confidence": 4
+    }
+  ],
+  "counts": {
+    "findings": 8
+  },
+  "note": "Q12 answered with 8 findings. Summary: (b) an all-gap record with trailing position numbers (\"------ 60\") is the one NEW wrong result in both parseFasta (raw keeps digits at 8870, _fastaStateRow true at 8732, states branch at 8737 keeps them as residues) and the Sequence editor (_seqEditCleanSeq 27598) — previously line 8869 stripped the digits and the gap row was correct. (a)/(d digit-only bodies) .qual files and digit-only bodies were already garbage before (digits deleted -> empty row) and still are, now as subtler digit-residue rows. Empty records (raw='') are correctly not state rows. PIR passes raw=undefined at 8859/8874, so states is always false there — confirmed never a state row. Ruler lines next to real residues still lose their digits (regex fails on letters); a bare ruler without a header is ignored by parseFasta entirely."
+}

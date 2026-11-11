@@ -1,0 +1,78 @@
+{
+  "findings": [
+    {
+      "file": "script.js",
+      "line": 98,
+      "quote": "    brkStyle = safeLocalGet('msaviewer_brk_style', BRK_STYLE_DEFAULT);",
+      "reasoning": "Only writer is line 103 `localStorage.setItem('msaviewer_brk_style', JSON.stringify(style))` where style is the object built at lines 89-92 with string fields, so the stored kind is always an object, matching the BRK_STYLE_DEFAULT fallback (an object). applyBrkStyle then re-checks each field (`typeof style.color === 'string'`).",
+      "scenario": "A saved brk style (object of strings) is always re-accepted; a corrupted store yields the default object instead of a crash.",
+      "severity": "none",
+      "title": "safeLocalGet('msaviewer_brk_style', BRK_STYLE_DEFAULT) - stored kind matches fallback",
+      "verdict": "ok"
+    },
+    {
+      "file": "script.js",
+      "line": 20997,
+      "quote": "    const p = safeLocalGet(SEARCH_PRESETS_KEY, {});",
+      "reasoning": "SEARCH_PRESETS_KEY = 'searchPresets' (line 20995). Writers 21042/21068 store `JSON.stringify(presets)` where presets is _searchPresets() itself (a null-prototype object of `{savedAt, queries[]}` per name), so the stored kind is always an object, matching the {} fallback; line 21000 copies into a fresh prototype-less object, and loadSearchPreset re-validates (line 21050 `Array.isArray(p.queries)`, line 21054 `typeof q.motif !== 'string'`).",
+      "scenario": "Saved promoter-box style search presets load after a reload; a valid stored preset object is never refused.",
+      "severity": "none",
+      "title": "safeLocalGet(SEARCH_PRESETS_KEY, {}) - stored kind always object, ok",
+      "verdict": "ok"
+    },
+    {
+      "file": "script.js",
+      "line": 22892,
+      "quote": "let presets = safeLocalGet('clusteringPresets');",
+      "reasoning": "With no fallback the getter uses a prototype-less object (fallback = Object.create(null)) and refuses any stored value that is not also an object. Writers found by grep for safeLocalSet/localStorage.setItem ('clusteringPresets') store `JSON.stringify(presets)` built by the same getter, so the stored kind is always an object and a valid value is never refused; the null prototype also makes keys like '__proto__' plain names.",
+      "scenario": "Every clustering preset written by the save path round-trips; corruption yields a fresh empty {} store rather than a crash or prototype pollution.",
+      "severity": "none",
+      "title": "safeLocalGet('clusteringPresets') with no fallback - object kind preserved",
+      "verdict": "ok"
+    },
+    {
+      "file": "script.js",
+      "line": 32265,
+      "quote": "        colourState.presets = safeLocalGet('seqColourPresets');",
+      "reasoning": "Writers store `JSON.stringify(colourState.presets)` (an object mapping preset names to arrays of {header, colour, ...} entries) and no caller ever writes a list, number or string under this key, so the no-fallback (prototype-less object) call never refuses a value the app itself saved.",
+      "scenario": "Saved named colour presets still load after reload; a store hand-corrupted to a non-object falls back to an empty set with no crash.",
+      "severity": "none",
+      "title": "safeLocalGet('seqColourPresets') with no fallback - stored kind always object",
+      "verdict": "ok"
+    },
+    {
+      "file": "script.js",
+      "line": 35211,
+      "quote": "    const p = safeLocalGet(DOT_PRESETS_KEY, {});",
+      "reasoning": "DOT_PRESETS_KEY = 'msaviewer_dotPresets' (line 35209). Writers 35259/35271 store `JSON.stringify(presets)` where presets is _dotPresets() itself (a null-prototype object with one object per name, built at line 35258 by `_dotPresets()[name] = ...`), so the stored kind is always an object and matches the {} fallback. Line 35282 further validates on load (`typeof p !== 'object' || !p.settings`).",
+      "scenario": "A dot plot preset saved from the panel reloads; nothing the app writes under this key is a list/number/string, so nothing valid is dropped by the kind check.",
+      "severity": "none",
+      "title": "safeLocalGet(DOT_PRESETS_KEY, {}) - dot plot presets round-trip as objects",
+      "verdict": "ok"
+    },
+    {
+      "file": "script.js",
+      "line": 24017,
+      "quote": "    const raw = safeLocalGetRaw(key); return raw !== null && String(raw).trim() !== '0';",
+      "reasoning": "MAFFT defaults are written at line 24007 as raw strings `localStorage.setItem(key, val ? '1' : '0')` and read back through safeLocalGetRaw (no JSON parse, no kind check), only one caller (line 24017, matching the same key on a subsequent call), so they are unaffected by the new kind check - if _mafftPrefBool had used safeLocalGet with any fallback, the stored '1'/'0' string (typeof 'string') would have been refused and the preference silently reverted to the default.",
+      "scenario": "A user toggling a MAFFT default keeps it after reload; safeLocalGetRaw callers see identical behaviour to before v335.",
+      "severity": "none",
+      "title": "safeLocalGetRaw is not touched by the changes",
+      "verdict": "ok"
+    },
+    {
+      "file": "script.js",
+      "line": 18760,
+      "quote": "    const preset = JSON.parse(safeLocalGetRaw('msaviewer_preset_v44') || 'null') || {};",
+      "reasoning": "The stored union-layout preset is a JSON blob or 'null'; reading it with safeLocalGetRaw keeps the raw string so the caller's own JSON.parse and Object.assign are unchanged; safeLocalGet's prototype-less-object rule (the writer stores an object blob, never a prototype-carried one) never enters this path, so no valid value can be refused here.",
+      "scenario": "Reloading the page keeps the previous row heights and right/left stack states stored under that key.",
+      "severity": "none",
+      "title": "safeLocalGet('msaviewer_preset_v44') caller uses raw path, unaffected",
+      "verdict": "ok"
+    }
+  ],
+  "counts": {
+    "findings": 7
+  },
+  "note": "All five safeLocalGet callers (msaviewer_brk_style, searchPresets, clusteringPresets, seqColourPresets, msaviewer_dotPresets) match the kind their writer stores (always a JSON object of preset entries), so no valid stored value is refused. The two raw-string stores (MAFFT_DEF_GA / MAFFT_DEF_ADJUST '1'/'0') and the msaviewer_preset_v44 blob go through safeLocalGetRaw, which bypasses the kind check and is unaffected. No defect found."
+}
