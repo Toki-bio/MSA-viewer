@@ -3,7 +3,7 @@
 // RELEASE_VERSION is the release version (package.json, CITATION.cff, git tag
 // v<RELEASE_VERSION>, tests/meta/version.test.js); BUILD_TAG counts every deploy.
 const RELEASE_VERSION = '1.34.1';
-const BUILD_TAG = 'v338';
+const BUILD_TAG = 'v339';
 // Sentinel row index for consensus-line nucleotide selection (not in state.seqs).
 const CONSENSUS_ROW_INDEX = -1;
 const COL_SEL_EDGE = '#4fc3f7';   // the edge line of a run of selected columns (styles.css .col-sel-l / .col-sel-r)
@@ -8694,6 +8694,21 @@ function parseStockholm(text) {
     const lines = text.split(/\r?\n/);
     const rows = _interleavedRows();
     let inAlign = false;
+    // Where blocks end (GLM check 2026-11-11, Q11b). A file that separates its blocks with blank lines: at the
+    // blank lines only (a "#=GC" line between two lines with one name does not split them). A file with no
+    // blank line between sequence lines: at a "#=GC" line, and where the first name of the block comes again
+    // after other names (such a file used to give one row per block line).
+    let seqSeen = false, blankPending = false, blankSeparated = false;
+    for (const l of lines) {
+        const t = l.trim();
+        if (t === '//') break;
+        if (!t) { if (seqSeen) blankPending = true; continue; }
+        if (t.startsWith('#')) continue;
+        if (blankPending) { blankSeparated = true; break; }
+        seqSeen = true;
+    }
+    let blockFirst = null, blockNames = new Set();
+    const endBlock = () => { rows.blockEnd(); blockFirst = null; blockNames = new Set(); };
     for (let li = 0; li < lines.length; li++) {
         const t = lines[li].trim();
         if (t === '//') {
@@ -8703,12 +8718,15 @@ function parseStockholm(text) {
             break;
         }
         if (/^# STOCKHOLM\b/.test(t) || t.startsWith('#=GF')) { inAlign = true; continue; }
-        if (!t) { rows.blockEnd(); continue; }   // a blank line ends a block
-        if (t.startsWith('#=GC')) { rows.blockEnd(); continue; }   // per-column lines close a block too
+        if (!t) { endBlock(); continue; }   // a blank line ends a block
+        if (t.startsWith('#=GC')) { if (!blankSeparated) endBlock(); continue; }   // per-column lines close a block where no blank lines do
         if (t.startsWith('#')) continue;
         if (!inAlign) continue;
         const m = t.match(/^(\S+)\s+(.+)$/);
         if (!m) continue;
+        if (!blankSeparated && m[1] === blockFirst && blockNames.size > 1) endBlock();
+        if (blockFirst === null) blockFirst = m[1];
+        blockNames.add(m[1]);
         rows.add(m[1], m[2].replace(/\s/g, '').replace(/[.-]/g, '-'));
     }
     if (rows.size === 0) return null;
@@ -8739,6 +8757,17 @@ function _sanitizeFastaSequence(rawSeq, isProtein) {
 // A record made only of digits, ?, - and . (and at least one digit) is a row of character states (a 0/1 or
 // morphological matrix saved from NEXUS), not letters with line numbers: its digits are the data. They used to be
 // deleted as layout, so such a matrix did not survive Save FASTA or a snapshot (audit 2026-11-10, H6).
+// A line of gap symbols only, with the position number some writers put at the line's end ("------ 12") or
+// start ("7 ------"): the number is layout. Without this an all-gap record written that way was taken for a
+// row of states and its numbers became residues (GLM check 2026-11-11, Q12). Only a number that fits the count
+// of residues so far is dropped, so a row of states such as "---- 0101" is not touched.
+function _dropGapLinePositionNumber(line, residuesBefore) {
+    let m = /^([-.?\s]*[-.?])\s+(\d+)$/.exec(line);
+    if (m && +m[2] === residuesBefore + m[1].replace(/\s/g, '').length) return m[1];
+    m = /^(\d+)\s+([-.?][-.?\s]*)$/.exec(line);
+    if (m && +m[1] === residuesBefore + 1) return m[2];
+    return line;
+}
 function _fastaStateRow(rawNoSpace) { return /\d/.test(rawNoSpace) && /^[0-9?.\-]+$/.test(rawNoSpace); }
 function _pushParsedFastaSequence(seqs, header, seq, raw) {
     const cleanHeader = header.replace(/^>/, '').trim().replace(/\s+/g, ' ');
@@ -8876,8 +8905,9 @@ function parseFasta(text) {
                 // Whitespace and digits are layout; any other symbol is a
                 // column (unknown symbols become N/X when sanitised, so the
                 // row keeps its length). '?' is missing data, not a gap.
-                seq += line.replace(/[_~]/g, '-').replace(/[\s\d]/g, '');
-                raw += line.replace(/[_~]/g, '-').replace(/\s/g, '');
+                line = _dropGapLinePositionNumber(line.replace(/[_~]/g, '-'), raw.length);
+                seq += line.replace(/[\s\d]/g, '');
+                raw += line.replace(/\s/g, '');
             }
         }
         if (header) {
@@ -26205,7 +26235,15 @@ function _alignIdRow(id) {
     const m = _alignRowIds && /^r(\d+)$/.exec(String(id).split(/\s+/)[0]);
     return m ? state.seqs[+m[1]] || null : null;
 }
-function _alignIdName(id) { const r = _alignIdRow(id); return r ? (r.fullHeader || r.header) : id; }
+// Add & Align sends pasted rows too, which are no rows of the alignment yet: their names are kept here while it
+// runs, so that an error names a pasted row and not "r12" (GLM check 2026-11-11, Q16).
+let _alignIdNames = null;
+function _alignIdName(id) {
+    const key = String(id).split(/\s+/)[0];
+    if (_alignRowIds && _alignIdNames && _alignIdNames.has(key)) return _alignIdNames.get(key);
+    const r = _alignIdRow(id);
+    return r ? (r.fullHeader || r.header) : id;
+}
 
 function _codonAlignOpts(fasta) {
     const num = (id, dflt) => { const v = parseFloat(el(id)?.value); return isNaN(v) ? dflt : v; };
@@ -27318,10 +27356,11 @@ function addSequencesAndAlign() {
     closeAddSequencesModal();
 
     _alignRowIds = true;
+    _alignIdNames = new Map([...sourceById].map(([id, q]) => [id, q.fullHeader || q.header]));
     let run;
     try { run = _mafftAlignWithUi(fasta, extraArgs, 'Adding sequences and aligning with MAFFT...'); }
-    catch (err) { _alignRowIds = false; throw err; }
-    run.finally(() => { _alignRowIds = false; }).then(result => {
+    catch (err) { _alignRowIds = false; _alignIdNames = null; throw err; }
+    run.finally(() => { _alignRowIds = false; _alignIdNames = null; }).then(result => {
         // no result (cancelled, or refused because the rows changed meanwhile): nothing changed, no undo step (audit L9)
         if (!result) { _dropNoOpUndo(redoBeforeAdd); return; }
         const aligned = parseMafftOutput(result);
@@ -27615,7 +27654,9 @@ function closeSeqEditor() {
 // "1 acgtacgtac gtacgtacgt" used to keep them as residues; audit M13). A record made only of digits
 // and gap signs is a row of character states and keeps its digits (as in parseFasta).
 function _seqEditCleanSeq(text) {
-    const compact = String(text || '').replace(/\s+/g, '');
+    // line by line, so that a position number beside a gap-only line is seen as one (GLM check 2026-11-11, Q12)
+    let compact = '';
+    for (const line of String(text || '').split('\n')) compact += _dropGapLinePositionNumber(line.trim(), compact.length).replace(/\s+/g, '');
     return _fastaStateRow(compact) ? compact : compact.replace(/\d+/g, '');
 }
 function _getSeqEditSequence() {
@@ -27625,7 +27666,7 @@ function _getSeqEditSequence() {
     let seq = '';
     for (const line of lines) {
         const trimmed = line.trim();
-        if (!trimmed.startsWith('>')) seq += trimmed;
+        if (!trimmed.startsWith('>')) seq += trimmed + '\n';
     }
     return _seqEditCleanSeq(seq);
 }
@@ -27647,7 +27688,7 @@ function _getSeqEditMultiFasta() {
             currentHeader = trimmed.substring(1).trim();
             currentSeq = '';
         } else {
-            currentSeq += trimmed;
+            currentSeq += trimmed + '\n';
         }
     }
     if (currentHeader !== null) {
@@ -27796,9 +27837,17 @@ function seqEditApply() {
             if (idx < 0 || idx >= state.seqs.length) continue;
             let seq = entries[i].seq;
             if (padCheckbox && padCheckbox.checked && alignLen > 0) seq = _seqEditFitWidth(seq, alignLen);
-            const fullH = entries[i].header;
-            state.seqs[idx].header = fullH.split(/\s+/)[0];
-            state.seqs[idx].fullHeader = fullH;
+            // The name changes only when the record's long name was changed. A row whose name is not the first
+            // word of its long name (NEXUS "Homo_sapiens" / "Homo sapiens") was renamed to "Homo" by any Apply
+            // and lost its name colour; a ">" with no name gave an empty name (GLM check 2026-11-11, Q15b).
+            const was = state.seqs[idx].fullHeader || state.seqs[idx].header;
+            const fullH = entries[i].header || was;
+            if (fullH !== was) {
+                const oldName = state.seqs[idx].header;
+                state.seqs[idx].header = fullH.split(/\s+/)[0];
+                state.seqs[idx].fullHeader = fullH;
+                _migrateColourMapping(oldName, state.seqs[idx].header);
+            }
             state.seqs[idx].seq = seq;
             state.seqs[idx].gaplessPositions = calculateGaplessPositions(seq);
         }
@@ -27808,7 +27857,7 @@ function seqEditApply() {
         for (let i = updateCount; i < entries.length; i++) {
             let seq = entries[i].seq;
             if (padCheckbox && padCheckbox.checked && updatedAlignLen > 0) seq = _seqEditFitWidth(seq, updatedAlignLen);
-            const fullH = entries[i].header;
+            const fullH = entries[i].header || 'unnamed';
             state.seqs.push({
                 header: fullH.split(/\s+/)[0],
                 fullHeader: fullH,
@@ -27862,7 +27911,9 @@ function seqEditApply() {
         }
     }
     if (!newFullHeader) newFullHeader = 'sequence';
-    const newHeader = newFullHeader.split(/\s+/)[0];
+    // an unchanged long name keeps the row's name (see the note in the several-rows branch above)
+    const keepName = !isFreeform && _seqEditTargetObjs[0] && newFullHeader === openedAs;
+    const newHeader = keepName ? _seqEditTargetObjs[0].header : newFullHeader.split(/\s+/)[0];
 
     // Pad or trim if checkbox is checked
     const padCheckbox = document.getElementById('seqEditPadGaps');
@@ -27886,6 +27937,7 @@ function seqEditApply() {
         showMessage("New sequence added!", 2000);
     } else {
         pushUndo('seqedit');
+        if (state.seqs[index].header !== newHeader) _migrateColourMapping(state.seqs[index].header, newHeader);
         state.seqs[index].header = newHeader;
         state.seqs[index].fullHeader = newFullHeader;
         state.seqs[index].seq = seq;

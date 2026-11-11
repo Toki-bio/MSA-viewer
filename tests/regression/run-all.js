@@ -18488,6 +18488,105 @@ check('Audit L21: Sort by similarity counts U as T', async (page) => {
   return { pass, detail: JSON.stringify(order) };
 });
 
+// ---- Findings of the local GLM check of v334-v337 (dev-tools/audit-2026-11-11/glm-check.md) ----
+
+// GLM 1111 Q15b #0-#2. What used to go wrong: the Sequence editor's Apply set a row's name to the first word of
+// its long name. A row whose name is not that first word (NEXUS "Homo_sapiens", long name "Homo sapiens") was
+// renamed to "Homo" by changing one residue, and its name colour, kept under the old name, was gone. In the
+// editor for several rows a record line ">" with no name gave the row an empty name.
+check('GLM 1111 Q15b: the Sequence editor keeps a row\'s name and colour when its long name was not changed, one row and several; an empty ">" keeps the old name', async (page) => {
+  const setText = (t) => page.evaluate((t) => { const ta = document.getElementById('seqEditTextarea'); ta.value = t; ta.dispatchEvent(new Event('input', { bubbles: true })); }, t);
+  const getText = () => page.evaluate(() => document.getElementById('seqEditTextarea').value);
+  const apply = async () => { await page.evaluate(() => document.getElementById('seqEditApplyBtn').click()); await page.waitForTimeout(250); };
+  const prep = async () => {
+    await loadFasta(page, '>a\nACGTACGT\n>b\nACGTACGA\n>c\nACGTACGC\n');
+    await page.evaluate(() => {
+      state.seqs[0].header = 'Homo_sapiens'; state.seqs[0].fullHeader = 'Homo sapiens';
+      state.seqs[1].header = 'Pan_troglodytes'; state.seqs[1].fullHeader = 'Pan troglodytes';
+      colourState.mappings.set('Homo_sapiens', '#ff0000'); colourState.mappings.set('Pan_troglodytes', '#0000ff');
+      renderAlignment();
+    });
+  };
+  const rows = () => page.evaluate(() => ({ names: state.seqs.map(q => q.header + '|' + q.fullHeader + '|' + q.seq), col: [colourState.mappings.get(state.seqs[0].header) || null, colourState.mappings.get(state.seqs[1].header) || null] }));
+  const out = {};
+  await prep();
+  await page.evaluate(() => openSeqEditor(0));
+  await setText((await getText()).replace('ACGTACGT', 'ACGTACGG'));
+  await apply();
+  out.one = await rows();
+  await prep();
+  await page.evaluate(() => { state.selectedRows = new Set([0, 1]); renderAlignment(); openSeqEditorMulti(); });
+  await setText((await getText()).replace('ACGTACGA', 'ACGTACTA'));
+  await apply();
+  out.multi = await rows();
+  // a changed long name still renames (first word), as before
+  await prep();
+  await page.evaluate(() => { state.selectedRows = new Set([0, 1]); renderAlignment(); openSeqEditorMulti(); });
+  await setText('>Homo sapiens\nACGTACGT\n>Gorilla gorilla\nACGTACGA');
+  await apply();
+  out.renamed = await rows();
+  // ">" with no name
+  await prep();
+  await page.evaluate(() => { state.selectedRows = new Set([0, 1]); renderAlignment(); openSeqEditorMulti(); });
+  await setText('>\nACGTACGT\n>Pan troglodytes\nACGTACGA');
+  await apply();
+  out.empty = await rows();
+  const pass = out.one.names[0] === 'Homo_sapiens|Homo sapiens|ACGTACGG' && out.one.col[0] === '#ff0000'
+    && out.multi.names[0] === 'Homo_sapiens|Homo sapiens|ACGTACGT' && out.multi.names[1] === 'Pan_troglodytes|Pan troglodytes|ACGTACTA' && out.multi.col.join() === '#ff0000,#0000ff'
+    && out.renamed.names[1] === 'Gorilla|Gorilla gorilla|ACGTACGA' && out.renamed.names[0].startsWith('Homo_sapiens|')
+    && out.empty.names[0].split('|')[0] !== '' && out.empty.names[0].split('|')[1] !== '';
+  return { pass, detail: JSON.stringify(out).slice(0, 700) };
+});
+
+// GLM 1111 Q12 #0, #1. What used to go wrong (since v334, which keeps rows of digits as states): a FASTA record
+// of gaps only, written with position numbers at the line ends ("------ 6" / "------ 12"), was taken for a row
+// of states and the numbers became residues (15 long beside rows of 12). Same in the Sequence editor. A
+// number after a gap-only line that equals the count of residues so far is a position number.
+// Q11b #0, #1: Stockholm blocks that are not separated by a blank line gave one row per block line, and a
+// "#=GC" line between two lines with one name in a block joined them. The 0/1 matrix (H6) and two rows with
+// one name in a block (H7) must stay as they are.
+check('GLM 1111 Q12, Q11b: numbered all-gap FASTA records keep their length; Stockholm blocks without blank lines join; state rows and same-name rows stay', async (page) => {
+  const r = await page.evaluate(() => {
+    const rows = a => a ? a.map(q => q.header + '=' + q.seq) : null;
+    return {
+      fasta: rows(parseFasta('>a\nACGTAC 6\nACGTAC 12\n>b\n------ 6\n------ 12\n')),
+      lead: rows(parseFasta('>a\n1 ACGTAC\n7 ACGTAC\n>b\n1 ------\n7 ------\n')),
+      states: rows(parseFasta('>t1\n0101 0011\n>t2\n01-1 ?011\n')),
+      editor: [_seqEditCleanSeq('------ 6'), _seqEditCleanSeq('0101 0011'), _seqEditCleanSeq('acgt 4')],
+      stoNoBlank: rows(parseStockholm('# STOCKHOLM 1.0\na ACGT\nb AC-T\na GGGG\nb GG-G\n//\n')),
+      stoGc: rows(parseStockholm('# STOCKHOLM 1.0\nx ACGT\n#=GC RF xxxx\nx AC-T\n\nx GGGG\n#=GC RF xxxx\nx GG-G\n//\n')),
+      stoSameName: rows(parseStockholm('# STOCKHOLM 1.0\nx ACGT\nx AC-T\n\nx GGGG\nx GG-G\n//\n')),
+      stoBlocks: rows(parseStockholm('# STOCKHOLM 1.0\na ACGT\nb AC-T\n#=GC SS_cons ....\n\na GGGG\nb GG-G\n#=GC SS_cons ....\n//\n')),
+    };
+  });
+  const want = {
+    fasta: ['a=ACGTACACGTAC', 'b=------------'], lead: ['a=ACGTACACGTAC', 'b=------------'],
+    states: ['t1=01010011', 't2=01-1?011'], editor: ['------', '01010011', 'acgt'],
+    stoNoBlank: ['a=ACGTGGGG', 'b=AC-TGG-G'], stoGc: ['x=ACGTGGGG', 'x=AC-TGG-G'],
+    stoSameName: ['x=ACGTGGGG', 'x=AC-TGG-G'], stoBlocks: ['a=ACGTGGGG', 'b=AC-TGG-G'],
+  };
+  const bad = Object.keys(want).filter(k => JSON.stringify(r[k]) !== JSON.stringify(want[k]));
+  return { pass: !bad.length, detail: bad.length ? JSON.stringify(Object.fromEntries(bad.map(k => [k, r[k]]))) : 'all eight inputs read as expected' };
+});
+
+// GLM 1111 Q16 #3. What used to go wrong: during Add & Align every row goes to the aligner as r<number>; when
+// the aligner returned the wrong number of residues for a PASTED row, the error named it by that id ("r12"),
+// because the id was looked up among the alignment's rows only. The message now carries the pasted name.
+check('GLM 1111 Q16: an aligner error during Add & Align names a pasted row by its name, not by its row id', async (page) => {
+  await loadFasta(page, '>s1\nACGTACGT\n>s2\nACGTACGA\n');
+  const r = await page.evaluate(() => {
+    _alignRowIds = true;
+    _alignIdNames = new Map([['r0', 's1'], ['r1', 's2'], ['r2', 'my pasted row']]);
+    let msg = '';
+    try { _alignerRestoreResidues('>r0\nACGTACGT\n>r1\nACGTACGA\n>r2\nACGTAC\n', [{ name: 'r0', seq: 'ACGTACGT' }, { name: 'r1', seq: 'ACGTACGA' }, { name: 'r2', seq: 'ACGTACGG' }]); }
+    catch (e) { msg = e.message; }
+    finally { _alignRowIds = false; _alignIdNames = null; }
+    return { msg, after: _alignIdName('r2') };
+  });
+  const pass = /"my pasted row"/.test(r.msg) && !/"r2"/.test(r.msg) && r.after === 'r2';
+  return { pass, detail: JSON.stringify(r) };
+});
+
 async function main() {
   const { server, baseUrl } = await start();
   const results = [];

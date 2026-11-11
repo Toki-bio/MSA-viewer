@@ -19,9 +19,11 @@ permissions:
   pages: write
   id-token: write
 
+# Deploy runs wait for each other. With cancel-in-progress an older commit's run cancelled the running deploy of a
+# newer one and then skipped itself as superseded, so the site stayed on an even older version (GLM check Q19).
 concurrency:
   group: pages
-  cancel-in-progress: true
+  cancel-in-progress: false
 
 jobs:
   deploy:

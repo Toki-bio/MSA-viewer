@@ -136,6 +136,24 @@ Checks "Audit L15", "Audit L16", "Audit L21" in `tests/regression/run-all.js`.
 - **L21, part** Sort by similarity counts U as T in nucleotide alignments. A short fragment still ranks by its
   identity over shared columns (owner's decision what the ranking should be).
 
+## What build v339 changed (findings of the GLM check of v334-v337)
+
+Report: `dev-tools/audit-2026-11-11/glm-check.md`. Checks "GLM 1111 Q15b", "GLM 1111 Q12, Q11b", "GLM 1111 Q16" in
+`tests/regression/run-all.js`; `tests/meta/workflows.test.js`.
+
+- **Q15b #0-#2** `seqEditApply`: a row keeps its name when the record's long name was not changed; a changed name
+  takes its colour along; `>` with no name keeps the old name (new rows: "unnamed").
+- **Q19 #0** pages.yml `cancel-in-progress: false`.
+- **Q12 #0, #1** `_dropGapLinePositionNumber`: a number beside a gap-only line that fits the residue count is
+  layout (parseFasta, `_seqEditCleanSeq`).
+- **Q11b #0, #1** `parseStockholm`: in a file with blank lines between blocks only those end a block; in a file
+  without, `#=GC` and the return of the block's first name (after other names) do.
+- **Q16 #3** `_alignIdNames`: an aligner error during Add & Align names a pasted row.
+
+Left for the owner: **Q15a #1** (Rename accepts spaces; Save and reload show the first word as the name),
+**Q17 #0** (undo of a rename onto an existing name, part of M15), and the UNSURE items of the report (databases
+and snapshots readable without the access key; the key cookie is shared by all localhost ports).
+
 ## What the GLM check should look at
 
 Read-only tasks, each answered with exact code quotes:
