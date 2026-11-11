@@ -18874,6 +18874,36 @@ check('GLM 1111 Q15a, Q17: Rename turns spaces into _ with a note; undoing a ren
   return { pass, detail: JSON.stringify(out) };
 });
 
+// Qwen editing audit 2026-11-11: no check followed the selections through the real Delete and Duplicate commands
+// and their Undo (the existing ones splice state.seqs directly). Residue selections are held by row number.
+check('Delete, Undo and Duplicate of rows: residue and row selections stay on the same sequences', async (page) => {
+  let fa = ''; for (let i = 0; i < 8; i++) fa += `>s${i}
+ACGTACGTACGTACGTACGT
+`;
+  page.on('dialog', d => d.accept());
+  await loadFasta(page, fa);
+  const r = await page.evaluate(() => {
+    const nucs = () => [...state.selectedNucs].filter(([r, s]) => r >= 0 && s.size).map(([r, s]) => state.seqs[r].header + ':' + [...s].sort((a, b) => a - b).join('.')).sort().join(',');
+    const rows = () => [...state.selectedRows].map(i => state.seqs[i] && state.seqs[i].header).sort().join(',');
+    const out = {};
+    state.selectedNucs.set(5, new Set([2, 3])); state.selectedNucs.set(0, new Set([7])); refreshNucleotideSelectionsImmediate();
+    state.selectedRows = new Set([1, 2]); updateRowSelections();
+    deleteSelected();
+    out.afterDelete = { n: state.seqs.length, nucs: nucs() };
+    undoDelete();
+    out.afterUndo = { n: state.seqs.length, nucs: nucs(), order: state.seqs.map(q => q.header).join(',') };
+    state.selectedRows = new Set([3, 6]); updateRowSelections();
+    duplicateSelected();
+    out.afterDup = { n: state.seqs.length, nucs: nucs(), rows: rows() };
+    return out;
+  });
+  const want = 's0:7,s5:2.3';
+  const ok = r.afterDelete.n === 6 && r.afterDelete.nucs === want
+    && r.afterUndo.n === 8 && r.afterUndo.order === 's0,s1,s2,s3,s4,s5,s6,s7' && r.afterUndo.nucs === want
+    && r.afterDup.n === 10 && r.afterDup.nucs === want && r.afterDup.rows === 's3,s6';
+  return { pass: ok, detail: JSON.stringify(r) };
+});
+
 async function main() {
   const { server, baseUrl } = await start();
   const results = [];

@@ -1249,6 +1249,8 @@ function _noteRowSelectionForReorder() {
 function _remapRowKeyedSelections() {
     const prev = _lastRenderedRowObjs;
     _lastRenderedRowObjs = state.seqs.slice();
+    // a residue selection Undo/Redo just put back already names the rows of the restored order
+    const nucsRestored = _nucsRestoredByUndo; _nucsRestoredByUndo = false;
     const sel = _rowSelAtPush;
     if (!prev || (prev.length === state.seqs.length && prev.every((o, i) => o === state.seqs[i]))) return;
     _rowSelAtPush = null;
@@ -1260,7 +1262,7 @@ function _remapRowKeyedSelections() {
     }
     const find = _seqObjResolver();
     const newIndex = oldRow => (prev[oldRow] ? find(prev[oldRow]) : -1);
-    if (state.selectedNucs?.size) {
+    if (state.selectedNucs?.size && !nucsRestored) {
         const next = new Map();
         state.selectedNucs.forEach((set, row) => {
             if (row < 0) { next.set(row, set); return; }   // consensus row
@@ -17528,6 +17530,17 @@ function _restoreNameColours(saved, namesBefore, countsBefore) {
     }
 }
 
+// The residue selection is part of an undo step, like the row and column selections: Undo cleared it, so the residues
+// selected in other rows were lost after Undo of a row delete (Qwen editing audit 2026-11-11; owner: bring it back).
+// Old entries without it clear it, as before.
+function _copySelectedNucs() { return new Map([...state.selectedNucs].map(([r, set]) => [r, new Set(set)])); }
+let _nucsRestoredByUndo = false;
+function _restoreSelectedNucs(saved) {
+    state.selectedNucs.clear();
+    _nucsRestoredByUndo = !!saved;
+    if (saved) for (const [r, set] of saved) state.selectedNucs.set(r, new Set(set));
+}
+
 function pushUndo(type) {
     _paneEditNote?.();
     _noteRowSelectionForReorder();
@@ -17541,7 +17554,8 @@ function pushUndo(type) {
         groupOrder: state.clusterResults?.clusters ? state.clusterResults.clusters.slice() : null,   // moving a group reorders these
         seqs: _undoSnapshotSeqs(),
         selectedRows: new Set(state.selectedRows),
-        selectedColumns: new Set(state.selectedColumns)
+        selectedColumns: new Set(state.selectedColumns),
+        selectedNucs: _copySelectedNucs()
     });
     // Clear redo stack whenever a new action is performed
     state.redoHistory = [];
@@ -17601,7 +17615,8 @@ function pushUndoRowPatch(type, rowIndex, beforeSeq, afterSeq, beforeWidth, afte
         beforeWidth,
         afterWidth,
         selectedRows: new Set(state.selectedRows),
-        selectedColumns: new Set(state.selectedColumns)
+        selectedColumns: new Set(state.selectedColumns),
+        selectedNucs: _copySelectedNucs()
     });
     state.redoHistory = [];
     _trimUndoHistory();
@@ -17652,7 +17667,7 @@ function applyRowSeqPatch(entry, useAfter, skipDom = false) {
     };
     state.selectedRows = entry.selectedRows || new Set();
     state.selectedColumns = entry.selectedColumns || new Set();
-    state.selectedNucs.clear();
+    _restoreSelectedNucs(entry.selectedNucs);
     // Put the alignment back to the width it had on this side of the edit, otherwise
     // padding added to every other row survives the undo.
     if (!trimAlignmentWidthTo(useAfter ? entry.afterWidth : entry.beforeWidth)) {
@@ -17683,6 +17698,7 @@ function applyRowSeqPatch(entry, useAfter, skipDom = false) {
             }
             if (typeof updateRowSelections === 'function') updateRowSelections();
             if (typeof updateColumnSelections === 'function') updateColumnSelections();
+            if (typeof refreshNucleotideSelectionsImmediate === 'function') refreshNucleotideSelectionsImmediate();   // the restored residue selection
             if (typeof updateSourceInfo === 'function') updateSourceInfo();
             return true;
         }
@@ -17718,7 +17734,8 @@ function undoDelete(quiet) {
         colours: colourState?.mappings ? new Map(colourState.mappings) : null,
         groupOrder: state.clusterResults?.clusters ? state.clusterResults.clusters.slice() : null,
         selectedRows: new Set(state.selectedRows),
-        selectedColumns: new Set(state.selectedColumns)
+        selectedColumns: new Set(state.selectedColumns),
+        selectedNucs: _copySelectedNucs()
     };
     if (last.colStateBefore) redoEntry.colStateAfter = _snapshotColumnState();
     state.redoHistory.push(redoEntry);
@@ -17731,7 +17748,7 @@ function undoDelete(quiet) {
     if (last.colStateBefore) _restoreColumnState(last.colStateBefore);
     state.selectedRows = last.selectedRows || new Set();
     state.selectedColumns = last.selectedColumns || new Set();
-    state.selectedNucs.clear();
+    _restoreSelectedNucs(last.selectedNucs);
     state.lastAction = null;
     _paneEditNote?.();   // mirror panes follow Undo too
     if (quiet) return;
@@ -17762,7 +17779,8 @@ function redoAction(quiet) {
         label: next.label,
         seqs: _undoSnapshotSeqs(),
         selectedRows: new Set(state.selectedRows),
-        selectedColumns: new Set(state.selectedColumns)
+        selectedColumns: new Set(state.selectedColumns),
+        selectedNucs: _copySelectedNucs()
     };
     if (next.colStateAfter) undoEntry.colStateBefore = _snapshotColumnState();
     undoEntry.colours = colourState?.mappings ? new Map(colourState.mappings) : null;
@@ -17777,7 +17795,7 @@ function redoAction(quiet) {
     if (next.colStateAfter) _restoreColumnState(next.colStateAfter);
     state.selectedRows = next.selectedRows || new Set();
     state.selectedColumns = next.selectedColumns || new Set();
-    state.selectedNucs.clear();
+    _restoreSelectedNucs(next.selectedNucs);
     state.lastAction = null;
     _paneEditNote?.();   // and Redo
     if (quiet) return;
