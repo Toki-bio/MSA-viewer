@@ -65,6 +65,18 @@ const check = (cond, msg) => { if (!cond) { fails++; console.log('FAIL', msg); }
     res = parse(fin.result);
     check(res.find(r => r.name === 'HamA').seq.replace(/-/g, '') === tweak, 'lower case, U and W are kept in the output');
 
+    // 2b. a '*' (stop marker) or '?' (missing base) in a row: the viewer keeps both in nucleotide rows and the input check
+    // lets a few through, but MACSE stopped with "nucleotide character not handled" (Qwen codon audit 2026-11-11, C1).
+    // They are aligned as N and come back as written.
+    for (const mk of ['*', '?']) {
+        const fa = `>a\nATGGCTGCTGCTGCTGCTGCTGCTGCT${mk}\n>b\nATGGCTGCTGCTGCTGCTGCTGCTGCTA\n`;
+        out = await w.send({ id: 21, type: 'align', fasta: fa, opts: { engine: 'macse' } });
+        fin = out[out.length - 1];
+        const a = fin.ok ? parse(fin.result).find(r => r.name === 'a') : null;
+        check(fin.ok && a && a.seq.replace(/-/g, '') === `ATGGCTGCTGCTGCTGCTGCTGCTGCT${mk}`,
+            `a '${mk}' in a row is aligned and kept: ` + (fin.ok ? (a && a.seq) : fin.error));
+    }
+
     // 3. raw MACSE output with '!' when frameRestored is false
     out = await w.send({ id: 3, type: 'align', fasta, opts: { engine: 'macse', frameRestored: false } });
     res = parse(out[out.length - 1].result);

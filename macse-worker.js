@@ -135,9 +135,11 @@ let sharedPool = null;
 async function alignMacse(records, opts, post) {
     // Internal names: MACSE splits clade labels on ',' and '(' ')' and drops repeated names; the alignment does not
     // depend on the names otherwise. MACSE reads U and IUPAC letters other than R/Y/N as N; U is aligned as T and
-    // the output gets the user's own letters back.
+    // the output gets the user's own letters back. A sign that is no letter ('*' stop marker, '?' missing base: the
+    // viewer keeps both, and checkNucleotide lets a few through) stopped MACSE with "nucleotide character not handled";
+    // it is aligned as N and written back too (Qwen codon audit 2026-11-11, C1).
     const ids = records.map((r, i) => 's' + i);
-    const input = records.map((r, i) => ({ name: ids[i], seq: r.seq.replace(/[Uu]/g, c => (c === 'U' ? 'T' : 't')) }));
+    const input = records.map((r, i) => ({ name: ids[i], seq: r.seq.replace(/[Uu]/g, c => (c === 'U' ? 'T' : 't')).replace(/[^A-Za-z]/g, 'N') }));
     const o = { gc: opts.gc || 1, maxTracebackCells: opts.maxTracebackCells || 2.5e8, onProgress: post };
     if (opts.fs != null) o.fs = opts.fs;
     if (opts.stop != null) o.stop = opts.stop;
