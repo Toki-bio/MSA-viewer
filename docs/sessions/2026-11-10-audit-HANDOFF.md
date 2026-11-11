@@ -125,6 +125,17 @@ GLM task 21: can any protected route be reached without the cookie (method overr
 `routePath` does not normalise, a route missing from `FILE_ACCESS_ROUTES` / `changesThisMachine`)? Is the key
 ever written to a log, an error reply or a served file?
 
+## What build v338 changed
+
+Checks "Audit L15", "Audit L16", "Audit L21" in `tests/regression/run-all.js`.
+
+- **L15** `parsePhylip`: when no reading fits with digits removed, the file is read again keeping digits and taken
+  when every row is states (digits, `?`, `-`, `.`) and fits the header: binary 0/1 PHYLIP loads.
+- **L16** the full SVG and the RTF export write the letters as the Case setting shows them (`_exportCaseText`).
+  The Full-view viewport SVG is not changed.
+- **L21, part** Sort by similarity counts U as T in nucleotide alignments. A short fragment still ranks by its
+  identity over shared columns (owner's decision what the ranking should be).
+
 ## What the GLM check should look at
 
 Read-only tasks, each answered with exact code quotes:
@@ -196,7 +207,7 @@ Not done yet:
   currently-visible rows after scroll", the consensus windowing check, the windowed Full selection check).
   Making them strict needs the owner to say what the right behaviour is.
 - **T7, T8** runner gaps (exit code 3 collision, suites without a per-check limit) and fixed waits.
-- **L15** binary 0/1 PHYLIP refused. **L8** two start texts. **L11, L16, L21-L23, L25, L30-L40**, **U6, U7, U10,
+- **L8** two start texts. **L11, L21 (fragment ranking), L22, L23, L25, L30-L40**, **U6, U7, U10,
   U13, U16, U17**: see the report.
 - Reads: a SAM opened as an alignment still shows `=` as a letter; unclear errors for a cut-off BAM.
 - Server: Windows path forms in `/api/local-cat` are untested; dev pages give 404 under the server unless
