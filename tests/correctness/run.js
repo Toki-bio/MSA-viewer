@@ -629,6 +629,22 @@ check('Newick written after a swap keeps negative and zero branch lengths; a tre
   return { pass: ok, detail: JSON.stringify(r) };
 });
 
+check('Re-root of an imported tree whose root has one child leaves no empty leaf, and keeps the A-B distance', async (page) => {
+  // ((A:1,B:2):3); re-rooted on A gave (A:0.5,(B:2,:3):0.5);: the old root, left without children, stayed as a
+  // nameless leaf (Qwen tree audit 2026-11-11, T5).
+  await loadFasta(page, fa(['ACGTACGTAC', 'ACGTACGTTT']));
+  const r = await page.evaluate(() => {
+    const T = _treeDraw, root = T.parseNewick('((A:1,B:2):3);');
+    const a = root.children[0].children[0];
+    const nr = T.rerootOnBranch(root, a);
+    const leaves = [], depth = new Map();
+    (function walk(n, d) { if (!n.children.length) { leaves.push(n.name); depth.set(n.name, d); } n.children.forEach(c => walk(c, d + (c.len || 0))); })(nr, 0);
+    return { nw: T.toNewick(nr), leaves: leaves.sort().join(','), ab: (depth.get('A') || 0) + (depth.get('B') || 0) };
+  });
+  const ok = r.leaves === 'A,B' && Math.abs(r.ab - 3) < 1e-9;
+  return { pass: ok, detail: JSON.stringify(r) };
+});
+
 check('restriction sites: overlapping sites are all found (HhaI in GCGCGC)', async (page) => {
   // The regex loop resumed after each match, so GCGC at 3 and 5 in AAGCGCGCAA counted once.
   await loadFasta(page, '>a\nAAGCGCGCAA\n>b\nAA-GCGC-GCAA\n');

@@ -105,6 +105,14 @@
     // the only branch below a one-child root: the tree is already rooted there (re-rooting left the old
     // root behind as an empty '?' tip)
     if (p0 === root && root.children.length === 1) return root;
+    // A nameless root with one child (an imported tree like ((A,B):3);) is dropped first: with a deeper target the
+    // old root lost its only child and stayed as an empty leaf (Qwen tree audit 2026-11-11, T5). The length above
+    // it leads nowhere, so no distance between leaves changes.
+    while (root.children.length === 1 && !root.name && root.children[0] !== target) {
+      root = root.children[0];
+      parent.set(root, null);
+    }
+    p0 = parent.get(target);
 
     var half = (target.len || 0) / 2;
     p0.children = p0.children.filter(function (c) { return c !== target; });
