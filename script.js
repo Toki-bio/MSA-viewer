@@ -3,7 +3,7 @@
 // RELEASE_VERSION is the release version (package.json, CITATION.cff, git tag
 // v<RELEASE_VERSION>, tests/meta/version.test.js); BUILD_TAG counts every deploy.
 const RELEASE_VERSION = '1.34.1';
-const BUILD_TAG = 'v341';
+const BUILD_TAG = 'v342';
 // Sentinel row index for consensus-line nucleotide selection (not in state.seqs).
 const CONSENSUS_ROW_INDEX = -1;
 const COL_SEL_EDGE = '#4fc3f7';   // the edge line of a run of selected columns (styles.css .col-sel-l / .col-sel-r)
@@ -17026,6 +17026,9 @@ function handleKeyDown(e) {
         // A rename box handles its own Esc (cancel); closing menus here blurred it, and the
         // blur saved the name, so Esc used to commit the rename
         if (document.activeElement?.classList?.contains('seq-name-edit')) return;
+        // The names window of a Selections line (Names): Esc closes it alone, not the Selections menu under it
+        const namesWin = el('selNamesWindow');
+        if (namesWin && namesWin.style.display !== 'none' && namesWin.style.display !== '') { namesWin.style.display = 'none'; e.preventDefault(); return; }
         // First Esc closes whatever is open; with nothing open it clears the selection
         // (rows, columns, residues). Undo in the Selections panel brings it back.
         const somethingOpen = !!document.querySelector('#controls .menu-section.menu-open')
@@ -21567,6 +21570,103 @@ function _gotoNextSearchHit(entry) {
     }
 }
 
+// ---- Names / FASTA / Gather for the lines that stand for sequences (owner, 2026-11-12: Rows, Residues, Search) ----
+// The rows a line stands for, top to bottom; null for a line that is not about sequences or is switched off
+function _selectionItemRows(item) {
+    if (!item || !item.on) return null;
+    const ok = r => Number.isInteger(r) && r >= 0 && !!state.seqs[r];
+    let rows;
+    if (item.key === 'rows') rows = [...state.selectedRows].filter(ok);
+    else if (item.key === 'nucs') rows = [...state.selectedNucs].filter(([r, s]) => ok(r) && s && s.size).map(([r]) => r);
+    else if (item.entry) {
+        // the rows with at least one match, found as the search finds them (degapped)
+        rows = [];
+        state.seqs.forEach((q, r) => { const m = _searchMatchesInDegapped(_degapForSearch(q.seq).text, item.entry); if (m && m.length) rows.push(r); });
+    } else return null;
+    return rows.sort((a, b) => a - b);
+}
+
+let _selActionsOpenKey = null;   // the line whose actions are open (kept across panel refreshes)
+
+function _selectionNamesWindow(item, rows) {
+    let w = el('selNamesWindow');
+    if (!w) {
+        w = document.createElement('div');
+        w.id = 'selNamesWindow';
+        w.setAttribute('role', 'dialog');
+        w.innerHTML = '<div class="sel-names-head"><strong id="selNamesTitle"></strong>'
+            + '<button type="button" id="selNamesCopy" title="Copy the names, one per line">Copy</button>'
+            + '<button type="button" id="selNamesClose" class="win-close" title="Close" aria-label="Close the list of names">×</button></div>'
+            + '<textarea id="selNamesText" readonly spellcheck="false" aria-label="Sequence names"></textarea>';
+        document.body.appendChild(w);
+        el('selNamesClose').addEventListener('click', () => { w.style.display = 'none'; });
+        w.addEventListener('keydown', e => { if (e.key === 'Escape') { e.stopPropagation(); w.style.display = 'none'; } });
+        el('selNamesCopy').addEventListener('click', () => {
+            const t = el('selNamesText').value;
+            navigator.clipboard.writeText(t).then(() => showMessage(`Copied ${t ? t.split('\n').length : 0} names`, 1600))
+                .catch(() => showMessage('Could not copy: select the names and press Ctrl+C', 4000));
+        });
+    }
+    el('selNamesTitle').textContent = `${item.kind}${item.entry ? ' ' + (item.entry.label || item.entry.searchValue || '') : ''}: ${rows.length} sequence${rows.length === 1 ? '' : 's'}`;
+    el('selNamesText').value = rows.map(r => state.seqs[r].header).join('\n');
+    w.style.display = 'flex';
+    el('selNamesText').focus();
+    el('selNamesText').select();
+}
+
+// Whole rows as they stand in the alignment, gaps kept (owner's choice); with hidden columns and
+// "visible only" on, only the visible columns, as the other copies do
+function _selectionFastaText(rows) {
+    const vis = _foldVisibleOnly();
+    return rows.map(r => { const q = state.seqs[r]; return `>${_fastaDefline(q)}\n${vis ? _foldVisibleSeq(q.seq) : q.seq}`; }).join('\n');
+}
+
+function _selectionCopyFasta(item, rows) {
+    const text = _selectionFastaText(rows);
+    navigator.clipboard.writeText(text)
+        .then(() => showMessage(`Copied ${rows.length} sequence${rows.length === 1 ? '' : 's'} as aligned FASTA (gaps kept)${_foldVisibleOnly() ? ', visible columns only' : ''}`, 2200))
+        .catch(err => { console.error('Copy failed:', err); showMessage('Failed to copy. Check console.', 5000); });
+}
+
+// Put the rows together, in their present order, where the topmost of them is now; Undo restores the order.
+// The selections follow their sequences (the render moves row-keyed selections by row identity).
+function _selectionGather(item, rows) {
+    if (rows.length < 2) { showMessage('Nothing to gather: fewer than 2 sequences.', 2000); return; }
+    const members = rows.map(r => state.seqs[r]);
+    const set = new Set(members);
+    if (rows[rows.length - 1] - rows[0] === rows.length - 1) { showMessage('These sequences are already together.', 2000); return; }
+    pushUndo('order');
+    const out = [];
+    let placed = false;
+    state.seqs.forEach(q => {
+        if (!set.has(q)) { out.push(q); return; }
+        if (!placed) { members.forEach(m => out.push(m)); placed = true; }
+    });
+    state.seqs = out;
+    renderAlignment();
+    scheduleSelectionsPanelRefresh();
+    showMessage(`Gathered ${rows.length} sequences under ${members[0].header} (Undo restores the order)`, 2500);
+}
+
+function _selectionActionsRow(item) {
+    const rows = _selectionItemRows(item) || [];
+    const box = document.createElement('div');
+    box.className = 'sel-actions';
+    const add = (label, title, fn, needs) => {
+        const b = document.createElement('button');
+        b.type = 'button';
+        b.textContent = label;
+        b.title = title;
+        b.disabled = rows.length < needs;
+        b.addEventListener('click', () => { const now = _selectionItemRows(item) || []; if (now.length >= needs) fn(item, now); });
+        box.appendChild(b);
+    };
+    add('Names', 'List the names of these sequences (to read or copy)', _selectionNamesWindow, 1);
+    add('FASTA', 'Copy these sequences as FASTA, as aligned (gaps kept)', _selectionCopyFasta, 1);
+    add('Gather', 'Move these sequences together, under the topmost of them (Undo restores the order)', _selectionGather, 2);
+    return box;
+}
+
 // ---- the panel ----
 function scheduleSelectionsPanelRefresh() {
     if (_selectionsPanelPending) return;
@@ -21660,6 +21760,19 @@ function refreshSelectionsPanel() {
             go.addEventListener('click', () => _gotoSelectionItem(item));
             row.appendChild(go);
         }
+        // Names / FASTA / Gather, for the lines that stand for sequences
+        const hasActions = item.key === 'rows' || item.key === 'nucs' || !!item.entry;
+        if (hasActions) {
+            const more = document.createElement('button');
+            more.className = 'sel-more';
+            more.type = 'button';
+            more.textContent = '⋯';
+            more.title = 'Names, FASTA, Gather';
+            more.setAttribute('aria-label', 'Names, FASTA or gather the sequences of this line');
+            more.setAttribute('aria-expanded', String(_selActionsOpenKey === item.key));
+            more.addEventListener('click', () => { _selActionsOpenKey = _selActionsOpenKey === item.key ? null : item.key; refreshSelectionsPanel(); });
+            row.appendChild(more);
+        }
         const rm = document.createElement('button');
         rm.className = 'sel-remove';
         rm.textContent = 'x';
@@ -21667,6 +21780,7 @@ function refreshSelectionsPanel() {
         rm.addEventListener('click', () => removeSelectionItem(item.key, item.kind.toLowerCase()));
         row.appendChild(rm);
         list.appendChild(row);
+        if (hasActions && _selActionsOpenKey === item.key) list.appendChild(_selectionActionsRow(item));
     });
 }
 

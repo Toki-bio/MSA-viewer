@@ -4342,6 +4342,68 @@ table.stats-mx.heat td:hover { outline: 2px solid #111; outline-offset: -2px; }
     line-height: 1;
     padding: 0 2px;
 }
+.sel-more {
+    background: none;
+    border: none;
+    color: #888;
+    cursor: pointer;
+    font-size: 13px;
+    line-height: 1;
+    padding: 0 2px;
+}
+.sel-more:hover,
+.sel-more[aria-expanded="true"] {
+    color: #222;
+}
+/* Names / FASTA / Gather under a line of the Selections list */
+.sel-actions {
+    display: flex;
+    gap: 4px;
+    padding: 1px 4px 3px 24px;
+}
+.sel-actions button {
+    font-size: 10px;
+    height: 18px;
+    padding: 0 6px;
+}
+#selNamesWindow {
+    display: none;
+    flex-direction: column;
+    position: fixed;
+    top: 15vh;
+    left: 50%;
+    transform: translateX(-50%);
+    width: min(420px, 92vw);
+    height: min(60vh, 480px);
+    background: #fff;
+    border: 1px solid #888;
+    border-radius: 4px;
+    box-shadow: 0 4px 12px rgba(0,0,0,0.25);
+    z-index: 10050;
+    padding: 6px;
+    gap: 6px;
+}
+#selNamesWindow .sel-names-head {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 12px;
+}
+#selNamesWindow .sel-names-head strong {
+    flex: 1;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+#selNamesText {
+    flex: 1;
+    width: 100%;
+    box-sizing: border-box;
+    font-family: 'Courier New', monospace;
+    font-size: 12px;
+    resize: none;
+}
 .sel-go:hover,
 .sel-remove:hover {
     color: #222;

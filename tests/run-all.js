@@ -123,6 +123,7 @@ const SUITES = [
   { name: 'regression', args: ['tests/regression/run-all.js'], browser: true, timeoutMs: 7200000 },
   { name: 'genome view in the page', args: ['tests/regression/genome.js'], browser: true },
   { name: 'worked examples (?demo=, Example buttons)', args: ['tests/regression/demos.js'], browser: true },
+  { name: 'Selections menu: Names, FASTA, Gather', args: ['tests/regression/selection-actions.js'], browser: true },
   { name: 'accessibility (keyboard, names, axe-core)', args: ['tests/a11y/check.js'], browser: true },
   { name: 'browser support (fallbacks, file://)', args: ['tests/browser-support/check.js'], browser: true },
   { name: 'layout: no stray scrollbars', args: ['tests/layout/stray-scrollbars.test.js'], browser: true },
