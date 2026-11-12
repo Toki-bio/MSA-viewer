@@ -182,7 +182,7 @@ app.use((req, res, next) => {
 // tools/build-site.sh; tests/server/hardening.test.js checks both), the user's snapshots and the
 // BLAST databases added in the page (the search worker fetches their FASTA).
 const PUBLIC_FILES = new Set([
-    'index.html', 'manual.html', 'styles.css', 'version.json',
+    'index.html', 'manual.html', 'examples.html', 'styles.css', 'version.json',
     'script.js', 'genome-fasta.js', 'genome-window.js', 'genome-view.js', 'a11y.js', 'ab1-parser.js', 'bam-parser.js',
     'block-bicluster.js', 'block-mask.js', 'chromatogram-viewer.js', 'cluster.js', 'kmer-tree.js', 'peel.js',
     'realign-region.js', 'sample-call.js', 'variant-effect.js', 'tree-draw.js', 'finder.js',

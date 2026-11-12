@@ -12,7 +12,7 @@ rm -rf "$OUT"
 mkdir -p "$OUT"
 
 APP_FILES=(
-  index.html manual.html styles.css version.json .nojekyll
+  index.html manual.html examples.html styles.css version.json .nojekyll
   script.js genome-fasta.js genome-window.js genome-view.js a11y.js ab1-parser.js bam-parser.js block-bicluster.js block-mask.js
   chromatogram-viewer.js cluster.js kmer-tree.js peel.js realign-region.js sample-call.js variant-effect.js tree-draw.js finder.js
   mafft-wasm.js mafft-worker.js disttbfast.js disttbfast.wasm
