@@ -3,7 +3,7 @@
 // RELEASE_VERSION is the release version (package.json, CITATION.cff, git tag
 // v<RELEASE_VERSION>, tests/meta/version.test.js); BUILD_TAG counts every deploy.
 const RELEASE_VERSION = '1.34.1';
-const BUILD_TAG = 'v340';
+const BUILD_TAG = 'v341';
 // Sentinel row index for consensus-line nucleotide selection (not in state.seqs).
 const CONSENSUS_ROW_INDEX = -1;
 const COL_SEL_EDGE = '#4fc3f7';   // the edge line of a run of selected columns (styles.css .col-sel-l / .col-sel-r)
@@ -12824,7 +12824,8 @@ function renderAlignment(options = {}) {
         // example alignment through the ?url= loader
         alignmentContainer.innerHTML = '<div style="padding:20px; color:#666; font-style:italic; white-space:normal; overflow-wrap:anywhere;">'
             + 'No sequences loaded. Paste FASTA/MSF in the Input menu and click Load, or drop a file on the page. '
-            + '<a href="?url=examples/svk_k4.fa&amp;title=SVK%20SINE%20(K1%E2%80%93K4)" style="font-style:normal;">Try an example alignment</a> (40 SINE copies, 4 subfamilies).</div>';
+            + '<a href="?url=examples/svk_k4.fa&amp;title=SVK%20SINE%20(K1%E2%80%93K4)" style="font-style:normal;">Try an example alignment</a> (40 SINE copies, 4 subfamilies).'
+            + '<br><span style="display:inline-block; margin-top:8px; font-style:normal;">New here? <a href="examples.html" target="_blank" rel="noopener">See worked examples</a>: small alignments with one tool already run.</span></div>';
         syncCodonModePanel();
         return;
     }
@@ -15533,7 +15534,7 @@ async function parseAndRender(isFromDrop = false) {
             showMessage(isFromDrop ? 'The file is empty (the genome stays open).' : 'The paste box is empty: paste FASTA or MSF first (the genome stays open).', 4000);
             return;
         }
-        alignmentContainer.innerHTML = '<div>Paste MSF or FASTA into the box and click Load, or drop a file.</div>';
+        alignmentContainer.innerHTML = '<div>Paste MSF or FASTA into the box and click Load, or drop a file. New here? <a href="examples.html" target="_blank" rel="noopener">See worked examples</a>.</div>';
         statusMessage.style.display = 'none';
         if (isFromDrop) {
             _clearFailedLoad();
@@ -29692,6 +29693,85 @@ const DEMOS = {
             + "asps, Andricus grossulariae and A. quercusramuli (GenBank JQ416366-JQ416415), 10 mitochondrial (mt) and 5 nuclear copies"
             + " (NUMT). \"Tree\" (Actions menu) built a UPGMA tree from p-distances. The mitochondrial sequences of each species form the"
             + "ir own clade; three NUMTs sit beside their own species' clade, and two (pan109, pan111) sit outside both."
+    },
+
+    // ── The Examples page (examples.html; owner, 2026-11-12): invented alignments with a known answer, made by
+    // examples/gallery/make_gallery.js, which writes that answer to examples/gallery/truth.json. No button in the menus.
+    g_subfam: {
+        name: 'Subfamilies (Cluster Now)',
+        file: 'examples/gallery/subfamilies.fa',
+        title: 'Synthetic subfamilies',
+        run: async () => DEMOS.snp.run(),   // the same call and default thresholds as the Diagnostic SNPs example
+        note: 'Invented sequences (subfamilies.fa, examples/gallery folder of the GitHub repository): 30 copies of three subfamilies, '
+            + 'sfA, sfB and sfC, 10 each, in mixed order. Each subfamily was given its own base at 12 columns, sfC also lacks 6 bases '
+            + '(columns 121-126), and every copy has about 3 % changes of its own. "Find SNP groups" (Clustering menu, Diagnostic SNPs) '
+            + 'with the default thresholds found the three subfamilies, one colour each, from the shared columns alone; the names were not used. '
+            + 'A group needs at least Min Features (5) columns that all its copies share and no other copy has; with only 6 planted columns, '
+            + 'the private changes often left fewer than 5, and the last subfamily stayed uncoloured.'
+    },
+    g_tree: {
+        name: 'Tree (neighbour-joining)',
+        file: 'examples/gallery/tree.fa',
+        title: 'Synthetic sequences evolved on a known tree',
+        run: async () => {
+            const nj = document.querySelector('input[name="treeMethod"][value="nj"]');
+            if (nj) nj.checked = true;
+            openTreeBuilder();
+            await _demoUntil(() => el('treeBuilderModal')?.style.display !== 'none'
+                && !!(el('treeNewickOutput')?.value || el('treeNewickOutput')?.textContent) && !!window._treeDraw?.state?.root, 30000);
+            // An NJ tree has no root of its own; root it on Out as a user does: Click "re-root", then Out's branch
+            const mode = (v) => { const r = document.querySelector(`input[name="treeClickMode"][value="${v}"]`); if (r) { r.checked = true; r.dispatchEvent(new Event('change', { bubbles: true })); } };
+            const find = (n) => (n.name === 'Out' ? n : (n.children || []).map(find).find(Boolean));
+            const out = find(window._treeDraw.state.root);
+            const hit = out && document.querySelector(`.tree-branch-hit[data-node="${out._id}"]`);
+            mode('reroot');
+            if (hit) hit.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+            mode('swap');   // the window's default again
+        },
+        note: 'Invented sequences (tree.fa, examples/gallery folder of the GitHub repository): 600 bases copied down a known tree with '
+            + 'random changes, ((X1,X2),(X3,X4)), ((Y1,Y2),(Y3,Y4)) and a distant Out; the tree is in tree_true.nwk. "Tree" (Actions menu) '
+            + 'built a neighbour-joining tree from p-distances; it was rooted on Out (Click: re-root, then the Out branch), and it shows every one of those clades.'
+    },
+    g_codon: {
+        name: 'Codon analysis',
+        file: 'examples/gallery/codons.fa',
+        title: 'Synthetic coding sequences',
+        run: async () => {
+            const cb = el('codonAnalysis');
+            if (el('codonFrame')) el('codonFrame').value = 'auto';
+            if (cb && !cb.checked) { cb.checked = true; cb.dispatchEvent(new Event('change', { bubbles: true })); }
+            await _demoUntil(() => !!state._codonData, 15000);
+        },
+        note: 'Invented sequences (codons.fa, examples/gallery folder of the GitHub repository): a 40-codon reading frame (reference) and '
+            + 'five copies, each named after its one change: synonymous (codons 5 and 30, same amino acid), missense (codon 8, Ala to Glu), '
+            + 'early_stop (codon 15 becomes TAA), frameshift (one base lost at column 59, so the frame shifts after it) and codon_deleted '
+            + '(codon 25 removed whole; the frame is kept). Codon analysis (Display menu) coloured the codon positions and marked each change.'
+    },
+    g_aa: {
+        name: 'Amino acids (AA only)',
+        file: 'examples/gallery/codons.fa',
+        title: 'Synthetic coding sequences, translated',
+        run: async () => {
+            await DEMOS.g_codon.run();
+            const aa = el('aaOnly');
+            if (aa && !aa.checked) { aa.checked = true; aa.dispatchEvent(new Event('change', { bubbles: true })); }
+        },
+        note: 'The same invented coding sequences as the Codon analysis example (codons.fa), shown as amino acids: "AA only" (Display menu, '
+            + 'next to Codon analysis) replaces each codon by its amino acid. The reference reads MNVRALPAEHFFAIYSVMDGEWVSKAWQRLFSNQRPFLR*; '
+            + 'missense has E at codon 8, early_stop ends at codon 15, and after its lost base the frameshift row reads a different protein.'
+    },
+    g_consensus: {
+        name: 'Consensus and shading',
+        file: 'examples/gallery/consensus.fa',
+        title: 'Synthetic alignment with set levels of agreement',
+        run: async () => {
+            const amb = document.querySelector('input[name="consensusType"][value="ambiguous"]');
+            if (amb && !amb.checked) { amb.checked = true; amb.dispatchEvent(new Event('change', { bubbles: true })); }
+        },
+        note: 'Invented sequences (consensus.fa, examples/gallery folder of the GitHub repository): 20 rows in zones where a set number of '
+            + 'rows share the column\'s main base. Columns 1-20 and 97-120: all 20 (black). 21-40: 16 (80 %, dark grey). 41-60: 12 (60 %, '
+            + 'light grey). 61-76: 7 (35 %, unshaded, consensus "-"). 77-80: 10 A and 10 G (consensus R, as Type is set to Ambiguous). '
+            + '81-96: only 4 rows have a base (coverage below Min Cov 30 %, consensus "-"). Move the Shade and Consensus sliders to see the zones change.'
     }
 };
 
@@ -29708,6 +29788,7 @@ function _demoUrl(id) {
 
 function _initDemoButtons() {
     for (const [id, d] of Object.entries(DEMOS)) {
+        if (!d.place) continue;   // the Examples page's synthetic examples have no button in the menus
         const target = document.querySelector(d.place.sel);
         if (!target || document.querySelector(`.demo-pill[data-demo="${id}"]`)) continue;
         const b = document.createElement('button');

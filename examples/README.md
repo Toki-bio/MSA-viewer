@@ -11,6 +11,10 @@ https://toki-bio.github.io/MSA-viewer/?url=https://toki-bio.github.io/MSA-viewer
 
 Things to try: **Shade**, **Clustering → Cluster Now**, **Colour Names**, **Display → Variable sites only**, **Consensus**, tree from selected rows.
 
+## Examples page
+
+`../examples.html` lists every worked example, with links that open the viewer with one tool already run. Its synthetic alignments, each with a known answer, are in `gallery/`; see `gallery/README.md`.
+
 ## Synthetic set
 
 `synthetic/` holds a 6×111 coding alignment in FASTA, Clustal, PHYLIP (sequential and interleaved), NEXUS, Stockholm, and MSF, plus a GenBank record, a protein translation, a dot-plot pair, and SAM/BAM reads. See `synthetic/README.md` for which row carries the synonymous change, the stop, the frameshift, and the restriction sites.

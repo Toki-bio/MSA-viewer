@@ -1,0 +1,200 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>ViewAlign - Examples</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' rx='3' fill='%23fff'/%3E%3Crect x='2' y='3' width='5' height='2' fill='%2364c864'/%3E%3Crect x='7' y='3' width='7' height='2' fill='%23f0a030'/%3E%3Crect x='2' y='7' width='8' height='2' fill='%23f06060'/%3E%3Crect x='10' y='7' width='4' height='2' fill='%2364c864'/%3E%3Crect x='2' y='11' width='4' height='2' fill='%236090f0'/%3E%3Crect x='6' y='11' width='8' height='2' fill='%23f0a030'/%3E%3C/svg%3E">
+<!-- style copied from manual.html (same variables, fonts and dark mode), without the sidebar -->
+<style>
+:root {
+  --bg: #fafbfc;
+  --text: #24292e;
+  --muted: #586069;
+  --border: #e1e4e8;
+  --accent: #0366d6;
+  --accent-subtle: #f0f7ff;
+  --code-bg: #f6f8fa;
+  --heading: #1a1a2e;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #0d1117;
+    --text: #c9d1d9;
+    --muted: #8b949e;
+    --border: #30363d;
+    --accent: #58a6ff;
+    --accent-subtle: #1a2a3a;
+    --code-bg: #161b22;
+    --heading: #f0f6fc;
+  }
+}
+* { box-sizing: border-box; margin:0; padding:0; }
+body {
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif;
+  font-size: 15px; line-height: 1.65;
+  color: var(--text); background: var(--bg);
+}
+#main { max-width: 900px; margin: 0 auto; padding: 32px 40px 80px; }
+h1 { font-size: 26px; color: var(--heading); margin-bottom: 10px; }
+section { margin: 36px 0 0; }
+section h2 {
+  font-size: 22px; color: var(--heading); border-bottom: 2px solid var(--border);
+  padding-bottom: 6px; margin-bottom: 18px;
+}
+p { margin-bottom: 12px; }
+a { color: var(--accent); }
+code {
+  background: var(--code-bg); padding: 1px 5px; border-radius: 3px;
+  font-family: 'SF Mono', 'Consolas', 'Courier New', monospace; font-size: 13px;
+  overflow-wrap: anywhere;
+}
+.ex {
+  border: 1px solid var(--border); border-radius: 6px; padding: 14px 16px; margin-bottom: 14px;
+}
+.ex h3 { font-size: 17px; color: var(--heading); margin-bottom: 6px; }
+.ex p { margin-bottom: 8px; }
+.ex .look { color: var(--muted); font-size: 14px; }
+.ex .go { display: flex; flex-wrap: wrap; gap: 6px 16px; align-items: center; font-size: 14px; }
+.ex .go a.open {
+  display: inline-block; padding: 4px 12px; border-radius: 4px; text-decoration: none;
+  background: var(--accent-subtle); border: 1px solid var(--accent); font-weight: 600;
+}
+@media (max-width: 768px) {
+  #main { padding: 20px 16px 60px; }
+}
+</style>
+</head>
+<body>
+<div id="main" role="main">
+
+<h1>ViewAlign examples</h1>
+<p>Each link opens the viewer with a small alignment and one tool already run, and a note that says what you are looking at.
+Everything stays in your browser. To go back to an empty viewer, open <a href="index.html">ViewAlign</a>; the
+<a href="manual.html">manual</a> explains every tool.</p>
+
+<section id="synthetic">
+  <h2>Synthetic alignments with a known answer</h2>
+  <p>These sequences are invented. Each was made with a property planted in it, so you can see whether the tool finds it.
+  The script that makes them and the answers are in the
+  <a href="https://github.com/Toki-bio/MSA-viewer/tree/main/examples/gallery">examples/gallery</a> folder
+  (<code>make_gallery.js</code>, <code>truth.json</code>).</p>
+
+  <div class="ex">
+    <h3>Subfamilies: grouping by shared columns</h3>
+    <p>30 copies of three invented subfamilies (sfA, sfB, sfC), 10 each, in mixed order. Each subfamily has its own base at
+    12 columns, and every copy has about 3&nbsp;% changes of its own.</p>
+    <p class="look">Shown: Clustering &rsaquo; Diagnostic SNPs &rsaquo; Find SNP groups with the default thresholds. The three
+    subfamilies get one colour each, found from the sequences alone. A group needs at least Min Features (5) columns that all
+    its copies share and no other copy has.</p>
+    <div class="go"><a class="open" href="index.html?url=examples%2Fgallery%2Fsubfamilies.fa&amp;title=Synthetic+subfamilies&amp;demo=g_subfam">Open example</a>
+    <a href="examples/gallery/subfamilies.fa">subfamilies.fa</a></div>
+  </div>
+
+  <div class="ex">
+    <h3>Tree: a known tree recovered</h3>
+    <p>Nine sequences of 600 bases copied down a known tree with random changes: two clades of four, ((X1,X2),(X3,X4)) and
+    ((Y1,Y2),(Y3,Y4)), and a distant Out.</p>
+    <p class="look">Shown: Actions &rsaquo; Tree, neighbour-joining from p-distances, rooted on Out. Compare it with the true tree in
+    <code>tree_true.nwk</code>.</p>
+    <div class="go"><a class="open" href="index.html?url=examples%2Fgallery%2Ftree.fa&amp;title=Synthetic+sequences+evolved+on+a+known+tree&amp;demo=g_tree">Open example</a>
+    <a href="examples/gallery/tree.fa">tree.fa</a> <a href="examples/gallery/tree_true.nwk">tree_true.nwk</a></div>
+  </div>
+
+  <div class="ex">
+    <h3>Codons: synonymous, missense, stop, frameshift</h3>
+    <p>A 40-codon reading frame and five copies, each named after its one change: a synonymous change, a missense change
+    (Ala to Glu), an early stop, a one-base loss that shifts the frame, and a whole lost codon that keeps it.</p>
+    <p class="look">Shown: Display &rsaquo; Codon analysis. Codon positions are coloured and each change is marked where it was made.</p>
+    <div class="go"><a class="open" href="index.html?url=examples%2Fgallery%2Fcodons.fa&amp;title=Synthetic+coding+sequences&amp;demo=g_codon">Open example</a>
+    <a href="examples/gallery/codons.fa">codons.fa</a></div>
+  </div>
+
+  <div class="ex">
+    <h3>Amino acids: the same copies translated</h3>
+    <p>The coding sequences above, shown as amino acids.</p>
+    <p class="look">Shown: Display &rsaquo; Codon analysis with AA only. The missense copy has E at codon 8, the early stop ends
+    the protein at codon 15, and after its lost base the frameshift copy reads a different protein.</p>
+    <div class="go"><a class="open" href="index.html?url=examples%2Fgallery%2Fcodons.fa&amp;title=Synthetic+coding+sequences%2C+translated&amp;demo=g_aa">Open example</a></div>
+  </div>
+
+  <div class="ex">
+    <h3>Consensus and conservation shading</h3>
+    <p>20 rows in zones where a set number of rows share each column's main base: all 20, 16 (80&nbsp;%), 12 (60&nbsp;%),
+    7 (35&nbsp;%), an even A/G split, and a stretch where only 4 rows have a base.</p>
+    <p class="look">Shown: the default shading (black, dark and light grey at 90, 70 and 50&nbsp;%) and the consensus line, with
+    Type set to Ambiguous so the A/G columns read R. Move the Shade and Consensus sliders to see the zones change.</p>
+    <div class="go"><a class="open" href="index.html?url=examples%2Fgallery%2Fconsensus.fa&amp;title=Synthetic+alignment+with+set+levels+of+agreement&amp;demo=g_consensus">Open example</a>
+    <a href="examples/gallery/consensus.fa">consensus.fa</a></div>
+  </div>
+</section>
+
+<section id="real">
+  <h2>Examples with real data</h2>
+  <p>The same examples open from the &ldquo;Example&rdquo; buttons inside the viewer's menus.</p>
+
+  <div class="ex">
+    <h3>k-mer groups: Alu subfamilies</h3>
+    <p>36 human Alu copies, 12 each of AluY, AluSx and AluJb. Clustering &rsaquo; k-mer groups, method peel.</p>
+    <div class="go"><a class="open" href="index.html?url=examples%2Fdemo%2Falu_subfamilies.fa&amp;title=Alu+copies+%28k-mer+groups+example%29&amp;demo=kmer">Open example</a></div>
+  </div>
+  <div class="ex">
+    <h3>Diagnostic SNPs: Alu subfamilies</h3>
+    <p>The same Alu copies grouped by columns where a set of sequences shares a base the others lack.</p>
+    <div class="go"><a class="open" href="index.html?url=examples%2Fdemo%2Falu_subfamilies.fa&amp;title=Alu+copies+%28diagnostic+SNPs+example%29&amp;demo=snp">Open example</a></div>
+  </div>
+  <div class="ex">
+    <h3>2D analysis</h3>
+    <p>Rectangles over stretches where a set of Alu copies shares a local pattern of bases.</p>
+    <div class="go"><a class="open" href="index.html?url=examples%2Fdemo%2Falu_subfamilies.fa&amp;title=Alu+copies+%282D+analysis+example%29&amp;demo=bicluster">Open example</a></div>
+  </div>
+  <div class="ex">
+    <h3>Trimming gappy ends</h3>
+    <p>SINE copies with ragged ends; the preview paints the columns that Trim would remove.</p>
+    <div class="go"><a class="open" href="index.html?url=examples%2Fsvk_k4.fa&amp;title=SINE+copies+%28trimming+example%29&amp;demo=trim">Open example</a></div>
+  </div>
+  <div class="ex">
+    <h3>Auto-colour names</h3>
+    <p>Names that look alike get one colour (Colour Names menu).</p>
+    <div class="go"><a class="open" href="index.html?url=examples%2Fdemo%2Falu_subfamilies.fa&amp;title=Alu+copies+%28auto-colour+example%29&amp;demo=autocolour">Open example</a></div>
+  </div>
+  <div class="ex">
+    <h3>Codon alignment with MACSE</h3>
+    <p>Primate CMAH coding sequences; the human copy has lost 92 bases, and MACSE reports the frameshift.</p>
+    <div class="go"><a class="open" href="index.html?url=examples%2Fdemo%2Fcmah_primates.fa&amp;title=CMAH+coding+sequences+of+primates+%28MACSE+example%29&amp;demo=macse">Open example</a></div>
+  </div>
+  <div class="ex">
+    <h3>Codon analysis from a GenBank annotation</h3>
+    <p>The human mitochondrial genome (NC_012920): each CDS in its own frame and strand.</p>
+    <div class="go"><a class="open" href="index.html?url=examples%2Freal%2Fncbi_NC_012920_human_mito.gb&amp;title=Human+mitochondrial+genome+NC_012920+%28codon+analysis+example%29&amp;demo=codon">Open example</a></div>
+  </div>
+  <div class="ex">
+    <h3>Dot plot</h3>
+    <p>One AluY copy against itself: its two similar halves show as short off-diagonal lines.</p>
+    <div class="go"><a class="open" href="index.html?url=examples%2Fdemo%2Falu_copy.fa&amp;title=One+AluY+copy+%28dot+plot+example%29&amp;demo=dotplot">Open example</a></div>
+  </div>
+  <div class="ex">
+    <h3>Repeat Finder</h3>
+    <p>Tandem arrays in a small synthetic alignment.</p>
+    <div class="go"><a class="open" href="index.html?url=examples%2Fsynthetic%2Fsynth_msa.fa&amp;title=Synthetic+alignment+%28repeat+finder+example%29&amp;demo=repeats">Open example</a></div>
+  </div>
+  <div class="ex">
+    <h3>Restriction sites</h3>
+    <p>EcoRI, BamHI and HindIII sites in the human mitochondrial genome.</p>
+    <div class="go"><a class="open" href="index.html?url=examples%2Freal%2Fncbi_NC_012920_human_mito.gb&amp;title=Human+mitochondrial+genome+NC_012920+%28restriction+sites+example%29&amp;demo=resites">Open example</a></div>
+  </div>
+  <div class="ex">
+    <h3>SAM/BAM reads on a reference</h3>
+    <p>Synthetic reads with a mismatch, a deletion and an insertion, in the Reads view.</p>
+    <div class="go"><a class="open" href="index.html?url=examples%2Fsynthetic%2Fsynth_ref.fa&amp;reads=examples%2Fsynthetic%2Fsynth_reads.bam&amp;title=Synthetic+reference+%28reads+example%29&amp;demo=reads">Open example</a></div>
+  </div>
+  <div class="ex">
+    <h3>Tree of mitochondrial genes and their nuclear copies</h3>
+    <p>Cytochrome b of two gall wasps, <em>Andricus grossulariae</em> and <em>A.&nbsp;quercusramuli</em>, with nuclear copies (NUMTs); UPGMA tree.</p>
+    <div class="go"><a class="open" href="index.html?url=examples%2Fdemo%2Fandricus_cytb.fa&amp;title=Andricus+cytb+and+NUMT+copies+%28tree+example%29&amp;demo=tree">Open example</a></div>
+  </div>
+</section>
+
+</div>
+</body>
+</html>

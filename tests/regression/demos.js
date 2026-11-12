@@ -208,6 +208,143 @@ check('demo pills: each Example button is visible in its panel and opens its exa
     return { pass: !bad.length && seen.length === Object.keys(FILES).length, detail: bad.join(' | ') + ` (ok: ${seen.join(',')})` };
 });
 
+// ---- the Examples page (examples.html; owner, 2026-11-12) ------------------------------------------------------------
+// Its synthetic examples are made by examples/gallery/make_gallery.js, which also writes truth.json: the answer each
+// must give. Each check opens the example as the page's link does and compares what the viewer shows with that answer.
+const GALLERY = {
+    g_subfam: 'examples/gallery/subfamilies.fa',
+    g_tree: 'examples/gallery/tree.fa',
+    g_codon: 'examples/gallery/codons.fa',
+    g_aa: 'examples/gallery/codons.fa',
+    g_consensus: 'examples/gallery/consensus.fa',
+};
+const TRUTH = require('../../examples/gallery/truth.json');
+const GPROBES = {
+    // Cluster Now: exactly the three planted subfamilies, one colour each, nobody left over
+    g_subfam: (T) => {
+        const byName = {};
+        for (const s of state.seqs) byName[s.header] = (state.clusterMap || {})[s.header];   // keyed by name: getSeqsForClustering gives each row id = its header
+        const per = Object.entries(T.subfamilies.groups).map(([f, names]) => [f, [...new Set(names.map(n => byName[n] ? byName[n].cluster : 'none'))]]);
+        const ids = per.map(([, c]) => c[0]);
+        const ok = state.clusterSource === 'diagnostics' && per.every(([, c]) => c.length === 1 && c[0] >= 0) && new Set(ids).size === 3;
+        return { ok, detail: { src: state.clusterSource, per } };
+    },
+    // NJ tree: every clade of the tree the sequences were made on is a branch of the tree shown
+    g_tree: (T) => {
+        const o = document.getElementById('treeNewickOutput');
+        const nwk = ((o && (o.value || o.textContent)) || '').trim();
+        const sets = []; const all = new Set();
+        const stack = [[]];
+        const names = nwk.replace(/:[-0-9.eE]+/g, '').replace(/;$/, '');
+        let tok = '';
+        const flush = () => { const n = tok.trim().replace(/^'|'$/g, ''); tok = ''; if (n) { stack[stack.length - 1].push(n); all.add(n); } };
+        for (const ch of names) {
+            if (ch === '(') { stack.push([]); }
+            else if (ch === ',' ) { flush(); }
+            else if (ch === ')') { flush(); const kid = stack.pop(); sets.push(kid.slice()); stack[stack.length - 1].push(...kid); }
+            else tok += ch;
+        }
+        const key = (a) => a.slice().sort().join(',');
+        const have = new Set(sets.map(key));
+        const comp = (c) => [...all].filter(x => !c.includes(x));
+        const missing = T.tree.clades.filter(c => !have.has(key(c)) && !have.has(key(comp(c))));
+        const method = document.querySelector('input[name="treeMethod"]:checked')?.value;
+        // rooted on the outgroup, so the drawing does not show Out inside one of the clades: Out hangs from the root
+        const outAtRoot = /^\(\s*'?Out'?(:[-0-9.eE]+)?\s*,/.test(nwk) || /,\s*'?Out'?(:[-0-9.eE]+)?\s*\)\s*(:[-0-9.eE]+)?;?$/.test(nwk);
+        return { ok: method === 'nj' && all.size === 9 && !missing.length && outAtRoot, detail: { method, leaves: all.size, missing, outAtRoot, nwk: nwk.slice(0, 80) } };
+    },
+    // Codon analysis: the planted changes are marked where they were planted, and nothing else in those rows before the frameshift
+    g_codon: (T) => {
+        const cd = state._codonData, C = T.codons;
+        if (!document.getElementById('codonAnalysis').checked || !cd) return { ok: false, detail: 'codon analysis is off' };
+        const row = (n) => state.seqs.findIndex(s => s.header === n);
+        const marks = (n) => { const r = cd.synNonSyn[row(n)]; const o = {}; r.forEach((v, c) => { if (v) o[c + 1] = v; }); return o; };
+        const syn = marks(C.synonymous.row), mis = marks(C.missense.row);
+        const stops = (n) => cd.stops[row(n)].map(c => c + 1);
+        const fs = (n) => cd.frameShifts[row(n)];
+        const synOk = JSON.stringify(Object.keys(syn).map(Number)) === JSON.stringify(C.synonymous.columns1) && Object.values(syn).every(v => v === 'syn');
+        const misOk = JSON.stringify(Object.keys(mis).map(Number)) === JSON.stringify(C.missense.columns1) && Object.values(mis).every(v => v !== 'syn' && v !== 'synmulti');
+        const L = state.seqs[0].seq.length;
+        const endStop = [L - 2, L - 1, L];
+        const stopOk = JSON.stringify(stops(C.stop.row)) === JSON.stringify([...C.stop.columns1, ...endStop]) && JSON.stringify(stops('reference')) === JSON.stringify(endStop);
+        const fsRow = fs(C.frameshift.row);
+        const fsOk = fsRow.length >= 1 && Math.abs(fsRow[0].runStart + 1 - C.frameshift.column1) <= 1
+            && ['reference', C.synonymous.row, C.missense.row, C.stop.row, C.codonDeleted.row].every(n => fs(n).length === 0);
+        const delOk = Object.keys(marks(C.codonDeleted.row)).length === 0;
+        return { ok: synOk && misOk && stopOk && fsOk && delOk, detail: { syn, mis, stops: stops(C.stop.row), fs: fsRow.map(f => f.runStart + 1), delOk } };
+    },
+    // AA only: the rows are shown as amino acids, and the reference reads as its planted protein
+    g_aa: (T) => {
+        const cd = state._codonData;
+        const aa = cd ? cd.aaSeq[0].map(x => x.aa).join('') : '';
+        return { ok: document.getElementById('aaOnly').checked && document.getElementById('codonAnalysis').checked && aa === T.codons.protein.reference, detail: { aa } };
+    },
+    // Consensus (Ambiguous) and shading: column by column as the zones were made
+    g_consensus: (T) => {
+        const cons = computeConsensusForSequences(state.seqs.map(s => s.seq));
+        const len = state.seqs[0].seq.length, mode = document.querySelector('input[name="shadeMode"]:checked').value;
+        const data = preCalculateConservation(state.seqs, len, mode);
+        const b = +document.getElementById('blackInput').value, d = +document.getElementById('darkInput').value, l = +document.getElementById('lightInput').value;
+        const shade = data.map(x => !x.hasData || !x.hasValidCoverage ? 'none' : x.conservation * 100 >= b ? 'black' : x.conservation * 100 >= d ? 'dark' : x.conservation * 100 >= l ? 'light' : 'none');
+        const badShade = shade.map((s, i) => s === T.consensus.shading[i] ? null : `${i + 1}:${s}/${T.consensus.shading[i]}`).filter(Boolean);
+        const type = document.querySelector('input[name="consensusType"]:checked').value;
+        return { ok: type === 'ambiguous' && document.getElementById('showConsensus').checked && cons === T.consensus.consensusAmbiguous && !badShade.length,
+            detail: { type, cons, want: T.consensus.consensusAmbiguous, badShade: badShade.slice(0, 8) } };
+    },
+};
+for (const id of Object.keys(GALLERY)) {
+    check(`examples page ${id}: the synthetic example opens, runs and shows what truth.json says it must; note, no errors`, async (page, baseUrl) => {
+        const errors = watchErrors(page);
+        const q = new URLSearchParams({ url: GALLERY[id], title: 'test ' + id, demo: id });
+        await page.goto(baseUrl + '/index.html?' + q, { waitUntil: 'networkidle' });
+        await loaded(page);
+        await page.waitForSelector('#demoNote', { state: 'visible', timeout: 60000 });
+        await page.waitForTimeout(300);
+        const probe = await page.evaluate(`(${GPROBES[id].toString()})(${JSON.stringify(TRUTH)})`);
+        const note = await page.evaluate(() => document.getElementById('demoNote').textContent.trim());
+        // the AA note quotes the reference protein: it must be the one the file holds (the generator changes it when its draws change)
+        const noteOk = note.length > 80 && (id !== 'g_aa' || note.includes(TRUTH.codons.protein.reference));
+        return { pass: probe.ok && noteOk && !errors.length, detail: JSON.stringify({ probe, noteOk, note: note.slice(0, 40), errors }) };
+    });
+}
+
+// The page lists every example, synthetic and real, and each link opens this viewer with an example that exists and a file that loads
+check('examples page: lists every example; every link opens the viewer with a known example and a file that is there', async (page, baseUrl) => {
+    const errors = watchErrors(page);
+    const resp = await page.goto(baseUrl + '/examples.html', { waitUntil: 'networkidle' });
+    if (!resp || resp.status() !== 200) return { pass: false, detail: 'examples.html status ' + (resp && resp.status()) };
+    const links = await page.evaluate(() => [...document.querySelectorAll('a[href*="demo="]')].map(a => ({ href: a.href, text: a.textContent.trim() })));
+    const bad = [], ids = new Set();
+    for (const { href } of links) {
+        const u = new URL(href);
+        const id = u.searchParams.get('demo'), f = u.searchParams.get('url');
+        ids.add(id);
+        const want = GALLERY[id] || (FILES[id] && FILES[id].file);
+        if (u.origin + u.pathname !== baseUrl + '/index.html' || f !== want) { bad.push(`${id}: ${href}`); continue; }
+        const st = await page.evaluate(async (p) => (await fetch(p)).status, f);
+        if (st !== 200) bad.push(`${id}: file ${st}`);
+    }
+    const need = [...Object.keys(GALLERY), ...Object.keys(FILES)];
+    const missing = need.filter(i => !ids.has(i));
+    // phone width: no sideways scrolling
+    await page.setViewportSize({ width: 390, height: 800 });
+    await page.waitForTimeout(200);
+    const wide = await page.evaluate(() => document.documentElement.scrollWidth > innerWidth + 1);
+    return { pass: !bad.length && !missing.length && !wide && !errors.length, detail: JSON.stringify({ bad, missing, wide, errors, n: links.length }) };
+});
+
+// The empty viewer says where the examples are, and the link opens examples.html in a new tab
+check('examples page: the empty viewer links to it, in a new tab', async (page, baseUrl) => {
+    await page.goto(baseUrl + '/index.html', { waitUntil: 'networkidle' });
+    const a = await page.evaluate(() => {
+        const l = document.querySelector('#alignmentContainer a[href="examples.html"]');
+        if (!l) return null;
+        const b = l.getClientRects()[0], top = b && document.elementFromPoint(b.left + b.width / 2, b.top + b.height / 2);   // first line box: a link that wraps has a hole in the middle of its bounding box
+        return { text: l.textContent.trim(), target: l.target, rel: l.rel, visible: !!b && b.width > 0 && b.height > 0 && (top === l || l.contains(top)) };
+    });
+    return { pass: !!a && a.visible && a.target === '_blank' && /noopener/.test(a.rel) && /example/i.test(a.text), detail: JSON.stringify(a) };
+});
+
 // ---- the runner -------------------------------------------------------------------------------------------------------
 (async () => {
     const { server, baseUrl } = await start();
