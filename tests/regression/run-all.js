@@ -18545,8 +18545,11 @@ check('GLM 1110 #8: Add Sequences "align to consensus" refused as stale keeps th
   }, add);
   await page.waitForTimeout(150);
   await page.evaluate(() => { closeAddSequencesModal(); document.activeElement?.blur?.(); });
+  // "still running" is read just before the edit (owner, 2026-11-12): read 100 ms after it, a fast runner (CI) had
+  // finished the job in between although the edit came while it ran (the job did refuse its result as stale)
+  const doneAtEdit = await page.evaluate(() => window.__glmDone);
   await page.keyboard.press('Control+u'); await page.waitForTimeout(100);
-  const during = await page.evaluate(() => ({ done: window.__glmDone, rows: state.seqs.length }));
+  const during = await page.evaluate((d) => ({ done: d, rows: state.seqs.length }), doneAtEdit);
   await page.evaluate(() => window.__glmP);
   const end = await page.evaluate(() => ({ rows: state.seqs.length, undo: state.deletedHistory.map(h => h.type).slice(-3), msg: document.getElementById('statusMessage').textContent.slice(0, 80) }));
   return { pass: during.done === false && during.rows === 41 && end.rows === 41 && end.undo.at(-1) === 'duplicate' && /changed while/i.test(end.msg), detail: JSON.stringify({ during, end }) };
