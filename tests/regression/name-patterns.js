@@ -153,6 +153,102 @@ check('with Colour Names open, loading another file updates the list', async (pa
     return { pass: rowWith(list, want) >= 0, detail: JSON.stringify(list.map(r => r.label + ' ' + JSON.stringify(r.chips))).slice(0, 400) };
 });
 
+// ---- owner 2026-11-16 "do all 5, with test": names built here, the answer tallied here from the names ----
+// put these definition lines on the rows (short name = first word, as the reader keeps it), then open the menu
+async function withNames(page, baseUrl, lines) {
+    await open(page, baseUrl, 'examples/svk_k4.fa');
+    await page.evaluate((L) => {
+        const base = state.seqs;
+        state.seqs = L.map((l, i) => Object.assign({}, base[i % base.length], { header: l.split(/\s/)[0], fullHeader: l }));
+        renderAlignment();
+    }, lines);
+    await openMenu(page);
+    return shown(page);
+}
+const rows = (list) => list.map(r => r.label + ' ' + JSON.stringify(r.chips)).join(' || ').slice(0, 700);
+
+check('1a: a field counted from the end (names of different length end in _seed1/_seed2)', async (page, baseUrl) => {
+    const pre = ['MEG-RL', 'consensus_12seqs', 'r1_r3_P1_hla020', 'r9_ext', 'r10_r8_P18del'];
+    const L = [];
+    for (let i = 0; i < 40; i++) L.push(`${pre[i % 5]}_${i}_seed${1 + (Math.floor(i / 5) % 2)}`);
+    const list = await withNames(page, baseUrl, L);
+    return { pass: rowWith(list, tally(L, /_(seed\d)$/)) >= 0, detail: rows(list) };
+});
+
+check('1b: key=value is a field of its own, wherever it stands (family=)', async (page, baseUrl) => {
+    const F = ['Squam1', 'Squam1', 'Squam3', 'Oph', 'Squam1'];
+    const L = [];
+    for (let i = 0; i < 30; i++) L.push(`s${i} ${i % 3 ? '' : 'aliases=SINE-1_Pmo,SINE3 '}family=${F[i % 5]} id=SCKB${1000 + i}`);
+    const list = await withNames(page, baseUrl, L);
+    const i = rowWith(list, tally(L, /family=(\S+)/));
+    return { pass: i >= 0 && /family=/.test(list[i].label), detail: rows(list) };
+});
+
+check('1c: a value with "_" inside (B2_Mm2_chr19_...) is offered whole', async (page, baseUrl) => {
+    const fam = ['B3', 'B2_Mm2', 'B3A', 'B2_Mm1t'], cnt = [12, 10, 8, 6];
+    const L = [];
+    fam.forEach((f, k) => { for (let j = 0; j < cnt[k]; j++) L.push(`${f}_chr19_${3000 + 977 * L.length}_${3200 + 977 * L.length}`); });
+    const list = await withNames(page, baseUrl, L);
+    return { pass: rowWith(list, tally(L, /^(.+?)_chr19_/)) >= 0, detail: rows(list) };
+});
+
+check('2: more than 12 values (17 chromosomes): the 12 largest are offered, and the label says so', async (page, baseUrl) => {
+    const L = [];
+    for (let k = 1; k <= 17; k++) for (let j = 0; j < 19 - k; j++) L.push(`chr${k}:${1000 + 37 * L.length}-${1300 + 37 * L.length}(${L.length % 2 ? '+' : '-'})`);
+    const all = tally(L, /^(chr\d+):/);
+    const top = Object.fromEntries(Object.entries(all).sort((a, b) => b[1] - a[1]).slice(0, 12));
+    const list = await withNames(page, baseUrl, L);
+    const i = rowWith(list, top);
+    return { pass: i >= 0 && /12 largest of 17/.test(list[i].label), detail: rows(list) };
+});
+
+check('3: a [tag] only some names carry is offered, and the strand is still found behind it', async (page, baseUrl) => {
+    const L = [];
+    for (let i = 0; i < 45; i++) L.push(`${i % 7 ? '' : '_R_'}NC_1425${10 + (i % 4)}.1:${1000 + 91 * i}-${1400 + 91 * i}(${i % 5 < 2 ? '-' : '+'})${i % 3 ? '' : ' [soft]'}`);
+    const list = await withNames(page, baseUrl, L);
+    const tag = { '[soft]': L.filter(l => /\[soft\]/.test(l)).length, 'no [soft]': L.filter(l => !/\[soft\]/.test(l)).length };
+    const strand = tally(L, /\(([+-])\)/);
+    const ti = rowWith(list, tag), si = rowWith(list, strand);
+    return { pass: ti >= 0 && si >= 0 && /tag/.test(list[ti].label) && /strand/.test(list[si].label), detail: rows(list) };
+});
+
+check('4a: free-text descriptions: the genus first, no rows of sentence words', async (page, baseUrl) => {
+    const G = ['Thermocyclops', 'Cyclops', 'Mesocyclops'];
+    const tail = ['18S ribosomal RNA gene, partial sequence', 'small subunit ribosomal RNA gene, partial sequence',
+        'isolate T12 18S small subunit ribosomal RNA gene', 'voucher NTU 2 18S ribosomal RNA gene, partial sequence'];
+    const L = [];
+    for (let i = 0; i < 36; i++) L.push(`${['HQ', 'GQ', 'KP', 'LC'][i % 4]}${845900 + 13 * i}.1 ${G[i % 3]} sp${i % 5} ${tail[(i * 7) % 4]}`);
+    const list = await withNames(page, baseUrl, L);
+    const g = rowWith(list, tally(L, /^\S+ (\w+)/));
+    const junk = list.filter(r => Object.keys(r.chips).some(v => /^(ribosomal|RNA|subunit|gene|partial|small|18S)$/.test(v)));
+    return { pass: g === 0 && junk.length === 0, detail: rows(list) };
+});
+
+check('4b: ranking: in the Alu demo the subfamily comes before the strand; a one-sided _R_ comes after the strand', async (page, baseUrl) => {
+    const file = 'examples/demo/alu_subfamilies.fa';
+    await open(page, baseUrl, file);
+    await openMenu(page);
+    const list = await shown(page);
+    const fam = rowWith(list, tally(namesOf(file), /^(Alu[A-Za-z]+)_/)), str = rowWith(list, tally(namesOf(file), /\d([+-])$/));
+    const L = [];
+    for (let i = 0; i < 50; i++) L.push(`${i < 2 ? '_R_' : ''}CM0631${i % 9}.1:${1000 + 77 * i}-${1400 + 77 * i}(${i % 2 ? '+' : '-'})`);
+    const list2 = await withNames(page, baseUrl, L);
+    const s2 = list2.findIndex(r => /strand/.test(r.label)), r2 = list2.findIndex(r => /_R_/.test(r.label));
+    return { pass: fam === 0 && str > fam && s2 >= 0 && (r2 < 0 || r2 > s2), detail: JSON.stringify({ fam, str, s2, r2 }) + ' ' + rows(list2) };
+});
+
+check('5: digits are ignored only in values seen once (B2 and B3 stay apart; dup1..dup6 -> dup#)', async (page, baseUrl) => {
+    const L = [];
+    for (let i = 0; i < 5; i++) L.push(`B2_x${i}`, `B3_x${i}`, `ID_x${i}`);
+    const list = await withNames(page, baseUrl, L);
+    const merged = list.filter(r => Object.keys(r.chips).some(v => /^B#$/.test(v)));
+    const L2 = [];
+    for (let i = 0; i < 6; i++) L2.push(`f0_c${i}`, `f1_c${i}`, `f2_c${i}`, `dup${30 + i}`);
+    const list2 = await withNames(page, baseUrl, L2);
+    const want = { 'dup#': 6, f0: 6, f1: 6, f2: 6 };
+    return { pass: merged.length === 0 && rowWith(list, tally(L, /^(B\d|ID)_/)) >= 0 && rowWith(list2, want) >= 0, detail: rows(list) + ' ## ' + rows(list2) };
+});
+
 // tester 2026-11-16: opened with the keyboard (Tab to the header, Enter), the list was empty
 check('opened with the keyboard, the menu shows the list', async (page, baseUrl) => {
     await open(page, baseUrl, 'examples/svk_k4.fa');

@@ -3,7 +3,7 @@
 // RELEASE_VERSION is the release version (package.json, CITATION.cff, git tag
 // v<RELEASE_VERSION>, tests/meta/version.test.js); BUILD_TAG counts every deploy.
 const RELEASE_VERSION = '1.34.1';
-const BUILD_TAG = 'v343';
+const BUILD_TAG = 'v344';
 // Sentinel row index for consensus-line nucleotide selection (not in state.seqs).
 const CONSENSUS_ROW_INDEX = -1;
 const COL_SEL_EDGE = '#4fc3f7';   // the edge line of a run of selected columns (styles.css .col-sel-l / .col-sel-r)
@@ -33041,72 +33041,161 @@ function showColorHistory() {
 }
 
 // ---- Name patterns (owner, 2026-11-16): the obvious patterns in the names of the open alignment ----
-// A name is cut into fields at _ | : ; , / ( ) [ ] = and spaces. A field is offered when its values split the
-// names into 2-12 groups of at least two names that hold most of the names (an ID or a coordinate has a
-// value per name and is not offered). A field is offered as written, and with its digits ignored (pan28,
-// pan26 -> pan#). Two patterns are looked for as such: "_R_" at the start (MAFFT reverse-complemented the
-// sequence) and the strand at the end, "(+)" / "(-)" or "...123+" / "...123-". Fields that split the names
-// in the same way are offered once; fields of numbers only (replicate numbers) come last.
+// Each definition line is read in several ways, and every way that splits the names into shared groups is a candidate:
+//  - fields cut at _ | : ; , / * ( ) [ ] = and spaces, counted from the start AND from the end (a part that only some
+//    names have shifts the fields after it, not those counted from the other end); "NC_142513.1" stays one field;
+//  - parts cut only at spaces, "|" and "__" (a value with "_" inside, "r1_r3_P1__r8_83seqs_P15"), from both ends;
+//  - the name without its coordinates at the end ("B2_Mm2_chr19_5707092_5707273" -> "B2_Mm2");
+//  - key=value ("family=Squam1"), each key a field of its own;
+//  - "_R_" at the start (MAFFT reverse-complemented), the strand at the end ("(+)", "...123-"), and each [tag].
+// A candidate is offered when its values make at least 2 groups of 2 or more names that hold at least 60 % of the names.
+// With more than 12 such values the 12 largest are shown (a value per chromosome, per species) when they hold at
+// least 40 % of the names. A value seen only once is also tried with its digits ignored (dup38, dup39 -> dup#), but
+// values seen twice or more stay as written (B2 and B3, 5p and 3p stay apart).
+// Ranking: share of names covered, fewer groups first, fields near the start first; lower when one group holds nearly
+// all names, and lower for fields in free text (where the names before the field are not built alike). A candidate
+// that splits the names nearly as an earlier one does (adjusted Rand >= 0.9) is not offered again.
 const NAME_PATTERN_COLOURS = ['#e41a1c', '#377eb8', '#4daf4a', '#ff7f00', '#984ea3', '#00bfc4',
     '#ffd92f', '#a65628', '#f781bf', '#999999', '#66c2a5', '#e6ab02'];
 function findNamePatterns(names, opts = {}) {
     const n = names.length;
     const maxGroups = opts.maxGroups || 12, maxFields = opts.maxFields || 8, minCover = opts.minCover ?? 0.6;
     if (n < 4) return [];
+    const FINE = /[\s_|:;,/*()[\]=]+/, COARSE = /\s+|\||__+/;
+    const PROTECT = /\b([A-Z]{1,3})_(\d)/g;   // NC_142513.1, XR_008331627.1: one field, not "NC" + a number
+    // how a field is built, for the free-text test: a number, a word (has a letter: AluY, L2a, CM063088.1), other (1000-1300)
+    const shapeOf = (t) => (/^\d+$/.test(t) ? 'n' : /[A-Za-z]/.test(t) ? 'w' : 'x');
+    const coordLike = (t) => /^[+-]$/.test(t) || /^\d+([-.]\d+)*$/.test(t) || /^chr[\w.]*$/i.test(t)
+        || /^[A-Z]{1,6}\u0001?\d+(\.\d+)?$/.test(t) || /^\d+-\d+$/.test(t);
     const recs = names.map(raw => {
-        let s = String(raw ?? '');
+        let s = String(raw ?? '').trim();
         const rc = s.startsWith('_R_');
         if (rc) s = s.slice(3);
+        const tags = [];
+        s = s.replace(/\s*\[([^\]\s]{1,40})\]/g, (m, t) => { tags.push(t); return ' '; }).trim();
+        const kv = {};
+        s = s.replace(/(?:^|\s)([A-Za-z][\w.-]*)=([^\s;|,]+)/g, (m, k, v) => { kv[k] = v; return ' '; }).trim();
         const m = s.match(/\(([+-])\)\s*$/) || s.match(/\d([+-])\s*$/);
-        return { rc, strand: m ? m[1] : null, toks: s.split(/[\s_|:;,/()[\]=]+/).filter(Boolean) };
+        const fine = s.replace(PROTECT, '$1\u0001$2').split(FINE).filter(Boolean);
+        const coarse = s.split(COARSE).filter(Boolean);
+        // the name without coordinate-like fields at its end
+        let k = fine.length;
+        while (k > 1 && coordLike(fine[k - 1])) k--;
+        const core = k < fine.length ? fine.slice(0, k).join('_') : null;
+        return { rc, strand: m ? m[1] : null, tags, kv, fine, coarse, core };
     });
+    const shown = (v) => String(v).replace(/\u0001/g, '_');
     const found = [];
-    // a candidate: label + the value of each name (null = the name has no value here)
-    const consider = (label, kind, valueOf, base = 0) => {
-        const byVal = new Map();
-        recs.forEach((r, i) => {
-            const v = valueOf(r);
-            if (v == null) return;
-            if (!byVal.has(v)) byVal.set(v, []);
-            byVal.get(v).push(i);
+    // consider(label, value of each name, extra score, prefix shapes for the free-text test)
+    const consider = (label, valueOf, bonus = 0, shapeKey = null, special = false) => {
+        const vals = recs.map(valueOf);
+        const tally = (vs) => { const by = new Map(); vs.forEach((v, i) => { if (v == null) return; if (!by.has(v)) by.set(v, []); by.get(v).push(i); }); return by; };
+        const by0 = tally(vals);
+        const asWritten = offer(label, by0, bonus, shapeKey, special);
+        // values seen once are also tried with their digits ignored (dup38, dup39 -> dup#); values seen twice or more
+        // stay as written (B2 and B3 stay apart); accessions (HQ845972.1, NC_142513.1) are not merged. When both
+        // qualify both are offered, and the one that splits more names wins below (dup# next to f0, f1, f2).
+        if (![...by0.values()].some(ix => ix.length === 1)) return;
+        const v2 = vals.map(v => {
+            if (v == null || by0.get(v).length > 1 || !/\d/.test(v)) return v;
+            const s = String(v).replace(/\d+/g, '#');
+            // an accession is an ID, not a kind: HQ845972.1, OP288880, NC_142513.1, CM063088.1 stay as written
+            if (/^[#.+\-\u0001]*$/.test(s) || /^[A-Z]{1,6}(\u0001#|#\.#)(\.#)?$/.test(s) || /^[A-Z]{1,6}\d{5,}(\.\d+)?$/.test(v)) return v;
+            // a value with more than two numbers is a locus (Nephrurus_levis_chr4_123_456), not a kind
+            if ((s.match(/#/g) || []).length > 2) return v;
+            return s;
         });
-        const groups = [...byVal.entries()].filter(([, ix]) => ix.length >= 2)
-            .sort((a, b) => b[1].length - a[1].length || String(a[0]).localeCompare(String(b[0])));
-        if (groups.length < 2 || groups.length > maxGroups) return;
-        const covered = groups.reduce((a, g) => a + g[1].length, 0);
-        if (covered < minCover * n) return;
-        const numeric = groups.every(([v]) => /^[\d.#]+$/.test(v));
-        found.push({ label, kind, numeric, covered,
-            groups: groups.map(([value, ix]) => ({ value, idx: ix })),
-            score: base + covered / n - 0.02 * groups.length - (numeric ? 2 : 0) });
+        if (asWritten && !v2.some((v, i) => v !== vals[i])) return;
+        const merged = offer(label + ', digits ignored in values seen once', tally(v2), bonus - 0.05, shapeKey, special);
+        // both qualify: keep the one that puts more names into groups
+        if (asWritten && merged) found.splice(found.indexOf(merged.covered > asWritten.covered ? asWritten : merged), 1);
     };
-    consider('starts with _R_ (reverse-complemented by MAFFT)', 'rc', r => (r.rc ? '_R_' : 'no _R_'), 0.3);
-    if (recs.some(r => r.strand)) consider('strand at the end of the name', 'strand', r => r.strand, 0.3);
-    const maxT = Math.min(8, Math.max(0, ...recs.map(r => r.toks.length)));
-    for (let p = 0; p < maxT; p++) {
-        consider(`field ${p + 1}`, 'field', r => r.toks[p] ?? null);
-        consider(`field ${p + 1}, digits ignored`, 'stem', r => {
-            const t = r.toks[p];
-            if (t == null || !/\d/.test(t)) return t ?? null;
-            const s = t.replace(/\d+/g, '#');
-            return /^[#.+-]*$/.test(s) ? null : s;
-        });
+    const offer = (label, by, bonus, shapeKey, special) => {
+        let groups = [...by.entries()].filter(([, ix]) => ix.length >= 2)
+            .sort((a, b) => b[1].length - a[1].length || String(a[0]).localeCompare(String(b[0])));
+        if (groups.length < 2) return false;
+        const coveredAll = groups.reduce((a, g) => a + g[1].length, 0);
+        if (coveredAll < minCover * n) return false;
+        let more = 0;
+        if (groups.length > maxGroups) {
+            // many values (a chromosome, a species each): the 12 largest, when they hold enough names
+            if (groups.length > 3 * maxGroups) return false;
+            more = groups.length - maxGroups;
+            groups = groups.slice(0, maxGroups);
+            if (groups.reduce((a, g) => a + g[1].length, 0) < 0.4 * n) return false;
+        }
+        const covered = groups.reduce((a, g) => a + g[1].length, 0);
+        const numeric = groups.every(([v]) => /^[\d.#\u0001-]+$/.test(v));
+        let score = bonus + coveredAll / n - 0.02 * Math.min(groups.length + more, 30) - (numeric ? 2 : 0) - (more ? 0.15 : 0);
+        if (groups[0][1].length > 0.9 * coveredAll) score -= 0.6;          // one value holds nearly all names
+        // values of different kinds in one field ("+" next to "Sq3A"): the field is not in the same place in all names
+        if (!special && new Set(groups.map(([v]) => shapeOf(String(v).replace(/#/g, '0')))).size > 1) score -= 0.6;
+        if (shapeKey) {                                                      // free text: names not built alike before the field
+            const sk = recs.map(shapeKey).filter(x => x != null);
+            const c = new Map(); sk.forEach(x => c.set(x, (c.get(x) || 0) + 1));
+            const cons = sk.length ? Math.max(...c.values()) / sk.length : 1;
+            score -= 0.6 * (1 - cons);
+        }
+        found.push({ special, label: more ? `${label} (the ${maxGroups} largest of ${maxGroups + more} values)` : label, numeric, covered, more,
+            groups: groups.map(([value, idx]) => ({ value: shown(value), idx })), score });
+        return found[found.length - 1];
+    };
+    const ord = (k) => (k === 1 ? 'last' : k === 2 ? '2nd from last' : k === 3 ? '3rd from last' : `${k}th from last`);
+    if (recs.some(r => r.rc)) consider('starts with _R_ (reverse-complemented by MAFFT)', r => (r.rc ? '_R_' : 'no _R_'), 0, null, true);
+    if (recs.some(r => r.strand)) consider('strand at the end of the name', r => r.strand, 0, null, true);
+    const tagSet = new Set(); recs.forEach(r => r.tags.forEach(t => tagSet.add(t)));
+    for (const t of [...tagSet].slice(0, 20)) consider(`tag [${t}]`, r => (r.tags.includes(t) ? `[${t}]` : `no [${t}]`), 0, null, true);
+    const keySet = new Set(); recs.forEach(r => Object.keys(r.kv).forEach(k => keySet.add(k)));
+    for (const k of [...keySet].slice(0, 20)) consider(`${k}=`, r => r.kv[k] ?? null, 0.05);
+    consider('name without its coordinates', r => r.core, 0.05);
+    // Free text (an NCBI description: "AY626998.1 Cyclops sp. UK-RJH-2004 18S small subunit ribosomal RNA gene, partial
+    // sequence"): long names whose number of fields varies. A field far from the start is then a word of the sentence,
+    // not a field: only the first three fields are offered.
+    const lens = recs.map(r => r.fine.length).sort((a, b) => a - b);
+    const q = (f) => lens[Math.min(lens.length - 1, Math.floor(f * lens.length))];
+    const freeText = q(0.5) >= 6 && q(0.9) - q(0.1) >= 3;
+    const maxF = Math.min(freeText ? 3 : 8, Math.max(0, ...recs.map(r => r.fine.length)));
+    for (let p = 0; p < maxF; p++) {
+        const sh = r => (r.fine.length > p ? r.fine.slice(0, p).map(shapeOf).join('') : null);
+        consider(`field ${p + 1}`, r => r.fine[p] ?? null, 0.1 - 0.02 * p, sh);
     }
-    // one entry per way of splitting the names
-    const partKey = (f) => {
-        const g = new Array(n).fill(-1);
-        f.groups.forEach((gr, gi) => gr.idx.forEach(i => { g[i] = gi; }));
-        const ren = new Map();
-        return g.map(x => (x < 0 ? '-' : (ren.has(x) ? ren.get(x) : (ren.set(x, ren.size), ren.get(x))))).join(',');
+    for (let k = 1; k <= (freeText ? 0 : Math.min(4, maxF)); k++) {
+        const sh = r => (r.fine.length >= k ? r.fine.slice(r.fine.length - k + 1).map(shapeOf).join('') : null);
+        consider(`${ord(k)} field`, r => (r.fine.length >= k + 1 ? r.fine[r.fine.length - k] : null), 0.05 - 0.02 * k, sh);
+    }
+    const maxC = Math.min(6, Math.max(0, ...recs.map(r => r.coarse.length)));
+    if (maxC > 1 && !freeText) {
+        const cs = (t) => t.split(FINE).filter(Boolean).map(shapeOf).join('');
+        for (let p = 0; p < maxC; p++) consider(`part ${p + 1} (cut at spaces, | and __)`, r => (r.coarse.length > 1 ? r.coarse[p] ?? null : null), 0.05 - 0.02 * p,
+            r => (r.coarse.length > p ? r.coarse.slice(0, p).map(cs).join('|') : null));
+        for (let k = 1; k <= Math.min(3, maxC); k++) consider(`${ord(k)} part (cut at spaces, | and __)`, r => (r.coarse.length > k ? r.coarse[r.coarse.length - k] : null), 0.03 - 0.02 * k,
+            r => (r.coarse.length >= k ? r.coarse.slice(r.coarse.length - k + 1).map(cs).join('|') : null));
+    }
+    // adjusted Rand index of two candidates over the names (a name outside the groups is a group of its own)
+    const labels = (f) => { const g = new Array(n); for (let i = 0; i < n; i++) g[i] = -1 - i; f.groups.forEach((gr, gi) => gr.idx.forEach(i => { g[i] = gi; })); return g; };
+    const ari = (a, b) => {
+        const c2 = x => x * (x - 1) / 2, m = new Map(), ra = new Map(), rb = new Map();
+        for (let i = 0; i < n; i++) { const k = a[i] + ',' + b[i]; m.set(k, (m.get(k) || 0) + 1); ra.set(a[i], (ra.get(a[i]) || 0) + 1); rb.set(b[i], (rb.get(b[i]) || 0) + 1); }
+        let s = 0, sa = 0, sb = 0;
+        for (const v of m.values()) s += c2(v);
+        for (const v of ra.values()) sa += c2(v);
+        for (const v of rb.values()) sb += c2(v);
+        const e = sa * sb / c2(n), mx = (sa + sb) / 2;
+        return mx === e ? (s === e ? 1 : 0) : (s - e) / (mx - e);
     };
     found.sort((a, b) => b.score - a.score);
-    const seen = new Set(), out = [];
+    const out = [], kept = [];
     for (const f of found) {
-        const k = partKey(f);
-        if (seen.has(k)) continue;
-        seen.add(k);
+        const lab = labels(f);
+        const j = kept.findIndex(k => ari(k, lab) >= 0.9);
+        if (j >= 0) {
+            // the same split under a plain field name: the named pattern (strand, _R_, a tag) takes its place
+            if (f.special && !out[j].special) { out[j] = f; kept[j] = lab; }
+            continue;
+        }
+        if (out.length >= maxFields) continue;
+        kept.push(lab);
         out.push(f);
-        if (out.length >= maxFields) break;
     }
     return out;
 }
