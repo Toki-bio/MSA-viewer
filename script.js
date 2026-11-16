@@ -3,7 +3,7 @@
 // RELEASE_VERSION is the release version (package.json, CITATION.cff, git tag
 // v<RELEASE_VERSION>, tests/meta/version.test.js); BUILD_TAG counts every deploy.
 const RELEASE_VERSION = '1.34.1';
-const BUILD_TAG = 'v344';
+const BUILD_TAG = 'v345';
 // Sentinel row index for consensus-line nucleotide selection (not in state.seqs).
 const CONSENSUS_ROW_INDEX = -1;
 const COL_SEL_EDGE = '#4fc3f7';   // the edge line of a run of selected columns (styles.css .col-sel-l / .col-sel-r)
@@ -33119,7 +33119,6 @@ function findNamePatterns(names, opts = {}) {
         let more = 0;
         if (groups.length > maxGroups) {
             // many values (a chromosome, a species each): the 12 largest, when they hold enough names
-            if (groups.length > 3 * maxGroups) return false;
             more = groups.length - maxGroups;
             groups = groups.slice(0, maxGroups);
             if (groups.reduce((a, g) => a + g[1].length, 0) < 0.4 * n) return false;
@@ -33143,10 +33142,18 @@ function findNamePatterns(names, opts = {}) {
     const ord = (k) => (k === 1 ? 'last' : k === 2 ? '2nd from last' : k === 3 ? '3rd from last' : `${k}th from last`);
     if (recs.some(r => r.rc)) consider('starts with _R_ (reverse-complemented by MAFFT)', r => (r.rc ? '_R_' : 'no _R_'), 0, null, true);
     if (recs.some(r => r.strand)) consider('strand at the end of the name', r => r.strand, 0, null, true);
-    const tagSet = new Set(); recs.forEach(r => r.tags.forEach(t => tagSet.add(t)));
-    for (const t of [...tagSet].slice(0, 20)) consider(`tag [${t}]`, r => (r.tags.includes(t) ? `[${t}]` : `no [${t}]`), 0, null, true);
-    const keySet = new Set(); recs.forEach(r => Object.keys(r.kv).forEach(k => keySet.add(k)));
-    for (const k of [...keySet].slice(0, 20)) consider(`${k}=`, r => r.kv[k] ?? null, 0.05);
+    // Each tag and each key, at most 20 of them, the most widespread first. Tags carried by exactly the same names are
+    // one split: only the first is tried, so twenty tags that always come together cannot crowd out another (GLM audit).
+    const spread = (getAll) => {
+        const on = new Map();
+        recs.forEach((r, i) => getAll(r).forEach(t => { if (!on.has(t)) on.set(t, []); on.get(t).push(i); }));
+        const seen = new Set();
+        return [...on.entries()].sort((a, b) => b[1].length - a[1].length)
+            .filter(([, ix]) => { const k = ix.join(','); if (seen.has(k)) return false; seen.add(k); return true; })
+            .slice(0, 20).map(([t]) => t);
+    };
+    for (const t of spread(r => r.tags)) consider(`tag [${t}]`, r => (r.tags.includes(t) ? `[${t}]` : `no [${t}]`), 0, null, true);
+    for (const k of spread(r => Object.keys(r.kv))) consider(`${k}=`, r => r.kv[k] ?? null, 0.05);
     consider('name without its coordinates', r => r.core, 0.05);
     // Free text (an NCBI description: "AY626998.1 Cyclops sp. UK-RJH-2004 18S small subunit ribosomal RNA gene, partial
     // sequence"): long names whose number of fields varies. A field far from the start is then a word of the sentence,

@@ -249,6 +249,29 @@ check('5: digits are ignored only in values seen once (B2 and B3 stay apart; dup
     return { pass: merged.length === 0 && rowWith(list, tally(L, /^(B\d|ID)_/)) >= 0 && rowWith(list2, want) >= 0, detail: rows(list) + ' ## ' + rows(list2) };
 });
 
+// GLM audit of v344: twenty tags always carried together filled the 20-tag limit and hid another tag
+check('GLM v344: twenty tags that always come together do not hide another tag', async (page, baseUrl) => {
+    const a = Array.from({ length: 20 }, (_, i) => `[a${i + 1}]`).join(' ');
+    const L = [];
+    // the first name carries the twenty before [t], so [t] is seen 21st
+    for (let i = 0; i < 12; i++) L.push(`x${i}${i % 2 ? '' : ' ' + a}${i % 3 ? '' : ' [t]'}`);
+    const list = await withNames(page, baseUrl, L);
+    const want = { '[t]': L.filter(l => /\[t\]/.test(l)).length, 'no [t]': L.filter(l => !/\[t\]/.test(l)).length };
+    return { pass: rowWith(list, want) >= 0, detail: rows(list) };
+});
+
+// GLM audit of v344: a field with more than 36 values was dropped though its 12 largest held most names
+check('GLM v344: 37 species, the 12 largest holding 59 % of the names, are offered', async (page, baseUrl) => {
+    const L = [];
+    for (let s = 1; s <= 12; s++) for (let j = 1; j <= 6; j++) L.push(`sp${String(s).padStart(2, '0')}_v${j}`);
+    for (let s = 13; s <= 37; s++) for (const j of ['a', 'b']) L.push(`sp${s}_${j}`);
+    const all = tally(L, /^(sp\d+)_/);
+    const top = Object.fromEntries(Object.entries(all).sort((x, y) => y[1] - x[1] || x[0].localeCompare(y[0])).slice(0, 12));
+    const list = await withNames(page, baseUrl, L);
+    const i = rowWith(list, top);
+    return { pass: i >= 0 && /12 largest of 37/.test(list[i].label), detail: rows(list) };
+});
+
 // tester 2026-11-16: opened with the keyboard (Tab to the header, Enter), the list was empty
 check('opened with the keyboard, the menu shows the list', async (page, baseUrl) => {
     await open(page, baseUrl, 'examples/svk_k4.fa');
