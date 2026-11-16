@@ -4826,3 +4826,18 @@ button.demo-pill[data-demo]:focus-visible { outline: 2px solid #5b21b6; outline-
 }
 #demoNote .demo-note-close:hover { background: #ede9fe; }
 #demoNote .demo-note-close:focus-visible { outline: 2px solid #5b21b6; outline-offset: 1px; }
+
+/* Name patterns (Colour Names) */
+#namePatternsList { max-height: 320px; overflow-y: auto; font-size: 11px; }
+#namePatternsList .np-row { padding: 3px 0; border-top: 1px dotted #e3e3e3; }
+#namePatternsList .np-row:first-child { border-top: none; }
+#namePatternsList .np-head { display: flex; align-items: center; gap: 4px; }
+#namePatternsList .np-label { flex: 1; color: #444; }
+#namePatternsList .np-apply { height: 20px; padding: 0 6px; font-size: 11px; }
+#namePatternsList .np-chips { display: flex; flex-wrap: wrap; gap: 2px 6px; margin-top: 2px; }
+#namePatternsList .np-chip { display: inline-flex; align-items: center; gap: 2px; max-width: 100%; cursor: pointer; }
+#namePatternsList .np-chip input { margin: 0; }
+#namePatternsList .np-swatch { width: 9px; height: 9px; border-radius: 2px; flex: none; }
+#namePatternsList .np-val { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 140px; }
+#namePatternsList .np-n, #namePatternsList .np-rest { color: #888; }
+#namePatternsList .np-none { color: #888; font-style: italic; }

@@ -3,7 +3,7 @@
 // RELEASE_VERSION is the release version (package.json, CITATION.cff, git tag
 // v<RELEASE_VERSION>, tests/meta/version.test.js); BUILD_TAG counts every deploy.
 const RELEASE_VERSION = '1.34.1';
-const BUILD_TAG = 'v342';
+const BUILD_TAG = 'v343';
 // Sentinel row index for consensus-line nucleotide selection (not in state.seqs).
 const CONSENSUS_ROW_INDEX = -1;
 const COL_SEL_EDGE = '#4fc3f7';   // the edge line of a run of selected columns (styles.css .col-sel-l / .col-sel-r)
@@ -21674,6 +21674,9 @@ function scheduleSelectionsPanelRefresh() {
     requestAnimationFrame(() => {
         _selectionsPanelPending = false;
         refreshSelectionsPanel();
+        // Name patterns: a new file or a rename while Colour Names is open must not leave the old list on show
+        const np = el('colourseqs-controls');
+        if (np && typeof refreshNamePatterns === 'function' && getComputedStyle(np).display !== 'none') refreshNamePatterns();
     });
 }
 
@@ -33037,6 +33040,148 @@ function showColorHistory() {
     showExclusiveModal('colourInspectorModal');
 }
 
+// ---- Name patterns (owner, 2026-11-16): the obvious patterns in the names of the open alignment ----
+// A name is cut into fields at _ | : ; , / ( ) [ ] = and spaces. A field is offered when its values split the
+// names into 2-12 groups of at least two names that hold most of the names (an ID or a coordinate has a
+// value per name and is not offered). A field is offered as written, and with its digits ignored (pan28,
+// pan26 -> pan#). Two patterns are looked for as such: "_R_" at the start (MAFFT reverse-complemented the
+// sequence) and the strand at the end, "(+)" / "(-)" or "...123+" / "...123-". Fields that split the names
+// in the same way are offered once; fields of numbers only (replicate numbers) come last.
+const NAME_PATTERN_COLOURS = ['#e41a1c', '#377eb8', '#4daf4a', '#ff7f00', '#984ea3', '#00bfc4',
+    '#ffd92f', '#a65628', '#f781bf', '#999999', '#66c2a5', '#e6ab02'];
+function findNamePatterns(names, opts = {}) {
+    const n = names.length;
+    const maxGroups = opts.maxGroups || 12, maxFields = opts.maxFields || 8, minCover = opts.minCover ?? 0.6;
+    if (n < 4) return [];
+    const recs = names.map(raw => {
+        let s = String(raw ?? '');
+        const rc = s.startsWith('_R_');
+        if (rc) s = s.slice(3);
+        const m = s.match(/\(([+-])\)\s*$/) || s.match(/\d([+-])\s*$/);
+        return { rc, strand: m ? m[1] : null, toks: s.split(/[\s_|:;,/()[\]=]+/).filter(Boolean) };
+    });
+    const found = [];
+    // a candidate: label + the value of each name (null = the name has no value here)
+    const consider = (label, kind, valueOf, base = 0) => {
+        const byVal = new Map();
+        recs.forEach((r, i) => {
+            const v = valueOf(r);
+            if (v == null) return;
+            if (!byVal.has(v)) byVal.set(v, []);
+            byVal.get(v).push(i);
+        });
+        const groups = [...byVal.entries()].filter(([, ix]) => ix.length >= 2)
+            .sort((a, b) => b[1].length - a[1].length || String(a[0]).localeCompare(String(b[0])));
+        if (groups.length < 2 || groups.length > maxGroups) return;
+        const covered = groups.reduce((a, g) => a + g[1].length, 0);
+        if (covered < minCover * n) return;
+        const numeric = groups.every(([v]) => /^[\d.#]+$/.test(v));
+        found.push({ label, kind, numeric, covered,
+            groups: groups.map(([value, ix]) => ({ value, idx: ix })),
+            score: base + covered / n - 0.02 * groups.length - (numeric ? 2 : 0) });
+    };
+    consider('starts with _R_ (reverse-complemented by MAFFT)', 'rc', r => (r.rc ? '_R_' : 'no _R_'), 0.3);
+    if (recs.some(r => r.strand)) consider('strand at the end of the name', 'strand', r => r.strand, 0.3);
+    const maxT = Math.min(8, Math.max(0, ...recs.map(r => r.toks.length)));
+    for (let p = 0; p < maxT; p++) {
+        consider(`field ${p + 1}`, 'field', r => r.toks[p] ?? null);
+        consider(`field ${p + 1}, digits ignored`, 'stem', r => {
+            const t = r.toks[p];
+            if (t == null || !/\d/.test(t)) return t ?? null;
+            const s = t.replace(/\d+/g, '#');
+            return /^[#.+-]*$/.test(s) ? null : s;
+        });
+    }
+    // one entry per way of splitting the names
+    const partKey = (f) => {
+        const g = new Array(n).fill(-1);
+        f.groups.forEach((gr, gi) => gr.idx.forEach(i => { g[i] = gi; }));
+        const ren = new Map();
+        return g.map(x => (x < 0 ? '-' : (ren.has(x) ? ren.get(x) : (ren.set(x, ren.size), ren.get(x))))).join(',');
+    };
+    found.sort((a, b) => b.score - a.score);
+    const seen = new Set(), out = [];
+    for (const f of found) {
+        const k = partKey(f);
+        if (seen.has(k)) continue;
+        seen.add(k);
+        out.push(f);
+        if (out.length >= maxFields) break;
+    }
+    return out;
+}
+
+let _namePatterns = { sig: null, list: [], names: [] };
+function _namePatternsSig() {
+    const h = state.seqs ? state.seqs.map(q => q.fullHeader || q.header) : [];
+    return h.length + '\u0001' + h.join('\u0001');
+}
+function refreshNamePatterns(force) {
+    const box = el('namePatternsList');
+    if (!box) return;
+    const sig = _namePatternsSig();
+    if (!force && sig === _namePatterns.sig) return;
+    // the patterns are looked for in the whole definition line (the description too: "... alpha_ref, partial cds");
+    // the colours are kept by the name, as everywhere in Colour Names
+    const names = (state.seqs || []).map(q => q.header);
+    _namePatterns = { sig, names, list: findNamePatterns((state.seqs || []).map(q => q.fullHeader || q.header)) };
+    if (!names.length) { box.innerHTML = '<div class="np-none">Open an alignment to see the patterns in its names.</div>'; return; }
+    if (!_namePatterns.list.length) {
+        box.innerHTML = '<div class="np-none">No part of the names splits them into a few shared groups.</div>';
+        return;
+    }
+    box.innerHTML = _namePatterns.list.map((p, pi) => {
+        const total = p.groups.reduce((a, g) => a + g.idx.length, 0);
+        const rest = names.length - total;
+        const chips = p.groups.map((g, gi) => {
+            const c = NAME_PATTERN_COLOURS[gi % NAME_PATTERN_COLOURS.length];
+            return `<label class="np-chip" title="${_escapeHtml(g.value)}: ${g.idx.length} names"><input type="checkbox" data-g="${gi}" checked>`
+                + `<span class="np-swatch" style="background:${c}"></span><span class="np-val">${_escapeHtml(g.value)}</span> <span class="np-n">${g.idx.length}</span></label>`;
+        }).join('');
+        return `<div class="np-row" data-p="${pi}"><div class="np-head"><span class="np-label">${_escapeHtml(p.label)}</span>`
+            + `<button type="button" class="np-apply" data-p="${pi}" title="Colour the names by this pattern (only the ticked values)">Colour</button></div>`
+            + `<div class="np-chips">${chips}${rest > 0 ? `<span class="np-rest" title="names with a value of their own, or none here: not coloured">+${rest} other</span>` : ''}</div></div>`;
+    }).join('');
+}
+function applyNamePattern(pi) {
+    // the list was made for other names (a new file, a rename while the menu stayed open): show the new list first
+    if (_namePatternsSig() !== _namePatterns.sig) {
+        refreshNamePatterns(true);
+        showMessage('The names have changed: the list is updated, choose again', 3000);
+        return;
+    }
+    const p = _namePatterns.list[pi];
+    if (!p) return;
+    const row = document.querySelector(`#namePatternsList .np-row[data-p="${pi}"]`);
+    const on = new Set([...(row ? row.querySelectorAll('input[data-g]') : [])].filter(i => i.checked).map(i => +i.dataset.g));
+    // Colours are kept by the short name. Rows that share a short name but fall in different values (">seq1 human",
+    // ">seq1 mouse") cannot each have their own colour: they are left uncoloured and counted, not painted wrong.
+    const groupsOf = new Map();
+    p.groups.forEach((g, gi) => {
+        if (!on.has(gi)) return;
+        g.idx.forEach(i => {
+            const h = _namePatterns.names[i];
+            if (!groupsOf.has(h)) groupsOf.set(h, new Set());
+            groupsOf.get(h).add(gi);
+        });
+    });
+    colourState.mappings.clear();
+    let k = 0, clash = 0;
+    p.groups.forEach((g, gi) => {
+        if (!on.has(gi)) return;
+        const c = NAME_PATTERN_COLOURS[gi % NAME_PATTERN_COLOURS.length];
+        g.idx.forEach(i => {
+            const h = _namePatterns.names[i];
+            if (groupsOf.get(h).size > 1) { clash++; return; }
+            colourState.mappings.set(h, c);
+            recordColorHistory(h, c, 'Name pattern: ' + p.label + ' = ' + g.value);
+            k++;
+        });
+    });
+    applyColourToSeqNames(colourState.mappings);
+    showMessage(`Coloured ${k} name(s) by ${p.label}` + (clash ? `; ${clash} left uncoloured: they share their name with a row of another value` : ''), clash ? 4000 : 2000);
+}
+
 function initColourSeqs() {
     const patternBtn = el('colourPatternButton');
     const autoBtn = el('colourAutoButton');
@@ -33086,6 +33231,20 @@ function initColourSeqs() {
         thresholdSlider.addEventListener('input', updateThresholdLabel);
         updateThresholdLabel();
     }
+
+    // Name patterns: worked out when the menu is looked at, again only when the names changed
+    const npSection = el('colourseqs-controls')?.parentElement;
+    if (npSection) {
+        npSection.addEventListener('mouseenter', () => refreshNamePatterns());
+        // the keyboard opens the menu too (Tab to the header, Enter/Space): no mouseenter, no click (tester, 2026-11-16)
+        npSection.addEventListener('focusin', () => setTimeout(() => refreshNamePatterns(), 0));
+        npSection.addEventListener('keydown', (e) => { if (e.key === 'Enter' || e.key === ' ') setTimeout(() => refreshNamePatterns(), 0); });
+        npSection.querySelector('.section-header')?.addEventListener('click', () => setTimeout(() => refreshNamePatterns(), 0));
+    }
+    el('namePatternsList')?.addEventListener('click', (e) => {
+        const b = e.target.closest('.np-apply');
+        if (b) applyNamePattern(+b.dataset.p);
+    });
 
     // Load initial presets list
     updateColourPresetList();
