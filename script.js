@@ -3,7 +3,7 @@
 // RELEASE_VERSION is the release version (package.json, CITATION.cff, git tag
 // v<RELEASE_VERSION>, tests/meta/version.test.js); BUILD_TAG counts every deploy.
 const RELEASE_VERSION = '1.34.1';
-const BUILD_TAG = 'v345';
+const BUILD_TAG = 'v346';
 // Sentinel row index for consensus-line nucleotide selection (not in state.seqs).
 const CONSENSUS_ROW_INDEX = -1;
 const COL_SEL_EDGE = '#4fc3f7';   // the edge line of a run of selected columns (styles.css .col-sel-l / .col-sel-r)
@@ -36757,6 +36757,8 @@ function _dotDock(on) {
     if (!on) _dotCheckEdits();   // the window is back in front: say at once if a row changed while it was a bar
     const b = document.getElementById('dotPlotDockBtn');
     if (b) { b.innerHTML = on ? '&#9652;' : '&#9662;'; b.title = on ? 'Bring the dot plot window back' : 'Move the window out of the way to a small bar (the alignment behind it shows fully); click again to bring it back'; }
+    const bar = document.getElementById('dotPlotTitleBar'), t = document.getElementById('dotPlotTitle');
+    if (bar) bar.title = on ? `${t ? t.textContent : 'Dot Plot'} (the bar's ▴ brings the window back)` : 'Drag to move; drag the lower-right corner to resize';
     if (!on) setTimeout(() => { try { _dotRender(); _dotRenderStrip(); } catch (e) { /* window closed */ } }, 0);
 }
 

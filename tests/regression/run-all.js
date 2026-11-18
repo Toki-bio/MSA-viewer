@@ -10897,6 +10897,23 @@ check('Dot plot: the arrow shows the stretch in the alignment (Canvas, Block and
   return { pass: ok, detail: JSON.stringify(out) };
 }));
 
+// owner, 2026-11-18 (screenshot): with long names the docked bar's title wrapped to four lines in Times and pushed the buttons out
+check('Dot plot: the docked bar stays one line with long names - title cut with an ellipsis (full name on hover), in the app font, every button inside the bar', async (page) => withCanvasBlockPage(page, async (p, origin) => {
+  await p.goto(origin + '/index.html', { waitUntil: 'networkidle' });
+  await loadFasta(p, dotAlignFasta());
+  await p.evaluate(() => { const s = state.seqs[100]; s.header = 'Sval00056|val|ptg0003031:356656-356878|+|flanks_lowercase'; s.fullHeader = s.header; });
+  await dotOpenRow100(p);
+  await p.click('#dotPlotRegionItems .dot-goto'); await p.waitForTimeout(600);
+  const r = await p.evaluate(() => {
+    const dlg = document.getElementById('dotPlotDialog'), d = dlg.getBoundingClientRect(), h = document.getElementById('dotPlotTitle');
+    const btns = [...dlg.querySelectorAll('.win-titlebar button')].filter(b => b.offsetParent !== null).map(b => { const q = b.getBoundingClientRect(); return { id: b.id || b.className, inside: q.left >= d.left && q.right <= d.right && q.top >= d.top && q.bottom <= d.bottom }; });
+    return { docked: dlg.classList.contains('dot-docked'), dlgH: Math.round(d.height), titleH: Math.round(h.getBoundingClientRect().height), font: getComputedStyle(h).fontFamily,
+      tip: document.getElementById('dotPlotTitleBar').title, text: h.textContent, btns };
+  });
+  const ok = r.docked && r.titleH <= 20 && r.dlgH <= 50 && !/Times/i.test(r.font) && r.btns.length > 0 && r.btns.every(b => b.inside) && r.tip.includes(r.text);
+  return { pass: ok, detail: JSON.stringify(r) };
+}));
+
 check('Dot plot: Highlight all marks every shown stretch on both rows, survives scrolling and a view switch, Clear marks removes it (Canvas, Block, Full)', async (page) => withCanvasBlockPage(page, async (p, origin) => {
   await p.goto(origin + '/index.html', { waitUntil: 'networkidle' });
   await loadFasta(p, dotAlignFasta());

@@ -4602,6 +4602,13 @@ body.name-resizing { user-select: none; }
 #dotPlotDialog.dot-docked > *:not(.win-titlebar) { display: none !important; }
 #dotPlotDialog.dot-docked .win-titlebar { margin: 0; cursor: default !important; }
 #dotPlotDialog.dot-docked #dotPlotMaxBtn { display: none; }
+/* one line however long the names (owner 2026-11-18: the title wrapped to four lines in Times and pushed the buttons out);
+   the whole title is the bar's tooltip */
+#dotPlotDialog.dot-docked .win-titlebar { gap: 6px; flex-wrap: nowrap; }
+#dotPlotDialog.dot-docked #dotPlotTitle { flex: 1 1 auto; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+    font: 600 12px/18px system-ui, "Segoe UI", Arial, sans-serif; }
+#dotPlotDialog.dot-docked .win-btns { flex: 0 0 auto; display: flex; align-items: center; gap: 2px; }
+#dotPlotDialog.dot-docked #dotPlotRangeBtn, #dotPlotDialog.dot-docked .demo-pill { display: none !important; }
 #dotPlotDockClear { font-size: 10px; padding: 1px 5px; margin-right: 4px; }
 .dot-preset-note { font-size: 11px; color: #a55; }
 .dot-edit-bar { display: flex; gap: 10px; align-items: center; padding: 4px 10px; margin: 2px 0; background: #fff3cd; color: #664d03; border: 1px solid #e0c36a; border-radius: 4px; font-size: 12px; }
