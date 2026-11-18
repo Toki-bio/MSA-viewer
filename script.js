@@ -3,7 +3,7 @@
 // RELEASE_VERSION is the release version (package.json, CITATION.cff, git tag
 // v<RELEASE_VERSION>, tests/meta/version.test.js); BUILD_TAG counts every deploy.
 const RELEASE_VERSION = '1.34.1';
-const BUILD_TAG = 'v346';
+const BUILD_TAG = 'v347';
 // Sentinel row index for consensus-line nucleotide selection (not in state.seqs).
 const CONSENSUS_ROW_INDEX = -1;
 const COL_SEL_EDGE = '#4fc3f7';   // the edge line of a run of selected columns (styles.css .col-sel-l / .col-sel-r)
@@ -36390,6 +36390,7 @@ function _dotFitView() {
 function _dotDetectRegions() {
     const S = _dotPlotState;
     S.regions = [];
+    S._pickedRegion = -1;   // the list is rebuilt: its numbers change
     if ((!S.scores && !S.matchMap)) { _dotRenderRegionList(); return; }
     const spin = S.spinMode && !!S.matchMap;
     const w = S.windowSize || 1;
@@ -36503,7 +36504,7 @@ function _dotRenderRegionList() {
         const len = r.aEnd - r.aStart;
         const tip = spin ? `${len} bp stretch; ${r.matched} matching word positions` : `${len} bp stretch; mean window identity ${pct}%`;
         const active = S._shownRegion === i;
-        return `<div class="dot-region${active ? ' dot-region-active' : ''}" style="padding:3px 6px;cursor:pointer;border-bottom:1px solid #eee;"
+        return `<div class="dot-region${active ? ' dot-region-active' : ''}${S._pickedRegion === i ? ' dot-region-picked' : ''}" style="padding:3px 6px;cursor:pointer;border-bottom:1px solid #eee;"
             onmouseenter="if (!this.classList.contains('dot-region-active')) this.style.background='#d0e4ff'"
             onmouseleave="this.style.background=''"
             onclick="_dotGoToRegion(${i})"
@@ -36796,6 +36797,50 @@ function _dotRegionBookmarked(r) {
     return (state.dotBookmarks || []).some(b => b.nameA === S.nameA && b.nameB === nameB && b.revB === revB && b.aStart === g.aStart && b.aEnd === g.aEnd && b.bStart === g.bStart && b.bEnd === g.bEnd);
 }
 // The diagonal run of dots through a cell (what the green line on hover shows), as a region; null off a dot
+// The Top Regions entry a dot of the plot belongs to (owner, 2026-11-18: a stretch clicked in the plot could not be found in
+// the list), or -1. A self-plot lists only the upper half, so a dot below the diagonal is mirrored first. The entry is the one
+// whose chain box holds the dot and whose line (first cell to last) passes nearest it, within the chaining's diagonal drift.
+function _dotRegionAt(row, col) {
+    const S = _dotPlotState;
+    if (!S.regions || !S.regions.length) return -1;
+    const isSelf = S.seqA === S.seqB && S.offA === S.offB && S.rows === S.cols && !_dotPlotRevB();
+    if (isSelf && col < row) [row, col] = [col, row];
+    let best = -1, bestD = Infinity;
+    S.regions.forEach((g, i) => {
+        if (g.cellStartR == null) return;
+        const nr = Math.max(1, g.spanRows), nc = Math.max(1, g.spanCols ?? g.spanRows);
+        if (row < g.cellStartR || row >= g.cellStartR + nr || col < g.cellStartC || col >= g.cellStartC + nc) return;
+        const d = Math.abs(col - (g.cellStartC + (row - g.cellStartR) * nc / nr));
+        if (d < bestD) { bestD = d; best = i; }
+    });
+    return bestD <= 10 ? best : -1;
+}
+// The dot nearest a clicked cell, within about 3 screen pixels (zoomed out, a pixel covers several cells and the clicked cell
+// is often one beside the diagonal), or null
+function _dotSnapToDot(row, col) {
+    const S = _dotPlotState;
+    if (_dotIsDot(row, col)) return { row, col };
+    const rad = Math.min(40, Math.max(1, Math.ceil(3 / (S.zoom || 1))));
+    let best = null, bd = Infinity;
+    for (let r = Math.max(0, row - rad); r <= Math.min(S.rows - 1, row + rad); r++)
+        for (let c = Math.max(0, col - rad); c <= Math.min(S.cols - 1, col + rad); c++) {
+            const d = (r - row) * (r - row) + (c - col) * (c - col);
+            if (d < bd && _dotIsDot(r, c)) { bd = d; best = { row: r, col: c }; }
+        }
+    return best;
+}
+// Mark entry idx (-1: none) in Top Regions and scroll the list, not the page, so that it shows
+function _dotPickRegion(idx) {
+    const S = _dotPlotState;
+    S._pickedRegion = idx;
+    _dotRenderRegionList();
+    if (idx < 0) return;
+    const el = document.querySelectorAll('#dotPlotRegionItems .dot-region')[idx], list = document.getElementById('dotPlotRegionList');
+    if (!el || !list) return;
+    const lr = list.getBoundingClientRect(), er = el.getBoundingClientRect();
+    const head = list.querySelector('.dot-side-head'), top = lr.top + (head ? head.getBoundingClientRect().height : 0);
+    if (er.top < top || er.bottom > lr.bottom) list.scrollTop += er.top - top - Math.max(0, (lr.bottom - top - er.height) / 2);
+}
 function _dotStretchAt(row, col) {
     const S = _dotPlotState;
     if (!_dotIsDot(row, col)) return null;
@@ -36841,6 +36886,8 @@ function _dotStretchMenu(e, r) {
         const fa = `>${_dotFastaName('A', r.aStart, r.aEnd)}\n${S.seqA.slice(r.aStart, r.aEnd)}\n>${_dotFastaName('B', r.bStart, r.bEnd)}\n${S.seqB.slice(r.bStart, r.bEnd)}\n`;
         navigator.clipboard?.writeText(fa).then(() => showMessage('Copied both stretches as FASTA', 2000), () => showMessage('Could not copy (clipboard refused).', 3000));
     });
+    const ri = _dotRegionAt(r.row, r.col);   // last, so the menu's first items keep their places
+    if (ri >= 0) item(`#${ri + 1} in Top Regions (mark it in the list)`, () => _dotPickRegion(ri));
     document.body.appendChild(menu);
     const mr = menu.getBoundingClientRect();
     if (mr.right > innerWidth) menu.style.left = Math.max(0, e.clientX - mr.width) + 'px';
@@ -37032,6 +37079,7 @@ function _dotGoToRegion(idx) {
     const r = S.regions[idx];
     const { vp, vw, vh } = _dotViewport();
     if (!vp) return;
+    _dotPickRegion(idx);
     // Centre the run in the plot area
     const midC = r.cellStartC != null ? r.cellStartC + (r.spanCols ?? r.spanRows) / 2 : r.col + r.length / 2;
     const midR = r.cellStartR != null ? r.cellStartR + r.spanRows / 2 : r.row + r.length / 2;
@@ -37523,7 +37571,8 @@ function _initDotPlotEvents() {
             const S = _dotPlotState;
             if (!S.scores && !S.matchMap) return;
             const cell = _dotEventToCell(e);
-            const r = cell && _dotStretchAt(cell.row, cell.col);
+            const near = cell && _dotSnapToDot(cell.row, cell.col);   // zoomed out, the pixel under the pointer may miss the diagonal by a cell
+            const r = near && _dotStretchAt(near.row, near.col);
             if (!r) return;   // not on a dot: the browser's own menu
             e.preventDefault();
             _dotStretchMenu(e, r);
@@ -37539,7 +37588,10 @@ function _initDotPlotEvents() {
             _dotSetSlide(cell.row, cell.col, { noScroll: true });   // the sliders follow a click (Staden-style)
             _dotDrawOverlay(cell.row, cell.col);
             _dotUpdateHoverInfo(cell.row, cell.col);
-            showMessage(`Pinned: A${_dotShownA(cell.row)} / B${_dotShownB(cell.col)}. Click "Copy Region" to copy FASTA.`, 2500);
+            const near = _dotSnapToDot(cell.row, cell.col);
+            const ri = near ? _dotRegionAt(near.row, near.col) : -1;   // the listed stretch under the click, marked in Top Regions
+            _dotPickRegion(ri);
+            showMessage(`Pinned: A${_dotShownA(cell.row)} / B${_dotShownB(cell.col)}${ri >= 0 ? ` - #${ri + 1} in Top Regions (right-click: show it in the alignment)` : ''}. Click "Copy Region" to copy FASTA.`, 3000);
         });
         overlay.addEventListener('dblclick', (e) => {
             const S = _dotPlotState;

@@ -10897,6 +10897,54 @@ check('Dot plot: the arrow shows the stretch in the alignment (Canvas, Block and
   return { pass: ok, detail: JSON.stringify(out) };
 }));
 
+// owner, 2026-11-18: a stretch clicked in the plot could not be found in the list. Clicking a dot of a listed stretch (upper half, or
+// its mirror below the diagonal of a self-plot) marks that Top Regions entry and scrolls the list to it; the right-click menu names it;
+// a click off every listed stretch clears the mark. The expected entry is the one whose own longest run the clicked dot sits on.
+check('Dot plot: a click on a stretch in the plot marks its Top Regions entry and scrolls the list to it; the right-click menu names it', async (page) => withCanvasBlockPage(page, async (p, origin) => {
+  await p.goto(origin + '/index.html', { waitUntil: 'networkidle' });
+  await loadFasta(p, dotAlignFasta());
+  await dotOpenRow100(p);
+  await p.evaluate(() => { const l = document.getElementById('dotPlotRegionList'); l.style.flex = '0 0 60px'; l.style.height = '60px'; });   // a short list, so the entry must be scrolled to
+  const n = await p.evaluate(() => _dotPlotState.regions.length);
+  const out = {};
+  const clickCell = async (row, col, button = 'left') => {
+    const xy = await p.evaluate(([row, col]) => {
+      const S = _dotPlotState, vp = document.getElementById('dotPlotViewport');
+      vp.scrollLeft = Math.max(0, (col + 0.5) * S.zoom - vp.clientWidth / 2); vp.scrollTop = Math.max(0, (row + 0.5) * S.zoom - vp.clientHeight / 2); _dotRender();
+      const o = document.getElementById('dotPlotOverlay').getBoundingClientRect(), m = _dotCellToScreen(row, col);
+      const x = o.left + m.x, y = o.top + m.y, top = document.elementFromPoint(x, y);
+      return { x, y, dot: _dotIsDot(row, col), at: _dotRegionAt(row, col), frozen: !!S._frozen, el: top ? (top.id || top.className) : null };
+    }, [row, col]);
+    await p.mouse.click(xy.x, xy.y, { button }); await p.waitForTimeout(700);   // every click lands on the centre: wait out the double-click time (a double-click freezes the plot)
+    const after = await p.evaluate(() => ({ pin: [_dotPlotState.pinnedRow, _dotPlotState.pinnedCol], pick: _dotPlotState._pickedRegion, docked: document.getElementById('dotPlotDialog').classList.contains('dot-docked'), modal: getComputedStyle(document.getElementById('dotPlotModal')).display }));
+    (out.clicks = out.clicks || []).push({ row, col, x: Math.round(xy.x), y: Math.round(xy.y), at: xy.at, el: xy.el, after });
+    return xy.dot;
+  };
+  const picked = () => p.evaluate(() => {
+    const items = [...document.querySelectorAll('#dotPlotRegionItems .dot-region')], i = items.findIndex(e => e.classList.contains('dot-region-picked'));
+    const list = document.getElementById('dotPlotRegionList'), lr = list.getBoundingClientRect(), er = i >= 0 ? items[i].getBoundingClientRect() : null;
+    return { i, count: items.filter(e => e.classList.contains('dot-region-picked')).length, visible: !!er && er.top >= lr.top - 1 && er.bottom <= lr.bottom + 1 };
+  });
+  out.cases = []; Object.assign(out, { n, regions: await p.evaluate(() => _dotPlotState.regions.map(g => ({ row: g.row, col: g.col, length: g.length, R: g.cellStartR, C: g.cellStartC, nr: g.spanRows, nc: g.spanCols }))) });
+  for (const k of [n - 1, 0]) {
+    const r = await p.evaluate(k => { const g = _dotPlotState.regions[k]; return { row: g.row + (g.length >> 1), col: g.col + (g.length >> 1) }; }, k);
+    const up = await clickCell(r.row, r.col); const a = await picked();
+    await clickCell(r.col, r.row); const b = await picked();      // the mirror point below the diagonal
+    out.cases.push({ k, up, a, b });
+  }
+  // right-click on the first region's dot: the menu names the entry
+  const r0 = await p.evaluate(() => { const g = _dotPlotState.regions[0]; return { row: g.row + (g.length >> 1), col: g.col + (g.length >> 1) }; });
+  await clickCell(r0.row, r0.col, 'right');
+  out.menu = await p.evaluate(() => [...document.querySelectorAll('.dot-context-menu div')].map(d => d.textContent).join(' | '));
+  await p.evaluate(() => document.querySelectorAll('.dot-context-menu').forEach(m => m.remove()));   // (Escape would close the dot plot window)
+  // a click on an empty cell (no dot) clears the mark
+  const empty = await p.evaluate(() => { const S = _dotPlotState; for (let r = 5; r < S.rows; r++) for (let c = r + 5; c < S.cols; c++) if (!_dotIsDot(r, c)) return { row: r, col: c }; return null; });
+  await clickCell(empty.row, empty.col); out.cleared = await picked();
+  const ok = n >= 2 && out.cases.every(c => c.up && c.a.i === c.k && c.a.count === 1 && c.a.visible && c.b.i === c.k && c.b.visible)
+    && out.menu.includes('#1 in Top Regions') && out.cleared.i === -1;
+  return { pass: ok, detail: JSON.stringify(out) };
+}));
+
 // owner, 2026-11-18 (screenshot): with long names the docked bar's title wrapped to four lines in Times and pushed the buttons out
 check('Dot plot: the docked bar stays one line with long names - title cut with an ellipsis (full name on hover), in the app font, every button inside the bar', async (page) => withCanvasBlockPage(page, async (p, origin) => {
   await p.goto(origin + '/index.html', { waitUntil: 'networkidle' });

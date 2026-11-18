@@ -4205,6 +4205,7 @@ table.stats-mx.heat td:hover { outline: 2px solid #111; outline-offset: -2px; }
    window's backdrop made click-through so the alignment behind it can be used while the window stays */
 .dot-goto { float: right; font-size: 11px; line-height: 15px; padding: 0 5px; margin-left: 4px; cursor: pointer; }
 .dot-region-active { background: #e3f0ff; }
+.dot-region-picked { outline: 2px solid #ff8c00; outline-offset: -2px; }   /* the entry of the stretch clicked in the plot (the marker colour) */
 .dot-mini-btn { font-size: 10px; font-weight: normal; padding: 1px 5px; }
 #dotPlotModal.dot-peek { background: transparent !important; pointer-events: none; }
 #dotPlotModal.dot-peek #dotPlotDialog { pointer-events: auto; }
