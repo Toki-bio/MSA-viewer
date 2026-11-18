@@ -10941,7 +10941,7 @@ check('Dot plot: a click on a stretch in the plot marks its Top Regions entry an
   const empty = await p.evaluate(() => { const S = _dotPlotState; for (let r = 5; r < S.rows; r++) for (let c = r + 5; c < S.cols; c++) if (!_dotIsDot(r, c)) return { row: r, col: c }; return null; });
   await clickCell(empty.row, empty.col); out.cleared = await picked();
   const ok = n >= 2 && out.cases.every(c => c.up && c.a.i === c.k && c.a.count === 1 && c.a.visible && c.b.i === c.k && c.b.visible)
-    && out.menu.includes('#1 in Top Regions') && out.cleared.i === -1;
+    && out.menu.includes('Mark in Top Regions (#1)') && out.cleared.i === -1;
   return { pass: ok, detail: JSON.stringify(out) };
 }));
 

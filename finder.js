@@ -22,7 +22,7 @@
     ['the selected columns', ['Dot-plot of selected columns']],
     ['the selected rows', ['Delete selected', 'Clear selection', 'Replace selected with consensus', 'Add consensus below (selected)', 'Dot-plot (two selected rows)']],
     ['a read in the Reads view', ['Copy read name', 'Copy read sequence', 'Copy left soft clip', 'Copy right soft clip', 'Go to mate', 'Sort by base', 'Group by base']],
-    ['a green stretch in the dot plot', ['Show this stretch in the alignment', 'Add to the collection', 'Copy both stretches as FASTA']]
+    ['a green stretch in the dot plot', ['Show this stretch in the alignment', 'Add to the collection', 'Copy both stretches as FASTA', 'Mark in Top Regions']]
   ];
   var input, panel, list, items = [], shown = [], active = -1, isOpen = false;
 

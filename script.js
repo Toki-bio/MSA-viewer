@@ -3,7 +3,7 @@
 // RELEASE_VERSION is the release version (package.json, CITATION.cff, git tag
 // v<RELEASE_VERSION>, tests/meta/version.test.js); BUILD_TAG counts every deploy.
 const RELEASE_VERSION = '1.34.1';
-const BUILD_TAG = 'v347';
+const BUILD_TAG = 'v348';
 // Sentinel row index for consensus-line nucleotide selection (not in state.seqs).
 const CONSENSUS_ROW_INDEX = -1;
 const COL_SEL_EDGE = '#4fc3f7';   // the edge line of a run of selected columns (styles.css .col-sel-l / .col-sel-r)
@@ -36887,7 +36887,7 @@ function _dotStretchMenu(e, r) {
         navigator.clipboard?.writeText(fa).then(() => showMessage('Copied both stretches as FASTA', 2000), () => showMessage('Could not copy (clipboard refused).', 3000));
     });
     const ri = _dotRegionAt(r.row, r.col);   // last, so the menu's first items keep their places
-    if (ri >= 0) item(`#${ri + 1} in Top Regions (mark it in the list)`, () => _dotPickRegion(ri));
+    if (ri >= 0) item(`Mark in Top Regions (#${ri + 1})`, () => _dotPickRegion(ri));
     document.body.appendChild(menu);
     const mr = menu.getBoundingClientRect();
     if (mr.right > innerWidth) menu.style.left = Math.max(0, e.clientX - mr.width) + 'px';
