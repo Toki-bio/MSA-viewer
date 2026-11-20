@@ -4542,6 +4542,82 @@ check('Canvas mode: wheel scroll copies the frame and draws only the exposed str
   return { pass: bad.length === 0, detail: bad.length ? bad.join('; ') : JSON.stringify(summary) };
 });
 
+// The row menu's "Copy as FASTA/plain text, gapped/ungapped" (v349). With part of a sequence selected
+// (bases in the row, or columns on the ruler), these items still copied the WHOLE rows: the owner
+// selected a part, chose "Copy as plain text ungapped" and got the full sequence (2026-11-20). They
+// must copy the selected part (gapped keeps the gaps, ungapped drops them; FASTA names say the residue
+// range); with nothing selected they copy whole rows as before.
+check('Row menu copy (FASTA/plain, gapped/ungapped) copies only the selected part when bases or columns are selected', async (page) => {
+  await loadFasta(page, '>s1 one\nAC-GTACGTA\n>s2\nACG-TAC-TA\n>s3\nTTTTTTTTTT\n');
+  await setMode(page, 'full');
+  await page.waitForTimeout(300);
+  await page.evaluate(() => { window.__copied = []; navigator.clipboard.writeText = t => { window.__copied.push(t); return Promise.resolve(); }; });
+  const clickItem = async (row, text) => {
+    const nm = page.locator(`.seq-line[data-seq-index="${row}"] .seq-name`).first();
+    await nm.click({ button: 'right' }); await page.waitForTimeout(120);
+    await page.locator('.context-menu div', { hasText: new RegExp('^' + text + '$') }).first().click(); await page.waitForTimeout(120);
+    return page.evaluate(() => window.__copied.pop());
+  };
+  const items = ['Copy as plain text ungapped', 'Copy as plain text gapped', 'Copy as FASTA ungapped', 'Copy as FASTA gapped'];
+  const o = { nucs: {}, cols: {}, none: {} };
+  // bases: columns 1..5 of s1 (C - G T A) and of s2 (C G - T A)
+  await page.evaluate(() => { state.selectedNucs.clear(); state.selectedNucs.set(0, new Set([1, 2, 3, 4, 5])); state.selectedNucs.set(1, new Set([1, 2, 3, 4, 5])); refreshNucleotideSelectionsImmediate(); });
+  for (const t of items) o.nucs[t] = await clickItem(0, t);
+  // columns 2..6 selected on the ruler, rows s1 and s3 selected
+  await page.evaluate(() => { state.selectedNucs.clear(); refreshNucleotideSelectionsImmediate(); state.selectedColumns.clear(); [2, 3, 4, 5, 6].forEach(c => state.selectedColumns.add(c)); state.selectedRows.clear(); state.selectedRows.add(0); state.selectedRows.add(2); updateColumnSelections(); });
+  for (const t of items) o.cols[t] = await clickItem(0, t);
+  // nothing selected: the row, whole
+  await page.evaluate(() => { state.selectedColumns.clear(); state.selectedRows.clear(); updateColumnSelections(); });
+  for (const t of items) o.none[t] = await clickItem(1, t);
+  const want = {
+    nucs: { 'Copy as plain text ungapped': 'CGTA\nCGTA', 'Copy as plain text gapped': 'C-GTA\nCG-TA', 'Copy as FASTA ungapped': '>s1 one:2-5\nCGTA\n>s2:2-5\nCGTA', 'Copy as FASTA gapped': '>s1 one:2-5\nC-GTA\n>s2:2-5\nCG-TA' },
+    cols: { 'Copy as plain text ungapped': 'GTAC\nTTTTT', 'Copy as plain text gapped': '-GTAC\nTTTTT', 'Copy as FASTA ungapped': '>s1 one:3-6\nGTAC\n>s3:3-7\nTTTTT', 'Copy as FASTA gapped': '>s1 one:3-6\n-GTAC\n>s3:3-7\nTTTTT' },
+    none: { 'Copy as plain text ungapped': 'ACGTACTA', 'Copy as plain text gapped': 'ACG-TAC-TA', 'Copy as FASTA ungapped': '>s2\nACGTACTA', 'Copy as FASTA gapped': '>s2\nACG-TAC-TA' },
+  };
+  const bad = [];
+  for (const k of Object.keys(want)) for (const t of items) if (o[k][t] !== want[k][t]) bad.push(`${k}/${t}: got ${JSON.stringify(o[k][t])}, want ${JSON.stringify(want[k][t])}`);
+  return { pass: bad.length === 0, detail: bad.length ? bad.join('; ') : 'all 12 copies as expected' };
+});
+
+// Canvas mode with a BED track (v349). A horizontal wheel step copies the previous frame shifted and
+// draws only the exposed strip, but a feature's label is sticky: it stays at the left edge of the
+// data while its box scrolls. The copy moved the old label with the box, so a long feature (a 4 kb
+// intron in the LPA KIV alignments, 2026-11-20) showed a smear of clipped label copies
+// ("intrcintrcintr...") or no label at all until a full redraw. The track's lines must be redrawn
+// on every horizontal copy; the check asks that the pixels equal a full redraw at the same offset.
+check('Canvas mode: horizontal copy-scroll with a BED track keeps the sticky feature label pixel-identical to a full redraw', async (page) => {
+  await loadSyntheticFasta(page, 30, 3000);
+  await page.evaluate(() => setAnnotation('alignment\t0\t40\tshort_feat\t0\t+\nalignment\t40\t2900\tlong_intron_feature_label\t0\t+\nalignment\t100\t2500\tsecond_lane_long_label\t0\t-\n', 'track.bed'));
+  await setMode(page, 'canvas');
+  await page.waitForTimeout(400);
+  const out = {};
+  for (const sticky of [true, false]) {
+    await page.evaluate((s) => { const el = document.getElementById('stickyNames'); if (el.checked !== s) { el.checked = s; el.dispatchEvent(new Event('change', { bubbles: true })); } }, sticky);
+    await page.waitForTimeout(400);
+    const box = await page.evaluate(() => { const r = document.getElementById('alignmentCanvas').getBoundingClientRect(); return { x: r.left + r.width * 0.6, y: r.top + r.height * 0.6 }; });
+    await page.mouse.move(box.x, box.y);
+    for (const [label, dx] of [['right', 120], ['left', -90]]) {
+      await page.evaluate(() => { _canvasState.stats.full = 0; _canvasState.stats.blit = 0; });
+      for (let i = 0; i < 6; i++) { await page.mouse.wheel(dx, 0); await settleWheel(page); await page.waitForTimeout(40); }
+      await page.waitForTimeout(150);
+      out[`${sticky ? 'sticky' : 'static'}/${label}`] = await page.evaluate(() => {
+        const c = document.getElementById('alignmentCanvas');
+        const fast = c.toDataURL();
+        const st = { blits: _canvasState.stats.blit, track: !!state._annotLayout, ox: _canvasState.offsetX };
+        _canvasState.scheduleDraw();
+        return new Promise(res => requestAnimationFrame(() => requestAnimationFrame(() => res({ ...st, same: c.toDataURL() === fast }))));
+      });
+    }
+  }
+  const bad = [];
+  for (const [k, r] of Object.entries(out)) {
+    if (!r.track) bad.push(`${k}: no annotation track laid out`);
+    if (r.blits < 4) bad.push(`${k}: only ${r.blits} copy frames`);
+    if (!r.same) bad.push(`${k}: track pixels after copy-scrolling differ from a full redraw (stale sticky label)`);
+  }
+  return { pass: bad.length === 0, detail: bad.length ? bad.join('; ') : JSON.stringify(out) };
+});
+
 // Canvas mode draws the consensus row (v245). Before, Canvas showed no consensus at all, which
 // is why it could not be the default view. The row must show the same string the DOM view
 // computes, at the top or the bottom as chosen, and the data rows must still hit-test to the

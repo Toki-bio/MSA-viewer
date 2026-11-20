@@ -3,7 +3,7 @@
 // RELEASE_VERSION is the release version (package.json, CITATION.cff, git tag
 // v<RELEASE_VERSION>, tests/meta/version.test.js); BUILD_TAG counts every deploy.
 const RELEASE_VERSION = '1.34.1';
-const BUILD_TAG = 'v348';
+const BUILD_TAG = 'v349';
 // Sentinel row index for consensus-line nucleotide selection (not in state.seqs).
 const CONSENSUS_ROW_INDEX = -1;
 const COL_SEL_EDGE = '#4fc3f7';   // the edge line of a run of selected columns (styles.css .col-sel-l / .col-sel-r)
@@ -7095,6 +7095,13 @@ function _renderCanvasAlignment(len, conservationData, shadeMode, blackThresh, d
             // holds both name backing and content: redraw it.
             const edge = Math.floor(NAME_W * dpr);
             if (fixed && edge !== fixed) drawClipped(edge, 0, fixed, H);
+            // The BED track's labels are sticky (they stay at the data's left edge while the box scrolls), so a
+            // horizontally copied track holds the old label moved with the box: a smear of clipped label copies,
+            // or no label, until a full redraw (LPA KIV alignments, 2026-11-20). Redraw the track's lines whole.
+            if (dxDev !== 0 && TRACK_H > 0 && !blockLayout) {
+                const t0d = Math.max(0, Math.floor(-oy * dpr)), t1d = Math.min(H, Math.ceil((TRACK_H - oy) * dpr));
+                if (t1d > t0d) drawClipped(fixed, t0d, W, t1d);
+            }
             _canvasState.stats.blit++;
             _canvasState.stats.blitMs.push(performance.now() - t0);
         } else {
@@ -27642,33 +27649,46 @@ function parseMafftOutput(fastaStr) {
     if (current) result.push(current);
     return result;
 }
+// With part of the alignment selected, the row menu's copy items copy that part, not the whole rows
+// (owner 2026-11-20: a selected part copied "as plain text ungapped" gave the full sequence).
+// Selected bases: each row with selected bases, from its first to its last selected column.
+// Selected columns (ruler): the selected rows (or the menu's row), at those columns.
+// A FASTA name gets ":first-last", residue numbers of the ungapped row, as "Copy selected bases" writes them.
 function copySequences(gapped, isFasta, index) {
-    let indices = Array.from(state.selectedRows).sort((a,b)=>a-b);
-    if (indices.length === 0) {
-        indices = [index];
+    let indices, colsOf = null, part = '';
+    const nucRows = [...state.selectedNucs.entries()].filter(([i, s]) => Number.isInteger(i) && i >= 0 && s && s.size && state.seqs[i]);
+    if (nucRows.length) {
+        const span = new Map(nucRows.map(([i, s]) => { const p = [...s]; return [i, [Math.min(...p), Math.max(...p)]]; }));
+        indices = [...span.keys()].sort((a, b) => a - b);
+        colsOf = i => { const [lo, hi] = span.get(i); const c = []; for (let k = lo; k <= hi; k++) c.push(k); return c; };
+        part = 'Selected bases';
+    } else {
+        indices = Array.from(state.selectedRows).sort((a,b)=>a-b);
+        if (indices.length === 0) indices = [index];
+        if (state.selectedColumns.size) {
+            const cols = [...state.selectedColumns].filter(c => Number.isInteger(c) && c >= 0).sort((a, b) => a - b);
+            if (cols.length) { colsOf = () => cols; part = 'Selected columns'; }
+        }
     }
     // rows that exist (the menu's row may have been deleted since it opened)
     indices = indices.filter(i => Number.isInteger(i) && state.seqs[i]);
     if (!indices.length) { showMessage('Nothing to copy: select rows first.', 2500); return; }
-    let text = '';
-    if (isFasta) {
-        text = indices.map(i => {
-            let seq = state.seqs[i].seq;
-            if (!gapped) seq = degapResidues(seq);
-            return `>${state.seqs[i].fullHeader || state.seqs[i].header}\n${seq}`;
-        }).join('\n');
-    } else {
-        text = indices.map(i => {
-            let seq = state.seqs[i].seq;
-            if (!gapped) seq = degapResidues(seq);
-            return seq;
-        }).join('\n');
-    }
+    const pieces = indices.map(i => {
+        const full = state.seqs[i].seq;
+        const name = state.seqs[i].fullHeader || state.seqs[i].header;
+        if (!colsOf) return { name, seq: gapped ? full : degapResidues(full) };
+        const cols = colsOf(i).filter(c => c < full.length);
+        const g = cols.map(c => full[c]).join('');
+        const res = degapResidues(g);
+        const first = cols.length ? degapResidues(full.slice(0, cols[0])).length + 1 : 0;
+        return { name: `${name}:${res.length ? `${first}-${first + res.length - 1}` : 'no residues'}`, seq: gapped ? g : res };
+    });
+    const text = pieces.map(p => isFasta ? `>${p.name}\n${p.seq}` : p.seq).join('\n');
     navigator.clipboard.writeText(text).then(() => {
         const count = indices.length;
         const type = isFasta ? 'FASTA' : 'plain text';
         const gapType = gapped ? 'gapped' : 'ungapped';
-        showMessage(`${count > 1 ? 'Selected sequences' : 'Sequence'} copied as ${type} (${gapType})!`, 2000);
+        showMessage(`${part ? `${part} of ${count} row${count > 1 ? 's' : ''}` : count > 1 ? 'Selected sequences' : 'Sequence'} copied as ${type} (${gapType})!`, 2000);
     }).catch(err => {
         console.error('Copy failed:', err);
         showMessage("Failed to copy.", 5000);
