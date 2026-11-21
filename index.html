@@ -13,7 +13,7 @@
     <meta property="og:image" content="https://toki-bio.github.io/MSA-viewer/img/interface-layout.png">
     <meta property="og:type" content="website">
     <meta property="og:url" content="https://toki-bio.github.io/MSA-viewer/">
-    <link rel="stylesheet" href="styles.css?v=208">
+    <link rel="stylesheet" href="styles.css?v=209">
     <!-- MAFFT WASM alignment (runs locally in browser) -->
     <script src="disttbfast.js"></script>
     <script src="mafft-wasm.js"></script>
@@ -192,8 +192,8 @@
                         </div>
                         <div class="slider-container display-slider-row" id="blockSizeContainer">
                             <span class="slider-label" title="Characters per block in block mode">Block Size</span>
-                            <input type="range" id="blockSizeSlider" class="normal-slider" min="40" max="300" value="200" title="Block size in Block mode (40-300 characters)">
-                            <input type="number" id="blockSizeInput" min="40" max="300" value="200" title="Block size in Block mode (40-300 characters)">
+                            <input type="range" id="blockSizeSlider" class="normal-slider" min="40" max="1000" value="200" title="Block size in Block mode (40-1000 characters)">
+                            <input type="number" id="blockSizeInput" min="40" max="1000" value="200" title="Block size in Block mode (40-1000 characters)">
                             <span id="blockSizeSetNote" style="display:none;font-size:10px;color:#b45309;white-space:nowrap;"></span>
                             <button id="blockSizeScreenBtn" title="Set block size to fit screen width" style="height:20px;font-size:10px;padding:0 5px;white-space:nowrap;">Screen</button>
                         </div>
@@ -819,6 +819,11 @@
                     <input type="radio" name="caseQuick" id="csLower" value="lower"><label for="csLower" title="Show every residue in lower case">aa</label>
                     <input type="radio" name="caseQuick" id="csAsIs" value="asis" checked><label for="csAsIs" title="Residues as they are in the file">Aa</label>
                     <input type="radio" name="caseQuick" id="csUpper" value="upper"><label for="csUpper" title="Show every residue in UPPER CASE">AA</label>
+                </div>
+                <!-- Zoom, always at hand (owner 2026-11-21): the Display menu's slider again, kept in step by setZoom -->
+                <div class="quick-zoom" id="quickZoom">
+                    <input type="range" id="quickZoomSlider" class="normal-slider" min="0" max="100" value="50" aria-label="Zoom" title="Zoom of the alignment, 50-200% (also Ctrl + and Ctrl -)">
+                    <button type="button" id="quickZoomVal" title="Zoom; click to reset to 100%">100%</button>
                 </div>
 
 
@@ -1504,7 +1509,7 @@ B: -</pre>
     <script src="realign-region.js?v=5"></script>
     <script src="genome-fasta.js?v=2"></script>
     <script src="genome-window.js?v=4"></script>
-    <script src="script.js?v=417"></script>
+    <script src="script.js?v=418"></script>
     <script src="genome-view.js?v=6"></script>
     <script src="a11y.js?v=3"></script>
     <script src="tree-draw.js?v=179"></script>

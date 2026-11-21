@@ -749,18 +749,30 @@ check('consensus: IUPAC fallback includes ambiguity codes already in the column'
   return { pass: got === 'R', detail: got };
 });
 
-check('a failed or empty file load does not leave the previous alignment behind for Save', async (page) => {
+check('a failed or empty file load keeps the open alignment under its own name for Save, never under the new name', async (page) => {
   // The error path reset the file name but kept state.seqs, so Save wrote the
   // previous file's sequences under the new name; an empty file gave no message.
+  // Until v350 the answer was to empty the view. Since 2026-11-21 (owner) the open alignment stays as it
+  // was, with its own name, and the message says so: Save then writes first.fa's rows as first.fasta.
+  const st = () => page.evaluate(() => ({ n: state.seqs.length, file: state.currentFilename, msg: document.getElementById('statusMessage')?.textContent || '' }));
+  // nothing open yet: nothing after a failed load
+  await page.setInputFiles('#fileInput', { name: 'reads.fastq', mimeType: 'text/plain', buffer: Buffer.from('@r1\nACGT\n+\nIIII\n') });
+  await page.waitForTimeout(600);
+  const fresh = await st();
   await openText(page, 'first.fa', '>a\nACGT\n>b\nACGA\n');
-  const fastq = await openText(page, 'reads.fastq', '@r1\nACGT\n+\nIIII\n');
-  const afterBad = await page.evaluate(() => state.seqs.length);
-  await openText(page, 'first.fa', '>a\nACGT\n>b\nACGA\n');
+  await page.setInputFiles('#fileInput', { name: 'reads.fastq', mimeType: 'text/plain', buffer: Buffer.from('@r1\nACGT\n+\nIIII\n') });
+  await page.waitForTimeout(600);
+  const afterBad = await st();
   await page.setInputFiles('#fileInput', { name: 'empty.fa', mimeType: 'text/plain', buffer: Buffer.from('') });
   await page.waitForTimeout(500);
-  const empty = await page.evaluate(() => ({ n: state.seqs.length, msg: document.getElementById('statusMessage')?.textContent || '' }));
-  const ok = afterBad === 0 && /FASTQ/i.test(fastq.message) && empty.n === 0 && /empty/i.test(empty.msg);
-  return { pass: ok, detail: JSON.stringify({ afterBad, fastqMsg: fastq.message, empty }) };
+  const empty = await st();
+  const [dl] = await Promise.all([page.waitForEvent('download'), page.click('#saveAlignToolbarButton')]);
+  const saved = dl.suggestedFilename() + ': ' + require('fs').readFileSync(await dl.path(), 'utf8');
+  const ok = fresh.n === 0 && !fresh.file
+    && afterBad.n === 2 && afterBad.file === 'first.fa' && /FASTQ/i.test(afterBad.msg) && /kept/i.test(afterBad.msg)
+    && empty.n === 2 && empty.file === 'first.fa' && /empty/i.test(empty.msg) && /kept/i.test(empty.msg)
+    && saved === 'first.fasta: >a\nACGT\n>b\nACGA';
+  return { pass: ok, detail: JSON.stringify({ fresh, afterBad, empty, saved }) };
 });
 
 check('a binary file is refused, not "loaded successfully"', async (page) => {

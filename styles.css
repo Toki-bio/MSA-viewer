@@ -4745,7 +4745,7 @@ body.name-resizing { user-select: none; }
 /* No room for the bar: a magnifier that widens over its neighbours while in use, so the toolbar keeps its lines.
    The view switch fits the menu line of a 1366 px screen with nothing to spare, so the 22 px the magnifier takes
    come back from padding around that line: it fits exactly where it did before the magnifier. */
-@media (max-width: 1500px) {
+@media (max-width: 1600px) {   /* 1500 until the zoom slider joined the mode row (2026-11-21): at 1536 px the row fits the menu line with the magnifier */
     #finderBox {
         position: relative;
         width: 20px;
@@ -4849,3 +4849,85 @@ button.demo-pill[data-demo]:focus-visible { outline: 2px solid #5b21b6; outline-
 #namePatternsList .np-val { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 140px; }
 #namePatternsList .np-n, #namePatternsList .np-rest { color: #888; }
 #namePatternsList .np-none { color: #888; font-style: italic; }
+
+/* ---- Zoom in the top bar (owner 2026-11-21): a small slider and the percentage beside the view and case
+   switches, in every view; the Display menu's slider again (script.js setZoom keeps the two in step) ---- */
+.quick-zoom {
+    display: inline-flex;
+    align-items: center;
+    gap: 2px;
+    height: 18px;
+    flex: 0 0 auto;
+    align-self: center;
+}
+.quick-zoom input[type="range"].normal-slider {
+    width: 62px;
+    min-width: 62px;
+    margin: 0;
+}
+#quickZoomVal {
+    width: 32px;
+    height: 16px;
+    margin: 0;
+    padding: 0;
+    border: none;
+    background: none;
+    font-size: 10px;
+    line-height: 16px;
+    color: #555;
+    text-align: right;
+    font-variant-numeric: tabular-nums;
+    cursor: pointer;
+}
+#quickZoomVal:hover { background: #e8f0fe; border-radius: 2px; }
+#quickZoomVal.not-default { font-weight: bold; color: #1a73e8; }
+
+/* ---- Compact menus (owner 2026-11-21: "a bit smaller, compact, without changing them principally") ----
+   The same controls in the same places; less air. The bar: narrower header and switch padding, so the mode
+   row (view, case, zoom) keeps to the menu line on more screens. The dropdowns: 10 px instead of 15 px
+   around, rows about a sixth lower, one text size (12 px) where 13 px had crept in. */
+#controls .menu-section .section-header { padding: 1px 2px; }
+.quick-mode-switch label { padding: 0 5px; }
+.mode-row { gap: 5px; }
+.quick-zoom { margin-right: 3px; }
+
+/* Same specificity as the rules they replace (.control-group, .panel-detach-handle), so every menu with
+   padding or a handle of its own (#shade-controls, #actions-controls, #shortcuts-controls ...) keeps it */
+.control-group { padding: 10px; }
+.control-group:has(> .panel-detach-handle) { padding-top: 0; }
+.panel-detach-handle { margin: 0 -10px 6px -10px; padding: 3px 8px; }
+.control-group input[type="number"] { height: 20px !important; min-height: 20px !important; line-height: 18px; }
+.control-group select { height: 20px; padding-top: 0; padding-bottom: 0; }
+.control-group .slider-label { font-size: 12px; }
+.control-group .shade-row,
+.control-group .search-row { min-height: 24px; }
+.al-btngrid { gap: 4px; margin-bottom: 6px; }
+.al-btngrid button { height: 22px; }
+.al-settings { gap: 3px 10px; }
+#actions-controls .actions-menu-body { padding: 6px 8px 4px; gap: 5px; }
+#actions-controls .action-section { padding: 5px 8px 6px; }
+#actions-controls .action-section-label { margin: 0 0 5px; padding: 1px 0 1px 8px; }
+#actions-controls .button-group { gap: 4px; }
+#actions-controls .button-group button { padding: 2px 6px; }
+
+/* The finder's magnifier is a drawn (SVG) icon. With the zoom slider in the mode row the finder sits right of
+   x = 1024 on a 1400 px window, in the same raster tile as the file panel: every time that panel was laid out
+   again (each redraw of the alignment) Chrome drew the tile afresh and anti-aliased the magnifier's handle a
+   shade differently, 8 x 2 pixels flipping between two states (check "Highlight diffs: in-place update matches
+   a full redraw exactly"; measured 2026-11-21: same geometry, pixels alternating per _fitHeaderInfoPanel call).
+   A layer of its own keeps the finder's pixels as first drawn. */
+#finderBox { will-change: transform; }
+
+/* 1366 px: the mode row with the zoom slider was a few pixels short of the menu line, so the view switch alone
+   decided whether the toolbar had a second line (check "The top-bar view switch ... adds no toolbar height
+   (1366 px)"). Up to 1600 px the line gives up a little more air, and the whole row fits it. */
+@media (max-width: 1600px) {
+    .standard-menu-group { gap: 2px; }
+    .mode-row { gap: 4px; }
+    .quick-mode-switch label { padding: 0 4px; }
+    .quick-zoom input[type="range"].normal-slider { width: 50px; min-width: 50px; }
+    #quickZoomVal { width: 30px; }
+    .quick-zoom { margin-right: 2px; }
+    #saveAlignToolbarButton { margin-right: 3px !important; }
+    #degapColumnsButton { margin-right: 4px !important; }
+}

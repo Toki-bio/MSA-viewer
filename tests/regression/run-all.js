@@ -17827,38 +17827,71 @@ check('Audit M5: Save FASTA and a snapshot keep row names that are not the first
 // with an empty "fasta" the page threw, the status stayed at "Scanning alignment..." and the OLD rows
 // stayed under the NEW file name (Save would have written them as that file); with unreadable "fasta"
 // the error was shown but the snapshot's view was still applied to no rows and threw; a file with
-// names and no residues loaded "successfully" as 0 columns. All three are now a failed load like any
-// other: a message, no rows, no file name, no page error.
-check('Audit M6: a snapshot or FASTA file without residues is a failed load (message, no rows, no file name), not the old rows under the new name', async (page) => {
+// names and no residues loaded "successfully" as 0 columns.
+// Until v350 a failed load then emptied the view (no rows, no file name). The owner decided on 2026-11-21
+// (save audit: opening a damaged snapshot threw away the alignment being worked on) that the alignment
+// already open STAYS, whole: its rows, its own file name, its paste-box text, its undo history, and the
+// message says the file could not be opened and that the alignment shown is kept. What must never come
+// back is the old rows under the NEW name. With nothing open, a failed load still leaves no rows, no file
+// name and the error in the view.
+check('Audit M6: a file that cannot be loaded leaves the open alignment as it was (rows, its own name, undo), says so, and never puts the old rows under the new name', async (page) => {
   const errors = [];
   page.on('pageerror', e => errors.push(e.message));
+  page.on('dialog', d => d.accept().catch(() => {}));   // "Delete 1 sequence(s)?"
   const open = async (name, text) => { await page.setInputFiles('#fileInput', { name, mimeType: 'text/plain', buffer: Buffer.from(text) }); await page.waitForTimeout(1100); };
-  const st = () => page.evaluate(() => ({ n: state.seqs.length, file: state.currentFilename, msg: document.getElementById('statusMessage').textContent, shown: document.getElementById('alignmentContainer').textContent.slice(0, 200) }));
+  const st = () => page.evaluate(() => ({ n: state.seqs.length, file: state.currentFilename, msg: document.getElementById('statusMessage').textContent, shown: document.getElementById('alignmentContainer').textContent.slice(0, 200),
+    fasta: state.seqs.length ? _alignmentFastaText() : '', box: (typeof _bigInputText === 'string' ? _bigInputText : document.getElementById('fastaInput').value).slice(0, 12), undo: state.deletedHistory.length,
+    rowsDrawn: document.querySelectorAll('#alignmentContainer canvas, #alignmentContainer .seq-name').length }));
   const bad = [];
   const cases = [
     ['snap.json', '{"schema":1,"title":"T","fasta":""}'],
     ['snap.json', '{"schema":1,"title":"T","fasta":"hello world this is not fasta"}'],
     ['snap.json', '{"schema":1,"title":"T","fasta":">a\\n>b\\n"}'],
+    ['snap.json', '{"schema":1,"sourceTitle":"T","fasta":">a\\nAC'],   // cut short
+    ['other.json', '{"version":1,"order":["a","b"]}'],
     ['names.fa', '>a\n>b\n'],
+    ['reads.fastq', '@r1\nACGT\n+\nIIII\n'],
+    ['bin.dat', 'ab\u0000\u0001\u0002\u0003\u0000\u0000>a\n'],
+    ['empty.fa', ''],
   ];
+  // nothing open: a failed load leaves nothing, and says why in the view
+  for (const [name, body] of cases.slice(0, 2).concat([cases[6]])) {
+    errors.length = 0;
+    await open(name, body);
+    const r = await st();
+    const tag = `nothing open, ${name} ${body.slice(0, 30)}`;
+    if (r.n !== 0 || r.file) bad.push(`${tag}: ${r.n} rows under "${r.file}"`);
+    if (!/error|not an alignment|no alignment/i.test(r.shown)) bad.push(`${tag}: no error in the view ("${r.shown.slice(0, 60)}")`);
+    if (errors.length) bad.push(`${tag}: page error ${errors[0]}`);
+  }
   for (const [name, body] of cases) {
     errors.length = 0;
-    await open('old.fa', '>o1\nACGTACGT\n>o2\nACGTACGA\n>o3\nACGTACGA\n');
+    await open('old.fa', '>o1\nACGTACGT\n>o2\nACGTACGA\n>o3\nACGTACGA\n>o4\nACGTACGC\n');
+    // an edit, so there is work to lose
+    await page.evaluate(() => { state.selectedRows = new Set([3]); deleteSelected(); }); await page.waitForTimeout(300);
     const before = await st();
-    if (before.n !== 3 || before.file !== 'old.fa') return { pass: false, detail: 'setup: ' + JSON.stringify(before) };
+    if (before.n !== 3 || before.file !== 'old.fa' || before.undo !== 1) return { pass: false, detail: 'setup: ' + JSON.stringify(before) };
     await open(name, body);
     const r = await st();
     const tag = `${name} ${body.slice(0, 44)}`;
-    if (r.n !== 0 || r.file) bad.push(`${tag}: ${r.n} rows under "${r.file}"`);
-    if (!/error|no (valid )?sequence|no alignment|no residues/i.test(r.msg + ' ' + r.shown)) bad.push(`${tag}: no error shown (status "${r.msg}", view "${r.shown.slice(0, 60)}")`);
+    if (r.n !== 3 || r.fasta !== before.fasta) bad.push(`${tag}: the open alignment changed (${r.n} rows)`);
+    if (r.file !== 'old.fa') bad.push(`${tag}: the rows are now under "${r.file}"`);
+    if (r.box !== before.box) bad.push(`${tag}: the paste box holds "${r.box}"`);
+    if (r.undo !== 1) bad.push(`${tag}: ${r.undo} undo steps`);
+    if (!r.rowsDrawn || /error/i.test(r.shown)) bad.push(`${tag}: the alignment is not drawn any more ("${r.shown.slice(0, 50)}")`);
+    if (!/kept/i.test(r.msg) || !/error|empty|not an alignment|could not/i.test(r.msg)) bad.push(`${tag}: status "${r.msg}"`);
     if (/Scanning|loaded/i.test(r.msg)) bad.push(`${tag}: status says "${r.msg}"`);
     if (errors.length) bad.push(`${tag}: page error ${errors[0]}`);
+    // Undo still works on the kept alignment
+    await page.evaluate(() => undoDelete(true)); await page.waitForTimeout(200);
+    const u = await st();
+    if (u.n !== 4) bad.push(`${tag}: Undo afterwards gave ${u.n} rows`);
   }
   // a good file still loads afterwards
   await open('good.fa', '>g1\nACGT\n>g2\nACGA\n');
   const g = await st();
   if (g.n !== 2 || g.file !== 'good.fa') bad.push('a good file after the failures: ' + JSON.stringify(g));
-  return { pass: !bad.length, detail: bad.length ? bad.join(' | ').slice(0, 900) : '4 files without residues: failed load each time; a good file loads after' };
+  return { pass: !bad.length, detail: bad.length ? bad.join(' | ').slice(0, 900) : '9 files that cannot be loaded: the open alignment stayed each time; a good file loads after' };
 });
 
 // Audit 2026-11-10, U11. What used to go wrong: the Keys menu and the Info window listed Ctrl+M as
@@ -19176,26 +19209,192 @@ check('Save audit S3: groups (members, names, colours, shown/hidden, SNP letters
 });
 
 // S4: a snapshot .json cut short (a download that did not finish) or another program's .json was read as
-// FASTA and answered "No valid sequences found", which says nothing about the file. It is still a failed
-// load (no rows, no file name: Audit M6), and the message now names the cause.
+// FASTA and answered "No valid sequences found", which says nothing about the file. The message now names
+// the cause; the alignment that was open stays (Audit M6, as decided 2026-11-21).
 check('Save audit S4: a cut-short snapshot .json or a foreign .json says what is wrong with the file', async (page) => {
   await loadFasta(page, variedFasta(5, 60, 3));
   const good = await page.evaluate(() => JSON.stringify(_buildSnapshotPayload(), null, 2));
   const open = async (name, text) => { await page.setInputFiles('#fileInput', { name, mimeType: 'application/json', buffer: Buffer.from(text) }); await page.waitForTimeout(1100); };
-  const st = () => page.evaluate(() => ({ n: state.seqs.length, file: state.currentFilename, shown: document.getElementById('alignmentContainer').textContent.slice(0, 300) }));
+  const st = () => page.evaluate(() => ({ n: state.seqs.length, msg: document.getElementById('statusMessage').textContent }));
   const bad = [];
   await open('cut.json', good.slice(0, Math.floor(good.length / 2)));
   let r = await st();
-  if (r.n !== 0 || r.file) bad.push(`cut short: ${r.n} rows under "${r.file}"`);
-  if (!/snapshot/i.test(r.shown) || !/incomplete|damaged|cut short/i.test(r.shown)) bad.push('cut short: shown "' + r.shown.slice(0, 120) + '"');
+  if (r.n !== 5) bad.push(`cut short: ${r.n} rows`);
+  if (!/snapshot/i.test(r.msg) || !/incomplete|damaged|cut short/i.test(r.msg)) bad.push('cut short: status "' + r.msg.slice(0, 120) + '"');
   await open('order.json', JSON.stringify({ version: 1, order: ['a', 'b'] }));
   r = await st();
-  if (r.n !== 0 || r.file) bad.push(`foreign: ${r.n} rows under "${r.file}"`);
-  if (!/JSON/.test(r.shown) || !/not a ViewAlign snapshot/i.test(r.shown)) bad.push('foreign: shown "' + r.shown.slice(0, 120) + '"');
+  if (r.n !== 5) bad.push(`foreign: ${r.n} rows`);
+  if (!/JSON/.test(r.msg) || !/not a ViewAlign snapshot/i.test(r.msg)) bad.push('foreign: status "' + r.msg.slice(0, 120) + '"');
   await open('good.json', good);
   r = await st();
   if (r.n !== 5) bad.push('the whole file after the failures: ' + JSON.stringify(r).slice(0, 120));
   return { pass: bad.length === 0, detail: bad.join(' | ') };
+});
+
+// S5: a snapshot .html page saved before v350 carries the alignment as "?snapshot=..." in its link; double-clicked,
+// it sends that to the server, and toki-bio.github.io answers "URI Too Long" (owner, 2026-11-21: "when i tried
+// opening saved html snapshot i get url too long error in chrome"). The file cannot be mended where it is, but
+// it holds the whole snapshot: opened in ViewAlign like any file (Input menu or drag and drop) it now loads.
+// Opened that way it used to be read as FASTA: "No valid sequences found".
+check('Save audit S5: a snapshot .html page (old ?snapshot= link or new #snapshot= link) opened as a file loads its snapshot; another .html says what it is', async (page) => {
+  await loadFasta(page, variedFasta(30, 400, 6));
+  await page.evaluate(async () => { state.selectedColumns = new Set([5, 6, 7]); await hideSelectedColumns(); });
+  const want = await page.evaluate(() => ({ fasta: _alignmentFastaText(), hidden: JSON.stringify(state.hiddenCols) }));
+  const s = await _snapCreate(page);
+  if (!s.html || !s.link || !/#snapshot=/.test(s.link)) return { pass: false, detail: 'setup: ' + s.files.map(f => f.name).join(', ') };
+  const oldHtml = s.html.text.split('#snapshot=').join('?snapshot=');   // as v349 wrote it
+  const open = async (name, text) => { await page.setInputFiles('#fileInput', { name, mimeType: 'text/html', buffer: Buffer.from(text) }); await page.waitForTimeout(1500); };
+  const st = () => page.evaluate(() => ({ n: state.seqs.length, fasta: state.seqs.length ? _alignmentFastaText() : '', hidden: JSON.stringify(state.hiddenCols), file: state.currentFilename, msg: document.getElementById('statusMessage').textContent }));
+  const bad = [];
+  for (const [label, html] of [['old ?snapshot= page', oldHtml], ['new #snapshot= page', s.html.text]]) {
+    await loadFasta(page, variedFasta(3, 20, 2));
+    await open('saved_snapshot.html', html);
+    const r = await st();
+    if (r.fasta !== want.fasta) bad.push(`${label}: ${r.n} rows, not the snapshot's (status "${r.msg.slice(0, 80)}")`);
+    else if (r.hidden !== want.hidden) bad.push(`${label}: hidden columns ${r.hidden}, saved ${want.hidden}`);
+  }
+  // any other web page: a failed load that says what the file is; the open alignment stays
+  const before = await st();
+  await open('page.html', '<!DOCTYPE html>\n<html><head><title>x</title></head><body><p>hello</p></body></html>');
+  const o = await st();
+  if (o.fasta !== before.fasta) bad.push('another .html replaced the alignment');
+  if (!/web page|HTML/i.test(o.msg) || !/kept/i.test(o.msg)) bad.push('another .html: status "' + o.msg.slice(0, 120) + '"');
+  // a page whose link is damaged
+  await open('broken.html', s.html.text.replace(/snapshot=[A-Za-z0-9%]{40}/, 'snapshot=%%%'));
+  const b = await st();
+  if (b.fasta !== before.fasta || !/kept/i.test(b.msg)) bad.push('a damaged snapshot page: ' + b.n + ' rows, status "' + b.msg.slice(0, 100) + '"');
+  return { pass: !bad.length, detail: bad.join(' | ').slice(0, 900) };
+});
+
+// S6: a file dropped on the page was taken only if its name ended in .fasta .fa .msf .aln .clustal or .txt
+// ("Please upload a valid alignment file"): a snapshot .json or .html, NEXUS, PHYLIP, Stockholm, GenBank and
+// gzipped files could be opened through the Input menu but not dropped, and the page's handler ran before
+// the drop area's own, so the drop area refused them too. A dropped file now takes the path of the file
+// chooser (reads files, gzip, every format; a file that cannot be loaded says why and the open alignment stays).
+check('Save audit S6: a snapshot .json or .html, a NEXUS and a gzipped FASTA dropped on the page load like files opened from the Input menu', async (page) => {
+  await loadFasta(page, variedFasta(6, 80, 9));
+  const want = await page.evaluate(() => _alignmentFastaText());
+  const s = await _snapCreate(page);
+  if (!s.json || !s.html) return { pass: false, detail: 'setup: no snapshot files' };
+  const drop = async (name, bytes, target) => {
+    await loadFasta(page, variedFasta(3, 20, 2));
+    await page.evaluate(({ name, b64, target }) => {
+      const bin = atob(b64), u8 = new Uint8Array(bin.length); for (let i = 0; i < bin.length; i++) u8[i] = bin.charCodeAt(i);
+      const dt = new DataTransfer(); dt.items.add(new File([u8], name));
+      document.querySelector(target).dispatchEvent(new DragEvent('drop', { bubbles: true, cancelable: true, dataTransfer: dt }));
+    }, { name, b64: Buffer.from(bytes).toString('base64'), target });
+    await page.waitForTimeout(1600);
+    return page.evaluate(() => ({ fasta: _alignmentFastaText(), rows: state.seqs.map(q => q.header + ':' + q.seq).join(','), msg: document.getElementById('statusMessage').textContent }));
+  };
+  const bad = [];
+  for (const target of ['#alignmentContainer', '#dropZone']) {
+    let r = await drop(s.json.name, s.json.text, target);
+    if (r.fasta !== want) bad.push(`${target} .json: "${r.msg.slice(0, 70)}"`);
+    r = await drop('old_snapshot.html', s.html.text.split('#snapshot=').join('?snapshot='), target);
+    if (r.fasta !== want) bad.push(`${target} .html: "${r.msg.slice(0, 70)}"`);
+    r = await drop('m.nex', '#NEXUS\nBEGIN DATA;\nDIMENSIONS NTAX=2 NCHAR=6;\nFORMAT DATATYPE=DNA GAP=-;\nMATRIX\nt1 ACGTAC\nt2 ACG-AC\n;\nEND;\n', target);
+    if (r.rows !== 't1:ACGTAC,t2:ACG-AC') bad.push(`${target} .nex: ${r.rows.slice(0, 60)} "${r.msg.slice(0, 60)}"`);
+    r = await drop('z.fa.gz', require('zlib').gzipSync(Buffer.from('>g1\nACGT\n>g2\nACGA\n')), target);
+    if (r.rows !== 'g1:ACGT,g2:ACGA') bad.push(`${target} .fa.gz: ${r.rows.slice(0, 60)} "${r.msg.slice(0, 60)}"`);
+    r = await drop('plain.fa', '>p1\nAAAA\n>p2\nAAAT\n', target);
+    if (r.rows !== 'p1:AAAA,p2:AAAT') bad.push(`${target} .fa: ${r.rows.slice(0, 60)}`);
+  }
+  return { pass: !bad.length, detail: bad.join(' | ').slice(0, 900) };
+});
+
+// Wide screens (owner, 2026-11-21: "on some widescreen monitors the alignment takes only part of the screen
+// with the right side not used"): the Block view's bands were capped at 300 columns wherever they came
+// from (a new file's width, the Screen button, the slider, the box). A 3440-pixel window holds about 400
+// columns at the default zoom and far more zoomed out, so the bands stopped at three quarters of the
+// window. The cap is BLOCK_SIZE_MAX (1000) now: a new file and Screen fill the window.
+check('Wide screen: Block bands fill a 3440-pixel window (a new file, the Screen button, zoomed out), not 300 columns', async (page) => {
+  const origin = new URL(page.url()).origin;
+  const b = await launch({ canvasBlock: true });
+  try {
+    const p = await b.newPage({ viewport: { width: 3440, height: 1440 } });
+    p.setDefaultTimeout(30000);
+    await p.goto(origin + '/index.html?view=block', { waitUntil: 'networkidle' });
+    await loadFasta(p, variedFasta(12, 2400, 4));
+    await p.waitForTimeout(700);
+    const read = () => p.evaluate(() => {
+      const L = _canvasState.layout, m = _canvasState.metrics, cv = _canvasState.canvas;
+      const right = L ? m.nameW + L.bandCols * m.charW + (_canvasState.badgeW || 0) : 0;
+      return { kind: L && L.kind, bandCols: L && L.bandCols, fit: _canvasState.blockFitCols, gap: Math.round(parseFloat(cv.style.width) - right), charW: m.charW,
+        slider: +document.getElementById('blockSizeSlider').value, sliderMax: +document.getElementById('blockSizeSlider').max, box: +document.getElementById('blockSizeInput').value };
+    });
+    const bad = [];
+    const fresh = await read();
+    // the band ends within three letters and the badge margin of the canvas's right edge
+    const full = r => r.kind === 'block' && r.bandCols === r.fit && r.bandCols > 300 && r.gap >= 0 && r.gap < 3 * r.charW + 24;
+    if (!full(fresh)) bad.push('a new file: ' + JSON.stringify(fresh));
+    if (fresh.slider !== fresh.bandCols || fresh.box !== fresh.bandCols || fresh.sliderMax < fresh.bandCols) bad.push('slider/box do not show the width drawn: ' + JSON.stringify(fresh));
+    // a narrower width set by hand, then Screen
+    await p.evaluate(() => { const s = document.getElementById('blockSizeSlider'); s.value = '120'; s.dispatchEvent(new Event('input', { bubbles: true })); });
+    await p.waitForTimeout(600);
+    const at120 = await read();
+    if (at120.bandCols !== 120) bad.push('120 set: ' + JSON.stringify(at120));
+    await p.evaluate(() => document.getElementById('blockSizeScreenBtn').click());
+    await p.waitForTimeout(700);
+    const screen = await read();
+    if (!full(screen)) bad.push('Screen: ' + JSON.stringify(screen));
+    // zoomed out, more columns fit: Screen fills the window again
+    await p.evaluate(() => { for (let i = 0; i < 3; i++) adjustZoom(-10); });
+    await p.waitForTimeout(700);
+    await p.evaluate(() => document.getElementById('blockSizeScreenBtn').click());
+    await p.waitForTimeout(700);
+    const zoomed = await read();
+    if (!full(zoomed) || zoomed.bandCols <= screen.bandCols) bad.push('zoomed out + Screen: ' + JSON.stringify(zoomed));
+    // typing a width above the old limit is taken
+    await p.evaluate(() => { const i = document.getElementById('blockSizeInput'); i.value = '350'; i.dispatchEvent(new Event('input', { bubbles: true })); i.dispatchEvent(new Event('change', { bubbles: true })); });
+    await p.waitForTimeout(700);
+    const typed = await read();
+    if (typed.bandCols !== 350) bad.push('350 typed: ' + JSON.stringify(typed));
+    return { pass: !bad.length, detail: bad.join(' | ').slice(0, 900) || JSON.stringify({ fresh: fresh.bandCols, screen: screen.bandCols, zoomed: zoomed.bandCols }) };
+  } finally { await b.close().catch(() => {}); }
+});
+
+// Zoom in the top bar (owner, 2026-11-21): zoom was only in the Display menu (and Ctrl +/-), two clicks away.
+// A small slider with the percentage now sits beside the view and case switches, in every view. It is the
+// Display menu's slider again: either one moves the other, the keys move both, the percentage resets to 100%.
+check('Top bar: the small zoom slider is always there, zooms the alignment, and stays in step with the Display slider and Ctrl +/-', async (page) => {
+  const bad = [];
+  const st = () => page.evaluate(() => { const q = document.getElementById('quickZoomSlider'), m = document.getElementById('zoomSlider'), b = q && q.getBoundingClientRect();
+    return { there: !!q && b.width > 30 && b.height > 0 && b.top >= 0 && b.bottom <= document.getElementById('controls').getBoundingClientRect().bottom + 1,
+      q: q && q.value, m: m.value, label: document.getElementById('quickZoomVal')?.textContent, big: document.getElementById('zoomVal').textContent, font: parseFloat(alignmentContainer.style.fontSize) || 13 }; });
+  const empty = await st();
+  if (!empty.there) bad.push('not in the bar before a file is loaded: ' + JSON.stringify(empty));
+  await loadFasta(page, variedFasta(8, 200, 3));
+  for (const mode of ['canvas', 'block', 'full']) {
+    await setMode(page, mode);
+    const s = await st();
+    if (!s.there || s.q !== s.m || s.label !== s.big) bad.push(`${mode}: ${JSON.stringify(s)}`);
+  }
+  await setMode(page, 'canvas');
+  // a real drag on the small slider: to its right end
+  const box = await page.locator('#quickZoomSlider').boundingBox();
+  await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+  await page.mouse.down(); await page.mouse.move(box.x + box.width - 1, box.y + box.height / 2, { steps: 6 }); await page.mouse.up();
+  await page.waitForTimeout(500);
+  const max = await st();
+  if (max.label !== '200%' || max.big !== '200%' || max.q !== max.m || max.font !== 26) bad.push('dragged to the right end: ' + JSON.stringify(max));
+  // the Display menu's slider moves the small one
+  await page.evaluate(() => { const m = document.getElementById('zoomSlider'); m.value = '0'; m.dispatchEvent(new Event('input', { bubbles: true })); });
+  await page.waitForTimeout(500);
+  const min = await st();
+  if (min.label !== '50%' || min.q !== '0') bad.push('Display slider at its left end: ' + JSON.stringify(min));
+  // Ctrl + twice, then a click on the percentage resets
+  await page.mouse.click(700, 500);
+  await page.keyboard.press('Control+='); await page.keyboard.press('Control+='); await page.waitForTimeout(400);
+  const keys = await st();
+  if (keys.label !== '70%' || keys.q !== keys.m) bad.push('Ctrl + twice: ' + JSON.stringify(keys));
+  await page.click('#quickZoomVal'); await page.waitForTimeout(400);
+  const reset = await st();
+  if (reset.label !== '100%' || reset.font !== 13 || reset.q !== reset.m) bad.push('click on the percentage: ' + JSON.stringify(reset));
+  // a snapshot's zoom shows on the small slider too
+  await page.evaluate(() => _applySnapshotView({ zoom: '100', zoomFormat: 'logSlider' })); await page.waitForTimeout(500);   // the slider's right end
+  const snap = await st();
+  if (snap.label !== '200%' || snap.q !== '100' || snap.q !== snap.m) bad.push('a snapshot at 200%: ' + JSON.stringify(snap));
+  return { pass: !bad.length, detail: bad.join(' | ').slice(0, 900) };
 });
 
 async function main() {

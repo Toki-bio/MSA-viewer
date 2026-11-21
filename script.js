@@ -3,7 +3,7 @@
 // RELEASE_VERSION is the release version (package.json, CITATION.cff, git tag
 // v<RELEASE_VERSION>, tests/meta/version.test.js); BUILD_TAG counts every deploy.
 const RELEASE_VERSION = '1.34.1';
-const BUILD_TAG = 'v350';
+const BUILD_TAG = 'v351';
 // Sentinel row index for consensus-line nucleotide selection (not in state.seqs).
 const CONSENSUS_ROW_INDEX = -1;
 const COL_SEL_EDGE = '#4fc3f7';   // the edge line of a run of selected columns (styles.css .col-sel-l / .col-sel-r)
@@ -15086,6 +15086,14 @@ function setZoom(percent) {
         updateSliderBackground(slider);
     }
     _placeZoom100Tick();
+    // the small slider in the top bar shows the same zoom
+    const quick = el('quickZoomSlider'), quickVal = el('quickZoomVal');
+    if (quick) {
+        const v = String(_zoomToSlider(percent));
+        if (quick.value !== v) quick.value = v;
+        updateSliderBackground(quick);
+    }
+    if (quickVal) { quickVal.textContent = percent + '%'; quickVal.classList.toggle('not-default', percent !== 100); }
     // Canvas measures/bakes glyphs at render time. Large Full/Block views also
     // need a rebuild: their row/column spacers and viewport windows are based
     // on cached pixel measurements that become stale when the font size changes.
@@ -15513,6 +15521,25 @@ function _autoLoadSucceeded(seqsBefore) {
     return state.seqs !== seqsBefore && Array.isArray(state.seqs) && state.seqs.length > 0;
 }
 
+// A file or text that cannot be loaded. With an alignment open and untouched by the load, that alignment
+// stays as it was: its rows, its own file name and paste-box text, its undo history, and the message says
+// so (owner, 2026-11-21: a damaged snapshot threw away the alignment being worked on; before, audit M6, a
+// failed load emptied the view). The old rows never end up under the new file's name. With nothing open,
+// or a genome, or a load that had already begun to replace the alignment, the view is emptied and shows html.
+let _loadBegunReplacing = false;
+function _failLoad(html, msg, ms = 7000) {
+    statusMessage.style.display = 'none';
+    if (!_genome && !_loadBegunReplacing && state.seqs && state.seqs.length && _loadedIdentity) {
+        _restoreLoadedIdentity();
+        const name = state.currentFilename ? ` (${state.currentFilename})` : '';
+        showMessage(`${msg.replace(/\s+$/, '')} The alignment shown${name} is kept.`, Math.max(ms, 7000));
+        return;
+    }
+    _clearFailedLoad();
+    alignmentContainer.innerHTML = html;
+    showMessage(msg, ms);
+}
+
 function _clearFailedLoad() {
     if (_genome) _genomeClose();   // its message goes where the genome's canvas was: no genome left half open (GLM audit #35)
     state.seqs = [];
@@ -15526,6 +15553,7 @@ function _clearFailedLoad() {
 }
 
 async function parseAndRender(isFromDrop = false) {
+    _loadBegunReplacing = false;
     showMessage("Scanning alignment...", 0);
     _proteinSchemeRemapWarned = false;
     _parseNotice = '';
@@ -15544,26 +15572,33 @@ async function parseAndRender(isFromDrop = false) {
             showMessage(isFromDrop ? 'The file is empty (the genome stays open).' : 'The paste box is empty: paste FASTA or MSF first (the genome stays open).', 4000);
             return;
         }
-        alignmentContainer.innerHTML = '<div>Paste MSF or FASTA into the box and click Load, or drop a file. New here? <a href="examples.html" target="_blank" rel="noopener">See worked examples</a>.</div>';
+        const prompt = '<div>Paste MSF or FASTA into the box and click Load, or drop a file. New here? <a href="examples.html" target="_blank" rel="noopener">See worked examples</a>.</div>';
+        if (isFromDrop) { _failLoad(prompt, 'Error: the file is empty.', 4000); return; }
+        alignmentContainer.innerHTML = prompt;
         statusMessage.style.display = 'none';
-        if (isFromDrop) {
-            _clearFailedLoad();
-            showMessage('The file is empty.', 4000);
-        }
         return;
     }
     // NUL bytes or mostly control characters: an image, archive or other binary file
     const _ctrl = (inputText.slice(0, 4096).match(/[\x00-\x08\x0E-\x1F]/g) || []).length;
     if (inputText.includes('\x00') || _ctrl > 0.1 * Math.min(4096, inputText.length)) {
-        _clearFailedLoad();
-        alignmentContainer.innerHTML = '<div class="error-message">This is a binary file, not an alignment. Open FASTA, MSF, Clustal, PHYLIP, NEXUS, Stockholm, GenBank, SAM/BAM or AB1.</div>';
-        showMessage('Error: not an alignment (binary file).', 5000);
+        _failLoad('<div class="error-message">This is a binary file, not an alignment. Open FASTA, MSF, Clustal, PHYLIP, NEXUS, Stockholm, GenBank, SAM/BAM or AB1.</div>', 'Error: not an alignment (binary file).', 5000);
         return;
     }
     if (/^@[^\n]*\n[^\n]*\n\+/.test(inputText)) {
-        _clearFailedLoad();
-        alignmentContainer.innerHTML = '<div class="error-message">This is a FASTQ file of reads, not an alignment. Convert it to FASTA, or map the reads (SAM/BAM) onto an open reference.</div>';
-        showMessage('Error: FASTQ reads are not an alignment.', 5000);
+        _failLoad('<div class="error-message">This is a FASTQ file of reads, not an alignment. Convert it to FASTA, or map the reads (SAM/BAM) onto an open reference.</div>', 'Error: FASTQ reads are not an alignment.', 5000);
+        return;
+    }
+    // A snapshot .html page opened as a file. It holds the whole snapshot in its link. Pages saved before v350
+    // have it as "?snapshot=", which toki-bio.github.io refuses when the page is double-clicked ("URI Too
+    // Long", save audit S5): opened here they load all the same. Any other web page is not an alignment.
+    if (/^<(!doctype html|html[\s>])/i.test(inputText)) {
+        const m = /[?#]snapshot=([A-Za-z0-9%_.~+\/=-]+)/.exec(inputText);
+        let payload = null;
+        if (m) { try { payload = JSON.parse(_fromBase64Utf8(decodeURIComponent(m[1]))); } catch (_) {} }
+        if (payload && typeof payload === 'object' && typeof payload.fasta === 'string' && payload.fasta.trim()) return _loadSnapshotPayload(payload);
+        const why = m ? 'Error: this is a ViewAlign snapshot page, but the snapshot in it is damaged and cannot be read. Open the .json file saved with it.'
+            : 'Error: this is a web page (HTML), not an alignment.';
+        _failLoad(`<div class="error-message">${why}</div>`, why, 7000);
         return;
     }
     // A snapshot .json downloaded by Snapshot > Create
@@ -15573,22 +15608,17 @@ async function parseAndRender(isFromDrop = false) {
         if (payload && typeof payload === 'object' && typeof payload.fasta === 'string' && 'schema' in payload) {
             // An empty "fasta" used to throw, leaving the old rows under the snapshot's file name (audit M6)
             if (!payload.fasta.trim()) {
-                _clearFailedLoad();
-                alignmentContainer.innerHTML = '<div class="error-message">Error: this snapshot file has no alignment data.</div>';
-                showMessage('Error: this snapshot file has no alignment data.', 5000);
+                _failLoad('<div class="error-message">Error: this snapshot file has no alignment data.</div>', 'Error: this snapshot file has no alignment data.', 5000);
                 return;
             }
             return _loadSnapshotPayload(payload);
         }
         // Read on as FASTA this answered "No valid sequences found", which says nothing about the file (save audit S4).
-        // Still a failed load like any other: a message, no rows, no file name (audit M6).
         if (!/^\s*>/m.test(inputText)) {
             const why = payload === null
                 ? 'Error: this looks like a snapshot or other JSON file, but it is incomplete or damaged (it does not end as JSON should; a download cut short does this). Create the snapshot again or get the file again.'
                 : 'Error: this is a JSON file, but not a ViewAlign snapshot (it has no alignment in it).';
-            _clearFailedLoad();
-            alignmentContainer.innerHTML = `<div class="error-message">${why}</div>`;
-            showMessage(why, 7000);
+            _failLoad(`<div class="error-message">${why}</div>`, why, 7000);
             return;
         }
     }
@@ -15727,6 +15757,7 @@ async function parseAndRender(isFromDrop = false) {
             state.currentFilename = 'Clipboard';
             state.currentFilePath = '';
         }
+        _loadBegunReplacing = true;   // from here the open alignment is being replaced: a failure can no longer keep it (_failLoad)
         _clearClusterTrimState();
         _dropColumnAnalyses();
         state.hiddenCols = [];
@@ -15934,9 +15965,7 @@ async function parseAndRender(isFromDrop = false) {
         }, 100);
     } catch (e) {
         console.error("Error in parseAndRender:", e);
-    alignmentContainer.innerHTML = `<div class="error-message">Error: ${_escapeHtml(e.message)}</div>`;
-        showMessage(`Error: ${e.message}`, 5000);
-        _clearFailedLoad();
+        _failLoad(`<div class="error-message">Error: ${_escapeHtml(e.message)}</div>`, `Error: ${e.message}${/[.!?]$/.test(e.message) ? '' : '.'}`, 5000);
     }
 }
 // The "Canvas" chip next to the mode radios duplicated the radio once Canvas became the default
@@ -16416,7 +16445,7 @@ function _computeLargeAlignmentBlockChars() {
     // render overflow by 18px even after fixing the char-width constant
     // below, while 70 renders with zero overflow.
     const available = window.innerWidth - namePx - 70;
-    return Math.max(40, Math.min(300, Math.floor(available / charPx)));
+    return Math.max(40, Math.min(BLOCK_SIZE_MAX, Math.floor(available / charPx)));
 }
 
 // ---- Block size: the width asked for and the width drawn (owner 2026-10-31) ----
@@ -16428,8 +16457,10 @@ function _computeLargeAlignmentBlockChars() {
 // bands were narrower.
 let _blockReq = null;
 let _blockShown = null;   // the value _syncBlockSizeDisplay last put on the slider
-// a width asked for is 40-300 (the slider's range); a band drawn can be narrower, down to 10 (relayout)
-const BLOCK_SIZE_MIN = 40, BLOCK_SIZE_MAX = 300;
+// a width asked for is 40-1000 (the slider's range); a band drawn can be narrower, down to 10 (relayout).
+// The upper limit was 300: a 3440-pixel window holds about 400 columns, more when zoomed out, so on a wide
+// screen the bands stopped short of the window's right side (owner, 2026-11-21)
+const BLOCK_SIZE_MIN = 40, BLOCK_SIZE_MAX = 1000;
 function _clampBlockSize(n) { n = Math.round(Number(n)); return Number.isFinite(n) ? Math.max(BLOCK_SIZE_MIN, Math.min(BLOCK_SIZE_MAX, n)) : null; }
 function blockSizeRequested() {
     const slider = el('blockSizeSlider');
@@ -16463,7 +16494,7 @@ function _syncBlockSizeDisplay(drawn) {
     if (input && !input._typing) input.value = shown;   // not under the user's typing (until Enter / leaving the box)
     const tip = fitting
         ? `Block size ${req} is set; the window holds ${drawn} columns, so the blocks wrap at ${drawn}. They grow back to ${req} when the window is wider.`
-        : 'Block size in Block mode (40-300 characters)';
+        : 'Block size in Block mode (40-1000 characters)';
     slider.title = tip;
     if (input) input.title = tip;
     if (note) {
@@ -16509,7 +16540,7 @@ function fitBlockSizeBeforeInitialRender() {
     // Block (Canvas Block): from the Canvas metrics when there are any (the bands are clamped to
     // what fits at render anyway, so this only sets the number)
     const cfit = isBlockLayout() ? _canvasBlockFitChars() : 0;
-    const chars = cfit > 0 ? Math.max(40, Math.min(300, cfit)) : _computeLargeAlignmentBlockChars();
+    const chars = cfit > 0 ? Math.max(40, Math.min(BLOCK_SIZE_MAX, cfit)) : _computeLargeAlignmentBlockChars();
     setBlockSizeRequested(chars);
 }
 
@@ -16526,7 +16557,7 @@ function setBlockSizeToScreen() {
         const fit = _canvasBlockFitChars();
         if (fit > 0) {
             // what fits is the width asked for now (40 at the least: below, the bands still wrap at what fits)
-            const chars = Math.max(40, Math.min(300, fit));
+            const chars = Math.max(40, Math.min(BLOCK_SIZE_MAX, fit));
             setBlockSizeRequested(chars);
             const L = _canvasState.layout;
             if (!L || Math.max(1, Math.min(chars, L.nSlots, fit)) !== L.bandCols) renderAlignment();
@@ -16574,7 +16605,7 @@ function setBlockSizeToScreen() {
         namePx = nameSpan.getBoundingClientRect().width;
     }
     const available = container.clientWidth - namePx - 20; // 20px safety margin
-    const chars = Math.max(40, Math.min(300, Math.floor(available / charPx)));
+    const chars = Math.max(40, Math.min(BLOCK_SIZE_MAX, Math.floor(available / charPx)));
     const prev = blockSizeRequested();
     setBlockSizeRequested(chars);
     // Block size only affects Block mode. Canvas/Full/Compact don't reflow to it,
@@ -19365,8 +19396,12 @@ function _loadSnapshotPayload(payload) {
 
     // Parse and render first, THEN apply view settings
 
+    // resolves to whether the snapshot loaded
+    const seqsBefore = state.seqs;
     return parseAndRender(true).then(() => {
-        if (!state.seqs.length) return;   // the alignment text could not be read: the error is on screen, nothing to apply the view to (audit M6)
+        // the alignment text could not be read: the error is on screen and there is nothing to apply the view to
+        // (audit M6); the rows still there are the alignment that was open before, not the snapshot's
+        if (!_autoLoadSucceeded(seqsBefore)) return false;
         // the trim first: _applySnapshotView renders, and the consensus, the ruler and the Canvas read the trim then
         if (payload.trim && Number.isInteger(payload.trim.leftTrimEnd) && Number.isInteger(payload.trim.rightTrimStart)) {
             _setTrimBounds(payload.trim.leftTrimEnd, payload.trim.rightTrimStart, false);
@@ -19399,6 +19434,7 @@ function _loadSnapshotPayload(payload) {
         try { _applySnapshotGroups(payload.groups); } catch (err) { console.error('Snapshot groups not restored:', err); }
         // a saved pane layout opens its panes again (in the main page only)
         if (payload.panes) _paneRestoreLayout(payload.panes);
+        return true;
     });
 }
 
@@ -19613,10 +19649,10 @@ async function openSnapshotFromPath(snapshotPath) {
         const resp = await fetch(normalizedPath, { signal: AbortSignal.timeout(10000) });
         if (!resp.ok) throw new Error(`HTTP ${resp.status}: ${resp.statusText}`);
         const payload = await resp.json();
-        await _loadSnapshotPayload(payload);
+        const loaded = await _loadSnapshotPayload(payload);
         const pathInput = el('snapshotPathInput');
-        if (pathInput) pathInput.value = normalizedPath;
-        if (state.seqs.length) showMessage(`Snapshot loaded from ${normalizedPath}`, 2500);   // not over a load error (audit M6)
+        if (pathInput && loaded) pathInput.value = normalizedPath;
+        if (loaded) showMessage(`Snapshot loaded from ${normalizedPath}`, 2500);   // not over a load error (audit M6)
     } catch (err) {
         console.error('Snapshot open failed:', err);
         showMessage(`Failed to open snapshot: ${err.message}`, 5000);
@@ -29636,7 +29672,7 @@ function initializeAppUI() {
                 return resp.json();
             })
             .then(payload => {
-                return Promise.resolve(_loadSnapshotPayload(payload)).then(() => { if (state.seqs.length) showMessage('Snapshot file loaded', 2200); });
+                return Promise.resolve(_loadSnapshotPayload(payload)).then(loaded => { if (loaded) showMessage('Snapshot file loaded', 2200); });
             })
             .catch(err => {
                 console.error('Snapshot file load failed:', err);
@@ -29646,7 +29682,7 @@ function initializeAppUI() {
         try {
             const snapshotText = _fromBase64Utf8(autoSnapshot);
             const payload = JSON.parse(snapshotText);
-            Promise.resolve(_loadSnapshotPayload(payload)).then(() => { if (state.seqs.length) showMessage('Snapshot loaded', 2200); })   // not over a load error (audit M6)
+            Promise.resolve(_loadSnapshotPayload(payload)).then(loaded => { if (loaded) showMessage('Snapshot loaded', 2200); })   // not over a load error (audit M6)
                 .catch(err => { console.error('Snapshot load failed:', err); showMessage(`Failed to load snapshot: ${err.message}`, 5000); });
         } catch (err) {
             console.error('Snapshot load failed:', err);
@@ -30463,6 +30499,18 @@ function attachUIListeners() {
                 zoomTickObserver.observe(wrap);
             }
         }
+    }
+    // The small zoom slider in the top bar moves the Display menu's slider, whose own handler zooms
+    const quickZoom = el('quickZoomSlider');
+    if (quickZoom && zoomSlider) {
+        updateSliderBackground(quickZoom);
+        quickZoom.addEventListener('input', () => {
+            updateSliderBackground(quickZoom);
+            el('quickZoomVal').textContent = _sliderToZoom(parseInt(quickZoom.value)) + '%';   // at once; the zoom itself is debounced
+            zoomSlider.value = quickZoom.value;
+            zoomSlider.dispatchEvent(new Event('input', { bubbles: true }));
+        });
+        el('quickZoomVal')?.addEventListener('click', () => resetZoom());
     }
     const zoom100Tick = el('zoom100Tick');
     if (zoom100Tick) {
@@ -32527,32 +32575,26 @@ function handleAlignmentPanContextMenu(e) {
             dragOverlay.classList.remove('active');
             dragOverlay.classList.add('hidden');
 
-            const file = e.dataTransfer.files[0];
-
-            // Validate file type
-            const validExtensions = ['.fasta', '.fa', '.msf', '.aln', '.clustal', '.txt'];
-            const fileName = file.name.toLowerCase();
-            const isValid = validExtensions.some(ext => fileName.endsWith(ext));
-
-            if (!isValid) {
-                showMessage('Please upload a valid alignment file (FASTA, MSF, Clustal, .txt)', 4000);
-                return;
-            }
-
-            // Process the file
-            state.currentFilename = file.name;
-            const reader = new FileReader();
-            reader.onload = function(event) {
-                const fastaInputElement = el('fastaInput');
-                if (fastaInputElement) {
-                    _setInputText(event.target.result);
+            // The path of the file chooser (Input menu): reads files with their index, gzip, every format the
+            // loader knows; a file that cannot be loaded says why (parseAndRender) and the open alignment stays.
+            // Before (save audit S6), only names ending in .fasta .fa .msf .aln .clustal .txt were taken, read as
+            // plain text: a snapshot .json or .html, NEXUS, PHYLIP, Stockholm, GenBank or .gz could not be dropped.
+            const dropped = Array.from(e.dataTransfer.files);
+            const file = dropped.find(f => !/\.(bai|csi|crai)$/i.test(f.name)) || dropped[0];
+            const droppedIndex = dropped.find(f => /\.bai$/i.test(f.name)) || null;
+            (async () => {
+                state._pendingFileHandle = null;
+                if (await _routeReadsFile(file, droppedIndex)) return;
+                state.currentFilename = file.name;
+                state.currentFilePath = '';
+                try {
+                    const { text } = await readSequenceFile(file);
+                    _setInputText(text);
                     parseAndRender(true);
+                } catch (err) {
+                    _fileReadFailed(file, err);
                 }
-            };
-            reader.onerror = function() {
-                showMessage('Error reading file. Please try again.', 5000);
-            };
-            reader.readAsText(file);
+            })();
         }
     }, true);
 })();
