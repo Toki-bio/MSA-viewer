@@ -135,7 +135,7 @@ obtain it from GIRI and register it yourself (see `THIRD_PARTY_NOTICES.md`).
 ## Snapshot Storage (GitHub Pages)
 
 The `Snapshot` button exports:
-- a direct encoded snapshot URL (`?snapshot=...`)
+- a direct encoded snapshot URL (`#snapshot=...`, up to 1 MB; larger alignments get the JSON file only)
 - a JSON snapshot file (for short-link hosting)
 - an HTML launcher file
 

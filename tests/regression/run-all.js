@@ -19048,6 +19048,156 @@ ACGTACGTACGTACGTACGT
   return { pass: ok, detail: JSON.stringify(r) };
 });
 
+// ---- Save audit 2026-11-21 (every save path tested through the file chooser, the buttons and real downloads) ----
+// The files Snapshot > Create writes, with the link of its .html page
+async function _snapCreate(page, nFiles = 2, wait = 15000) {
+  const got = []; const h = d => got.push(d); page.on('download', h);
+  await page.evaluate(() => document.getElementById('snapshotCreateTopButton').click());
+  const t0 = Date.now();
+  while (got.length < nFiles && Date.now() - t0 < wait) await page.waitForTimeout(100);
+  await page.waitForTimeout(1200);   // a file too many would arrive in this time
+  page.off('download', h);
+  const fs = require('fs'); const files = [];
+  for (const d of got) files.push({ name: d.suggestedFilename(), text: fs.readFileSync(await d.path(), 'utf8') });
+  const json = files.find(f => f.name.endsWith('.json')), html = files.find(f => f.name.endsWith('.html'));
+  const link = html ? (/id="snapshotLink" href="([^"]+)"/.exec(html.text) || [])[1] : null;
+  return { files, json, html, link, msg: await page.evaluate(() => document.getElementById('statusMessage').textContent) };
+}
+
+// S1: the snapshot link (clipboard and the .html page) carried the whole alignment in the query string,
+// which the browser sends to the server: toki-bio.github.io answers "414 URI Too Long" above about 8,150
+// characters (measured 2026-11-21: 8,150 fine, 8,200 refused), the local Node server refuses above 16 KB.
+// A snapshot of about 15 sequences x 300 columns was already too long, and Create still said it worked.
+// The alignment now follows "#", which is never sent; old ?snapshot= links still open.
+check('Save audit S1: a snapshot link far longer than a server accepts still opens (alignment after #); an old ?snapshot= link still opens', async (page) => {
+  const bad = [];
+  await loadFasta(page, variedFasta(60, 400, 5));
+  const want = await page.evaluate(() => _alignmentFastaText());
+  const s = await _snapCreate(page);
+  if (!s.link) return { pass: false, detail: 'no link in the .html page: ' + s.files.map(f => f.name).join(', ') + ' / ' + s.msg };
+  if (s.link.length < 20000) bad.push('test setup: the link is only ' + s.link.length + ' characters');
+  const sent = s.link.split('#')[0].length;
+  if (sent > 300) bad.push(`the link sends ${sent} characters to the server (of ${s.link.length})`);
+  // a link made by an older version (built before this page moves on)
+  const old = await page.evaluate(() => { _setInputText('>o1\nACGTAC\n>o2\nACGTAA\n'); return parseAndRender(false).then(() => location.origin + location.pathname + '?snapshot=' + encodeURIComponent(_toBase64Utf8(JSON.stringify(_buildSnapshotPayload())))); });
+  const shown = () => page.evaluate(() => (typeof state !== 'undefined' && state.seqs.length) ? _alignmentFastaText() : '').catch(() => '');
+  await page.goto('about:blank');
+  const resp = await page.goto(s.link).catch(e => null);
+  await page.waitForTimeout(2500);
+  const got = await shown();
+  if (got !== want) bad.push(`opening the link: HTTP ${resp ? resp.status() : 'error'}, ${got ? 'another alignment' : 'no alignment'}`);
+  // the .html page itself, opened from disk, goes to the viewer with the alignment
+  const fs = require('fs'), os = require('os'), path = require('path');
+  const hp = path.join(os.tmpdir(), 'va_snapshot_s1_' + process.pid + '.html'); fs.writeFileSync(hp, s.html.text);
+  await page.goto('about:blank');
+  await page.goto('file://' + hp).catch(() => {}); await page.waitForTimeout(3000);
+  const got3 = await shown();
+  if (got3 !== want) bad.push('the .html page opened from disk did not load the alignment (at ' + page.url().slice(0, 50) + ')');
+  try { fs.unlinkSync(hp); } catch (_) {}
+  await page.goto('about:blank');
+  await page.goto(old); await page.waitForTimeout(1800);
+  const n4 = await page.evaluate(() => state.seqs.map(q => q.header).join(',')).catch(() => '');
+  if (n4 !== 'o1,o2') bad.push('an old ?snapshot= link gave rows "' + n4 + '"');
+  return { pass: bad.length === 0, detail: bad.join(' | ') || `link ${s.link.length} chars, ${sent} sent` };
+});
+
+// S1b: no browser opens an address of any length (Firefox stops at 1 MB, Chrome near 2 MB). A 2000 x 3000 alignment got a
+// 16 MB .html page that could not open and "Snapshot copied". Above the limit only the .json is written,
+// and the message says to share that file.
+check('Save audit S1b: an alignment too large for a link gets the .json only, and the message says so', async (page) => {
+  await loadSyntheticFasta(page, 600, 4000);
+  const s = await _snapCreate(page, 2, 6000);
+  const bad = [];
+  if (!s.json) bad.push('no .json');
+  else { let p = null; try { p = JSON.parse(s.json.text); } catch (_) {} if (!p || (p.fasta.match(/^>/gm) || []).length !== 600) bad.push('the .json does not hold the 600 rows'); }
+  if (s.html) bad.push(`an .html page of ${s.html.text.length} characters was written`);
+  if (!/too large for a link/i.test(s.msg) || !/\.json/i.test(s.msg)) bad.push('message: "' + s.msg + '"');
+  return { pass: bad.length === 0, detail: bad.join(' | ') };
+});
+
+// S2: Create started the .json and the .html download in the same moment. WebKit (the engine of Safari) kept
+// only the last one: the .html arrived and the .json, the file that reopens reliably, never did (4 of 4 runs
+// in Playwright WebKit, 2026-11-21; Chrome and Firefox delivered both). The .html now starts a moment later.
+// Run with BROWSER=webkit to see what this check is for.
+check('Save audit S2: Snapshot Create delivers both the .json and the .html, and the .json reopens', async (page) => {
+  await loadFasta(page, variedFasta(6, 80, 9));
+  const want = await page.evaluate(() => _alignmentFastaText());
+  const s = await _snapCreate(page);
+  if (!s.json || !s.html) return { pass: false, detail: 'files: ' + (s.files.map(f => f.name).join(', ') || 'none') };
+  await loadFasta(page, variedFasta(3, 20, 2));
+  await page.setInputFiles('#fileInput', { name: s.json.name, mimeType: 'application/json', buffer: Buffer.from(s.json.text) });
+  await page.waitForTimeout(1500);
+  const got = await page.evaluate(() => _alignmentFastaText());
+  return { pass: got === want, detail: got === want ? '' : 'the reopened .json gave another alignment' };
+});
+
+// S3: a snapshot did not hold the groups (Cluster, k-mer groups): 2 groups before, none after reopening, with
+// their names, colours and SNP letters gone. They are saved now, members by row name, and put back.
+check('Save audit S3: groups (members, names, colours, shown/hidden, SNP letters) come back from a snapshot', async (page) => {
+  const famA = 'ACGTACGTACGTACGTACGTACGTACGTACGTACGTACGT', famB = 'TTGCATGCATGGATCCATGCAAGCTTGCATGCCTGCAGGT';
+  let t = '';
+  for (let i = 0; i < 6; i++) t += `>A${i}\n${famA.slice(0, i) + 'N' + famA.slice(i + 1)}\n>B${i}\n${famB.slice(0, i) + 'N' + famB.slice(i + 1)}\n`;
+  t += '>odd\nGGGGGGGGGGCCCCCCCCCCAAAAAAAAAATTTTTTTTTT\n';
+  await loadFasta(page, t);
+  await page.evaluate(() => clusterSequences()); await page.waitForTimeout(2500);
+  const view = () => page.evaluate(() => {
+    const r = state.clusterResults;
+    return !r ? null : JSON.stringify({
+      groups: r.clusters.map(c => ({ name: c._typeName, color: c.color, off: !!c.paintOff, ids: c.sequences.map(q => q.id), feats: [c.perfectFeatures, c.cloudyFeatures, c.imperfectFeatures].map(f => (f || []).map(x => x.pos + x.char).join(' ')) })),
+      unassigned: (r.unassigned || []).map(q => q.id), source: state.clusterSource, label: state.clusterSourceLabel,
+      marks: Object.keys(state._clusterCharMap || {}).length, mapped: Object.keys(state.clusterMap || {}).length
+    });
+  });
+  // a renamed, recoloured group and one with its colours off: the user's own work on the groups
+  await page.evaluate(() => { const c = state.clusterResults.clusters; c[0]._typeName = 'Family one'; c[0].color = '#123456'; c[1].paintOff = true; _geSyncMapFromResults(); _rebuildClusterCharMap(); });
+  const before = await view();
+  if (!before || JSON.parse(before).groups.length !== 2) return { pass: false, detail: 'setup: clustering gave ' + before };
+  const s = await _snapCreate(page);
+  if (!s.json) return { pass: false, detail: 'no .json' };
+  await loadFasta(page, variedFasta(3, 20, 2));
+  if (await view()) return { pass: false, detail: 'setup: groups still there after another file loaded' };
+  await page.setInputFiles('#fileInput', { name: s.json.name, mimeType: 'application/json', buffer: Buffer.from(s.json.text) });
+  await page.waitForTimeout(1800);
+  const after = await view();
+  const bad = [];
+  if (after !== before) bad.push(`groups before ${before} after ${after}`);
+  // a snapshot without groups, loaded over a session that has them, shows none
+  const plain = JSON.parse(s.json.text); delete plain.groups;
+  await page.setInputFiles('#fileInput', { name: 'plain.json', mimeType: 'application/json', buffer: Buffer.from(JSON.stringify(plain)) });
+  await page.waitForTimeout(1500);
+  if (await view()) bad.push('a snapshot without groups kept the groups of the session before');
+  // groups naming rows the snapshot does not have (a file edited by hand) do no harm
+  const odd = JSON.parse(s.json.text); odd.groups.clusters[0].ids.push('no_such_row'); odd.groups.clusters.push({ ids: ['ghost'], _typeName: 'Ghost' }); odd.groups.unassigned = 'x';
+  await page.setInputFiles('#fileInput', { name: 'odd.json', mimeType: 'application/json', buffer: Buffer.from(JSON.stringify(odd)) });
+  await page.waitForTimeout(1500);
+  const o = await view();
+  if (!o || JSON.parse(o).groups.length !== 2 || JSON.parse(o).groups[0].ids.length !== 6) bad.push('groups with unknown rows: ' + o);
+  return { pass: bad.length === 0, detail: bad.join(' | ').slice(0, 900) };
+});
+
+// S4: a snapshot .json cut short (a download that did not finish) or another program's .json was read as
+// FASTA and answered "No valid sequences found", which says nothing about the file. It is still a failed
+// load (no rows, no file name: Audit M6), and the message now names the cause.
+check('Save audit S4: a cut-short snapshot .json or a foreign .json says what is wrong with the file', async (page) => {
+  await loadFasta(page, variedFasta(5, 60, 3));
+  const good = await page.evaluate(() => JSON.stringify(_buildSnapshotPayload(), null, 2));
+  const open = async (name, text) => { await page.setInputFiles('#fileInput', { name, mimeType: 'application/json', buffer: Buffer.from(text) }); await page.waitForTimeout(1100); };
+  const st = () => page.evaluate(() => ({ n: state.seqs.length, file: state.currentFilename, shown: document.getElementById('alignmentContainer').textContent.slice(0, 300) }));
+  const bad = [];
+  await open('cut.json', good.slice(0, Math.floor(good.length / 2)));
+  let r = await st();
+  if (r.n !== 0 || r.file) bad.push(`cut short: ${r.n} rows under "${r.file}"`);
+  if (!/snapshot/i.test(r.shown) || !/incomplete|damaged|cut short/i.test(r.shown)) bad.push('cut short: shown "' + r.shown.slice(0, 120) + '"');
+  await open('order.json', JSON.stringify({ version: 1, order: ['a', 'b'] }));
+  r = await st();
+  if (r.n !== 0 || r.file) bad.push(`foreign: ${r.n} rows under "${r.file}"`);
+  if (!/JSON/.test(r.shown) || !/not a ViewAlign snapshot/i.test(r.shown)) bad.push('foreign: shown "' + r.shown.slice(0, 120) + '"');
+  await open('good.json', good);
+  r = await st();
+  if (r.n !== 5) bad.push('the whole file after the failures: ' + JSON.stringify(r).slice(0, 120));
+  return { pass: bad.length === 0, detail: bad.join(' | ') };
+});
+
 async function main() {
   const { server, baseUrl } = await start();
   const results = [];

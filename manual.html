@@ -753,8 +753,13 @@ img { max-width: 100%; border: 1px solid var(--border); border-radius: 4px; marg
     on GitHub Pages, listed in <code>snapshots/index.json</code>; pick one and click <strong>Open</strong>
     (<strong>Refresh</strong> reloads the list). <strong>Open Path</strong> opens a snapshot file by its path
     (as <code>?snapshotFile=</code> does)</li>
-    <li><strong>Create</strong> downloads the current state as a JSON snapshot and as a standalone HTML page,
-    and copies a <code>?snapshot=</code> URL to the clipboard</li>
+    <li><strong>Create</strong> downloads the current state as a JSON snapshot and as an HTML page that opens it
+    in ViewAlign, and copies a <code>#snapshot=</code> link to the clipboard. The JSON file is the one to keep: it
+    opens like any alignment file and holds the alignment, the view, hidden columns, trim, colours, searches,
+    selections and groups. The link and the HTML page carry the whole alignment in the address, so they are
+    written only up to 1 MB of address (roughly 700,000 residues); above that Create writes the JSON file alone
+    and says so. Links made by earlier versions (<code>?snapshot=</code>) still open, where the server accepts
+    their length</li>
   </ul>
   <p>Snapshots themselves are files (JSON, or a standalone HTML page); they are not kept in
   <code>localStorage</code>.</p>
@@ -2267,7 +2272,7 @@ img { max-width: 100%; border: 1px solid var(--border); border-radius: 4px; marg
     <tr><td>Print</td><td>Paper, PDF</td><td>The browser's Print (<kbd>Ctrl+P</kbd>). In Block view every block is printed, as vector graphics scaled to the paper's width, in place of the page (a block taller than a page is split between rows); above 400,000 residues the blocks from the one in view are printed up to that size, under a note, and <strong>Full SVG</strong> has the rest. In Canvas view the print is the picture on screen; Full (hidden) prints the page as it is</td></tr>
     <tr><td>Newick (<code>.nwk</code>)</td><td>Phylogenetics tools</td><td>Tree window <strong>Download .nwk</strong>: UPGMA or Neighbor-Joining tree with branch lengths, whichever the Tree window last built</td></tr>
     <tr><td>Tables and pictures of the windows</td><td>Spreadsheets, figures</td><td>Statistics: matrix as CSV, TSV or Excel, pairs as a table or FASTA (in the CSV a name starting with <code>=</code>, <code>@</code>, <code>+</code> or <code>-</code> gets a leading apostrophe, so a spreadsheet does not run it as a formula). Variants: <code>.tsv</code>. Dot plot: PNG, SVG and the collection as a table. Tree: SVG or PNG. Translation: Copy AA / Save AA. Row order: a <code>.json</code> file (Order: Export / Import)</td></tr>
-    <tr><td>Standalone HTML</td><td>Sharing</td><td>Input menu <strong>Create</strong>: a JSON snapshot plus a self-contained HTML snapshot page with embedded alignment, and a <code>?snapshot=</code> URL on the clipboard (§2.6)</td></tr>
+    <tr><td>Standalone HTML</td><td>Sharing</td><td>Input menu <strong>Create</strong>: a JSON snapshot (the file to keep), plus an HTML page and a <code>#snapshot=</code> link on the clipboard that open it in ViewAlign, for alignments up to about 700,000 residues (§2.6)</td></tr>
     <tr><td>New tab</td><td>A sub-alignment</td><td>Selected sequences opened as an alignment in a new ViewAlign tab (<kbd>Alt+T</kbd>)</td></tr>
     <tr><td>Clone tab</td><td>This view</td><td>The whole alignment in a new tab exactly as shown here, searches, selections and marks included (Actions &gt; Clone Tab)</td></tr>
     <tr><td>Copy Selected</td><td>Clipboard</td><td>FASTA of selected sequences (<kbd>Alt+C</kbd>)</td></tr>

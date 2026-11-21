@@ -3,7 +3,7 @@
 // RELEASE_VERSION is the release version (package.json, CITATION.cff, git tag
 // v<RELEASE_VERSION>, tests/meta/version.test.js); BUILD_TAG counts every deploy.
 const RELEASE_VERSION = '1.34.1';
-const BUILD_TAG = 'v349';
+const BUILD_TAG = 'v350';
 // Sentinel row index for consensus-line nucleotide selection (not in state.seqs).
 const CONSENSUS_ROW_INDEX = -1;
 const COL_SEL_EDGE = '#4fc3f7';   // the edge line of a run of selected columns (styles.css .col-sel-l / .col-sel-r)
@@ -1769,6 +1769,9 @@ const _historyManager = {
 };
 
 const SNAPSHOT_SCHEMA_VERSION = 1;
+// The longest snapshot link written: Firefox refuses an address above 1 MB ("Invalid url", measured with a
+// 1.8 MB link, 2026-11-21), Chrome above 2 MB; see createSnapshot
+const SNAPSHOT_LINK_MAX = 1000000;
 
 let _dragPreviewEl = null;
 let _dragPreviewClass = '';
@@ -15577,6 +15580,17 @@ async function parseAndRender(isFromDrop = false) {
             }
             return _loadSnapshotPayload(payload);
         }
+        // Read on as FASTA this answered "No valid sequences found", which says nothing about the file (save audit S4).
+        // Still a failed load like any other: a message, no rows, no file name (audit M6).
+        if (!/^\s*>/m.test(inputText)) {
+            const why = payload === null
+                ? 'Error: this looks like a snapshot or other JSON file, but it is incomplete or damaged (it does not end as JSON should; a download cut short does this). Create the snapshot again or get the file again.'
+                : 'Error: this is a JSON file, but not a ViewAlign snapshot (it has no alignment in it).';
+            _clearFailedLoad();
+            alignmentContainer.innerHTML = `<div class="error-message">${why}</div>`;
+            showMessage(why, 7000);
+            return;
+        }
     }
 
     if (_looksLikeUrl(inputText)) {
@@ -19061,8 +19075,91 @@ function _buildSnapshotPayload(opts = {}) {
         selections: _snapshotSelections(),
         annotation: state.annot ? { text: state.annot.text, sourceName: state.annot.sourceName, shown: el('showAnnotation')?.checked !== false } : null,
         dotBookmarks: state.dotBookmarks?.length ? state.dotBookmarks : null,   // the dot-plot collection
+        groups: _snapshotGroups(),   // Cluster / k-mer groups (save audit S3: a snapshot came back without them)
         panes: opts.panes ? _paneLayoutPayload() : undefined
     };
+}
+
+// The groups of a snapshot: each group with its name, colour, on/off and SNP letters, its members by row name
+// (as the groups themselves keep them), without the copies of the members' sequences. null without groups.
+function _snapshotGroups() {
+    const r = state.clusterResults;
+    if (!r || !Array.isArray(r.clusters) || !r.clusters.length) return null;
+    const ids = list => (Array.isArray(list) ? list : []).map(q => q && q.id).filter(id => typeof id === 'string');
+    return {
+        source: state.clusterSource || null,
+        sourceLabel: state.clusterSourceLabel || null,
+        clusters: r.clusters.map(c => {
+            const g = { ids: ids(c.sequences), _typeName: c._typeName, color: c.color, paintOff: !!c.paintOff, nPerfect: c.nPerfect, nOccurrences: c.nOccurrences };
+            _FEATURE_LISTS.concat(['occurrences', 'motifRuns']).forEach(k => { if (Array.isArray(c[k])) g[k] = c[k].map(x => ({ ...x })); });
+            return g;
+        }),
+        unassigned: ids(r.unassigned),
+        unassignedColor: state.clusterUnassignedColor || null,
+        unassignedPaintOff: !!state.clusterUnassignedPaintOff,
+        paintSuspended: !!state.clusterPaintSuspended
+    };
+}
+// Puts the groups of a snapshot back on the rows just loaded. The file can come from anyone (a shared link):
+// only numbers, single letters, plain colours and short names are taken from it; a member the alignment
+// does not have is left out, and a group left without members is dropped.
+function _applySnapshotGroups(g) {
+    if (!g || typeof g !== 'object' || !Array.isArray(g.clusters) || !state.seqs.length) return;
+    const rowOf = new Map();
+    state.seqs.forEach((q, i) => { if (!rowOf.has(q.header)) rowOf.set(q.header, i); });
+    const taken = new Set();
+    const members = list => {
+        const out = [];
+        (Array.isArray(list) ? list : []).forEach(id => {
+            const i = rowOf.get(id);
+            if (i === undefined || taken.has(i)) return;
+            taken.add(i);
+            out.push({ index: i, id, seq: state.seqs[i].seq });
+        });
+        return out;
+    };
+    const num = v => (Number.isFinite(v) ? v : 0);
+    const letter = v => (typeof v === 'string' && v.length === 1 ? v : null);
+    const feats = list => (Array.isArray(list) ? list : []).map(f => {
+        if (!f || !Number.isInteger(f.pos) || f.pos < 1 || !letter(f.char)) return null;
+        const o = { pos: f.pos, char: f.char, countOutside: num(f.countOutside) };
+        if (Number.isFinite(f.inFreq)) o.inFreq = f.inFreq;
+        if (Number.isFinite(f.outFreq)) o.outFreq = f.outFreq;
+        return o;
+    }).filter(Boolean);
+    const clusters = [];
+    g.clusters.slice(0, 5000).forEach(c => {
+        if (!c || typeof c !== 'object') return;
+        const sequences = members(c.ids);
+        if (!sequences.length) return;
+        const cl = {
+            sequences, size: sequences.length,
+            nPerfect: num(c.nPerfect), nOccurrences: num(c.nOccurrences),
+            occurrences: (Array.isArray(c.occurrences) ? c.occurrences : []).filter(o => o && Number.isInteger(o.pos) && letter(o.ch)).map(o => ({ pos: o.pos, ch: o.ch })),
+            perfectFeatures: feats(c.perfectFeatures), imperfectFeatures: feats(c.imperfectFeatures), cloudyFeatures: feats(c.cloudyFeatures),
+            motifRuns: (Array.isArray(c.motifRuns) ? c.motifRuns : []).filter(m => m && Number.isInteger(m.start) && Number.isInteger(m.end) && typeof m.motif === 'string' && /^[A-Za-z*?.\-]{1,500}$/.test(m.motif))
+                .map(m => ({ start: m.start, end: m.end, motif: m.motif, nStrict: num(m.nStrict), nCloudy: num(m.nCloudy) })),
+            paintOff: !!c.paintOff
+        };
+        const colour = _safeCssColor(c.color);
+        if (colour && /^#[0-9a-f]{6}$/i.test(colour)) cl.color = colour;   // the group's colour box takes #rrggbb only
+        if (typeof c._typeName === 'string' && c._typeName.trim()) cl._typeName = c._typeName.trim().slice(0, 120);
+        clusters.push(cl);
+    });
+    if (!clusters.length) return;
+    const unassigned = members(g.unassigned);
+    const nAssigned = clusters.reduce((n, c) => n + c.sequences.length, 0);
+    const text = v => (typeof v === 'string' ? v.slice(0, 120) : null);
+    const results = { clusters, unassigned, summary: { nClusters: clusters.length, nAssigned, nUnassigned: unassigned.length, nTotal: state.seqs.length }, cancelled: false };
+    const unColour = _safeCssColor(g.unassignedColor);
+    if (unColour && /^#[0-9a-f]{6}$/i.test(unColour)) state.clusterUnassignedColor = unColour;
+    _commitTypeResults(results, text(g.source) || 'snapshot', text(g.sourceLabel) || 'groups');
+    // the three switches _commitTypeResults sets for new groups: as they were saved
+    state.clusterUnassignedPaintOff = !!g.unassignedPaintOff;
+    state.clusterPaintSuspended = !!g.paintSuspended;
+    _geSyncMapFromResults();
+    _rebuildClusterCharMap();
+    renderAlignment();
 }
 
 // The radio of a group with this value. A snapshot's value went into a CSS selector as text: one
@@ -19298,6 +19395,8 @@ function _loadSnapshotPayload(payload) {
         } else {
             clearAnnotation();
         }
+        // the groups, after the trim (their SNP letters are placed from it); none saved: none shown (the load cleared them)
+        try { _applySnapshotGroups(payload.groups); } catch (err) { console.error('Snapshot groups not restored:', err); }
         // a saved pane layout opens its panes again (in the main page only)
         if (payload.panes) _paneRestoreLayout(payload.panes);
     });
@@ -19452,8 +19551,17 @@ async function createSnapshot() {
         const linkPayload = _snapshotLinkPayload(payload);
         const leftOut = linkPayload._panesLeftOut || 0;
         delete linkPayload._panesLeftOut;
-        const encodedPayload = _toBase64Utf8(JSON.stringify(linkPayload));
-        const snapshotUrl = `${window.location.origin}${window.location.pathname}?snapshot=${encodeURIComponent(encodedPayload)}`;
+        // The link holds the whole alignment. It follows "#", which the browser keeps to itself: as "?snapshot="
+        // it was sent to the server, and GitHub Pages answers "414 URI Too Long" above about 8,150 characters
+        // (some 15 sequences x 300 columns), a local Node server above 16 KB (save audit S1, 2026-11-21).
+        // Above SNAPSHOT_LINK_MAX no browser opens the address at all: then there is no link and no .html
+        // page, only the .json (S1b: a 2000 x 3000 alignment got a 16 MB page that could not open).
+        const linkJson = JSON.stringify(linkPayload);
+        const linkBase = `${window.location.origin}${window.location.pathname}#snapshot=`;
+        // base64 is 4/3 of the text, a little more once + / = are escaped: no need to build a link that cannot fit
+        const snapshotUrl = linkJson.length * 4 / 3 + linkBase.length > SNAPSHOT_LINK_MAX ? null
+            : linkBase + encodeURIComponent(_toBase64Utf8(linkJson));
+        const linkFits = !!snapshotUrl && snapshotUrl.length <= SNAPSHOT_LINK_MAX;
         const fileBaseName = _sanitizeSnapshotFileBaseName(payload.sourceTitle || state.currentFilename || 'alignment_snapshot');
         const githubRelativePath = `snapshots/${fileBaseName}.json`;
         const githubSnapshotUrl = `${window.location.origin}${window.location.pathname}?snapshotFile=${encodeURIComponent(githubRelativePath)}`;
@@ -19461,7 +19569,7 @@ async function createSnapshot() {
         // The clipboard can refuse (page not focused, permission denied): the
         // downloads must still happen
         let copied = false;
-        if (navigator.clipboard?.writeText) {
+        if (linkFits && navigator.clipboard?.writeText) {
             try {
                 await navigator.clipboard.writeText(snapshotUrl);
                 copied = true;
@@ -19469,6 +19577,14 @@ async function createSnapshot() {
         }
 
         downloadSnapshotJson(payload, fileBaseName);
+        if (!linkFits) {
+            const mb = (JSON.stringify(payload).length / 1048576).toFixed(1);
+            showMessage(`Snapshot saved as ${fileBaseName}.json (${mb} MB). This alignment is too large for a link, so no link was copied and no HTML page written: share the .json file, which opens like any alignment file.`, 9000);
+            return;
+        }
+        // The two downloads apart: started in the same moment, WebKit (Safari's engine) kept only the last,
+        // so the .html arrived and the .json never did (save audit S2)
+        await new Promise(r => setTimeout(r, 400));
         downloadSnapshotHtml(snapshotUrl, payload.sourceTitle || state.currentFilename || 'alignment');
 
         const sizeKb = (snapshotUrl.length / 1024).toFixed(1);
@@ -29473,7 +29589,11 @@ function initializeAppUI() {
         } catch (_) {}
         return v;
     };
-    const autoSnapshot = urlParams.get('snapshot');
+    // "#snapshot=" (links since the save audit, 2026-11-21: never sent to the server) or "?snapshot=" (older links)
+    const autoSnapshot = urlParams.get('snapshot') || new URLSearchParams(window.location.hash.replace(/^#/, '')).get('snapshot');
+    // A snapshot link pasted into a tab already showing ViewAlign changes only what follows "#", which loads
+    // nothing by itself: load the page again so the link opens
+    window.addEventListener('hashchange', () => { if (/^#snapshot=/.test(window.location.hash)) window.location.reload(); });
     const autoSnapshotFile = _linkAddress('snapshotFile');
     const autoUrl   = _linkAddress('url');
     const autoData  = urlParams.get('data');

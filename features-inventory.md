@@ -29,7 +29,7 @@ localStorage-backed panel. Stores metadata for every entry; the text itself only
 **Why novel:** Alignments persist across sessions without a server or database. Most viewers forget everything on tab close.
 
 ### URL parameter loading
-`?url=https://...` auto-loads a remote alignment. `?data=...` loads inline base64-encoded alignment text. `?snapshot=...` / `?snapshotFile=https://...` auto-restore a full viewer state (inline or remote). `?title=...` sets a custom page title. Shareable links encode both data and display.
+`?url=https://...` auto-loads a remote alignment. `?data=...` loads inline base64-encoded alignment text. `#snapshot=...` (or the older `?snapshot=...`) / `?snapshotFile=https://...` auto-restore a full viewer state (inline or remote). `?title=...` sets a custom page title. Shareable links encode both data and display.
 
 **Why novel:** Direct sharing of an alignment + its exact visual configuration with one URL. No other MSA viewer supports state-serialized URL loading.
 
