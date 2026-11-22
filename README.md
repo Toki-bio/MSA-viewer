@@ -132,6 +132,12 @@ The optional server offers local FASTA files as search databases; none are bundl
 your own from the Search panel. RepBase is licensed by GIRI and may not be redistributed:
 obtain it from GIRI and register it yourself (see `THIRD_PARTY_NOTICES.md`).
 
+## Saving work
+
+- **Save** downloads the alignment as FASTA; **Ctrl+S** writes into the file it was opened from, or one chosen once (Chrome, Edge).
+- The current alignment and view are autosaved in the browser and offered when the page opens empty again (Input menu: Restore last session).
+- The browser asks before a tab with unsaved edits closes or reloads.
+
 ## Snapshot Storage (GitHub Pages)
 
 The `Snapshot` button exports:

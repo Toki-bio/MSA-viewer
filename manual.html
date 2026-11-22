@@ -783,6 +783,22 @@ img { max-width: 100%; border: 1px solid var(--border); border-radius: 4px; marg
     Supported output formats: FASTA, RTF, SVG, Newick (<code>.nwk</code>), and standalone HTML snapshots.
     MSF is supported for input only; save as FASTA and convert if you need MSF output.
   </p>
+  <p><strong>Work in progress</strong> is protected in three ways:</p>
+  <ul>
+    <li><strong>Ctrl+S</strong> saves into a file and keeps saving there (Chrome and Edge; other browsers download
+    a copy, as the Save button does). A FASTA file opened through the Input menu or dropped on the page is written
+    back to, after one question the first time. A snapshot <code>.json</code> opened that way gets the snapshot
+    back, view included. For pasted text, or a file in another format (NEXUS, Clustal, a <code>.gz</code>), Ctrl+S
+    asks where to save: choose a <code>.fasta</code> name for the alignment or a <code>.json</code> name for a
+    snapshot. The whole alignment is written, hidden columns included.</li>
+    <li><strong>Autosave.</strong> A moment after every change the alignment with its view is kept in this browser
+    (not on any server). When ViewAlign opens with nothing loaded, a bar offers the last session; the Input menu
+    has <strong>Restore last session</strong> as well. The last five sessions are kept, one per tab; the undo
+    history is not. Alignments above 20 million residues are not autosaved. It is a safety net, not a file:
+    clearing the browser's data removes it.</li>
+    <li><strong>Leaving the page.</strong> The browser asks before the tab closes or reloads while the alignment
+    differs from what was last loaded or saved (Save, Ctrl+S and snapshot Create count as saving; Copy does not).</li>
+  </ul>
 </section>
 
 <!-- ════════════════════════════════════════ -->
@@ -2396,6 +2412,7 @@ Hsap_AluSx_chr9_12388   Mmus_B2_chr13_40988</pre>
     <tr><td><kbd>Ctrl+H</kbd></td><td>Hide / show menu bar</td></tr>
     <tr><td><kbd>Ctrl+M</kbd></td><td>Shows the note "Menus now work on hover". It no longer toggles menu sections, because the menus open when the pointer is over them</td></tr>
     <tr><td><kbd>Ctrl+I</kbd></td><td>Show keyboard shortcuts reference</td></tr>
+    <tr><td><kbd>Ctrl+S</kbd></td><td>Save to the file the alignment was opened from, or to one chosen the first time (§2.7)</td></tr>
     <tr><td><kbd>Ctrl+Shift+S</kbd></td><td>Save preset</td></tr>
     <tr><td><kbd>Ctrl+O</kbd></td><td>Load preset</td></tr>
     <tr><td><kbd>Alt+T</kbd></td><td>Open selected sequences in a new tab (Ctrl+T also works in an installed-app window; browsers keep Ctrl+T for their own tabs)</td></tr>

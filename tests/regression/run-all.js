@@ -19397,6 +19397,193 @@ check('Top bar: the small zoom slider is always there, zooms the alignment, and 
   return { pass: !bad.length, detail: bad.join(' | ').slice(0, 900) };
 });
 
+// ---- Sessions (owner, 2026-11-22, after comparing Jalview, IGV, JBrowse 2 and draw.io): work in progress is
+// protected three ways. Before, a reload or a closed tab lost every edit without a word (save audit F), and
+// the only way to a file was a download of a new copy. ----
+const _sessOffer = (page) => page.evaluate(() => { const b = document.getElementById('sessionRestoreBar'); return b && b.getClientRects().length ? b.textContent.replace(/\s+/g, ' ').trim() : ''; });
+const _sessDirty = (page) => page.evaluate(() => { const e = new Event('beforeunload', { cancelable: true }); window.dispatchEvent(e); return e.defaultPrevented; });
+const _sessOpen = async (page, name, text) => { await page.setInputFiles('#fileInput', { name, mimeType: 'text/plain', buffer: Buffer.from(text) }); await page.waitForTimeout(1100); };
+const _SESS_FA = '>s1 one\nACGTACGTACGT\n>s2\nACGTACGAACGT\n>s3\nACGTACGCACGT\n>s4\nACGTACGGACGT\n>s5\nACGAACGGACGT\n>s6\nACGAACGTACGT\n';
+
+// 1. Autosave: the alignment with its view is kept in the browser (IndexedDB) a moment after every change, and
+// offered when the page opens empty again. It is an offer, not a silent restore: the page still opens empty.
+check('Sessions: work is autosaved in the browser, offered after a reload (bar and Input menu) and restored with its view; nothing is offered in a fresh browser', async (page) => {
+  page.on('dialog', d => d.accept().catch(() => {}));
+  const bad = [];
+  await page.waitForTimeout(900);
+  if (await _sessOffer(page)) bad.push('a fresh browser offers a session: ' + await _sessOffer(page));
+  await _sessOpen(page, 'work.fa', _SESS_FA);
+  await page.evaluate(async () => { state.selectedRows = new Set([5]); deleteSelected(); state.selectedColumns = new Set([3, 4]); await hideSelectedColumns(); });
+  const want = await page.evaluate(() => ({ fasta: state.seqs.map(q => '>' + (q.fullHeader || q.header) + '\n' + q.seq).join('\n'), hidden: JSON.stringify(state.hiddenCols) }));
+  if ((want.fasta.match(/^>/gm) || []).length !== 5) return { pass: false, detail: 'setup: ' + want.fasta.slice(0, 80) };
+  await page.waitForTimeout(2600);
+  await page.reload({ waitUntil: 'networkidle' }); await page.waitForTimeout(1200);
+  const st = () => page.evaluate(() => ({ n: state.seqs.length, fasta: state.seqs.map(q => '>' + (q.fullHeader || q.header) + '\n' + q.seq).join('\n'), hidden: JSON.stringify(state.hiddenCols), file: state.currentFilename }));
+  let offer = await _sessOffer(page);
+  if (!/work\.fa/.test(offer) || !/5 seq/.test(offer)) bad.push('after a reload the offer says: "' + offer + '"');
+  if ((await st()).n !== 0) bad.push('the page did not open empty after the reload');
+  await page.click('#sessionRestoreButton'); await page.waitForTimeout(1600);
+  let r = await st();
+  if (r.fasta !== want.fasta) bad.push('restored rows differ: ' + r.n + ' rows');
+  if (r.hidden !== want.hidden) bad.push('restored hidden columns ' + r.hidden + ', saved ' + want.hidden);
+  if (r.file !== 'work.fa') bad.push('restored under the name "' + r.file + '"');
+  if (await _sessOffer(page)) bad.push('the offer stays after Restore');
+  if (!(await _sessDirty(page))) bad.push('a restored session with edits never saved to a file counts as saved');
+  // dismissed: the Input menu still has it
+  await page.reload({ waitUntil: 'networkidle' }); await page.waitForTimeout(1200);
+  await page.click('#sessionRestoreDismiss'); await page.waitForTimeout(200);
+  if (await _sessOffer(page)) bad.push('the offer stays after its x');
+  await page.click('#input-section .section-header'); await page.waitForTimeout(300);
+  const menuBtn = await page.evaluate(() => { const b = document.getElementById('sessionRestoreMenuButton'); return b && b.getClientRects().length ? b.title + ' | ' + b.textContent : ''; });
+  if (!/work\.fa/.test(menuBtn)) bad.push('Input menu button: "' + menuBtn + '"');
+  else { await page.click('#sessionRestoreMenuButton'); await page.waitForTimeout(1600); r = await st(); if (r.fasta !== want.fasta) bad.push('Input menu restore: ' + r.n + ' rows'); }
+  // another file replaces the session of this tab; an alignment above the limit is not kept and the old entry goes
+  await _sessOpen(page, 'other.fa', '>x\nAAAAAA\n>y\nAAAATA\n'); await page.waitForTimeout(2600);
+  await page.reload({ waitUntil: 'networkidle' }); await page.waitForTimeout(1200);
+  offer = await _sessOffer(page);
+  if (!/other\.fa/.test(offer) || !/2 seq/.test(offer)) bad.push('after another file the offer says: "' + offer + '"');
+  await page.evaluate(() => { _sessionAutosave.maxResidues = 5; });
+  await _sessOpen(page, 'huge.fa', _SESS_FA); await page.waitForTimeout(2600);
+  await page.reload({ waitUntil: 'networkidle' }); await page.waitForTimeout(1200);
+  offer = await _sessOffer(page);
+  if (offer) bad.push('an alignment above the autosave limit left an offer: "' + offer + '"');
+  return { pass: !bad.length, detail: bad.join(' | ').slice(0, 900) };
+});
+
+// 2. The browser asks before the tab closes or reloads while the alignment differs from what was last loaded
+// or saved. "Differs" is by content: an edit undone again is not a change; Save, Ctrl+S and Snapshot Create
+// count as saving; copying does not.
+check('Sessions: leaving the page asks only while there are edits not saved to a file (Save, snapshot, undo back clear it; a failed load does not)', async (page) => {
+  const dialogs = [];
+  page.on('dialog', d => { dialogs.push(d.type()); d.accept().catch(() => {}); });
+  const bad = [];
+  const expect = async (want, when) => { const got = await _sessDirty(page); if (got !== want) bad.push(`${when}: ${got ? 'asks' : 'does not ask'}`); };
+  await expect(false, 'nothing loaded');
+  await _sessOpen(page, 'work.fa', _SESS_FA);
+  await expect(false, 'just loaded');
+  const del = (i) => page.evaluate((i) => { state.selectedRows = new Set([i]); deleteSelected(); }, i);
+  await del(5); await page.waitForTimeout(300);
+  await expect(true, 'a row deleted');
+  await page.evaluate(() => undoDelete(true)); await page.waitForTimeout(200);
+  await expect(false, 'the deletion undone');
+  await page.evaluate(() => redoAction(true)); await page.waitForTimeout(200);
+  await expect(true, 'redone');
+  let [dl] = await Promise.all([page.waitForEvent('download'), page.click('#saveAlignToolbarButton')]);
+  await expect(false, 'after Save');
+  await page.evaluate(() => { sortByName(); state.seqs.reverse(); renderAlignment(); }); await page.waitForTimeout(300);
+  await expect(true, 'rows reordered');
+  await page.evaluate(() => navigator.clipboard && copyAlignment()); await page.waitForTimeout(200);
+  await expect(true, 'after Copy (not a save)');
+  await _sessOpen(page, 'bad.fastq', '@r1\nACGT\n+\nIIII\n');
+  await expect(true, 'after a file that could not be loaded (the edited alignment is kept)');
+  const got = []; const h = d => got.push(d); page.on('download', h);
+  await page.evaluate(() => document.getElementById('snapshotCreateTopButton').click()); await page.waitForTimeout(2500); page.off('download', h);
+  await expect(false, 'after Snapshot Create');
+  // the real thing: a click in the page, an edit, a reload
+  await del(0); await page.waitForTimeout(300);
+  await page.mouse.click(700, 500);
+  dialogs.length = 0;
+  await page.reload({ waitUntil: 'networkidle' }).catch(() => {}); await page.waitForTimeout(500);
+  if (!dialogs.includes('beforeunload')) bad.push('a reload with unsaved edits showed no leave-page prompt (dialogs: ' + dialogs.join(',') + ')');
+  return { pass: !bad.length, detail: bad.join(' | ').slice(0, 900) };
+});
+
+// 3. Ctrl+S writes the alignment back to the file it was opened from (browsers with the File System Access
+// API: Chrome, Edge), after asking once; with no file yet it asks where to save and keeps saving there; a
+// snapshot .json is written back as a snapshot; a file in another format is never overwritten with FASTA.
+// Real file handles from the browser's private file system stand in for files picked by the user.
+check('Sessions: Ctrl+S writes back to the opened FASTA (asks once), saves a snapshot .json as a snapshot, asks where for a pasted or non-FASTA alignment, and always writes every column', async (page) => {
+  const dialogs = [];
+  page.on('dialog', d => { dialogs.push(d.message()); d.accept().catch(() => {}); });
+  const bad = [];
+  const mk = (name, text) => page.evaluate(async ({ name, text }) => { const dir = await navigator.storage.getDirectory(); const h = await dir.getFileHandle(name, { create: true }); const w = await h.createWritable(); await w.write(text); await w.close(); (window.__h = window.__h || {})[name] = h; }, { name, text });
+  const rd = (name) => page.evaluate(async (name) => (await (await window.__h[name].getFile()).text()), name);
+  const openH = async (name) => { await page.evaluate((name) => _openFromFileHandle(window.__h[name]), name); await page.waitForTimeout(1100); };
+  const ctrlS = async () => { await page.mouse.click(700, 600); await page.keyboard.press('Control+s'); await page.waitForTimeout(700); };
+  const status = () => page.evaluate(() => document.getElementById('statusMessage').textContent);
+  await mk('linked.fa', '>a one\nACGTAC\n>b\nACGTAA\n>c\nACGTAT\n');
+  await openH('linked.fa');
+  if (await page.evaluate(() => state.seqs.length) !== 3) return { pass: false, detail: 'setup: the handle did not open: ' + await status() };
+  await page.evaluate(() => { state.selectedRows = new Set([2]); deleteSelected(); }); await page.waitForTimeout(300);
+  dialogs.length = 0;
+  await ctrlS();
+  if (await rd('linked.fa') !== '>a one\nACGTAC\n>b\nACGTAA') bad.push('first Ctrl+S wrote: ' + JSON.stringify((await rd('linked.fa')).slice(0, 60)));
+  if (dialogs.filter(m => /linked\.fa/.test(m)).length !== 1) bad.push('the first write back asked ' + dialogs.length + ' time(s): ' + dialogs.join(' / ').slice(0, 100));
+  if (!/Saved to linked\.fa/.test(await status())) bad.push('status after Ctrl+S: "' + await status() + '"');
+  if (await _sessDirty(page)) bad.push('still counted as unsaved after Ctrl+S');
+  // again: no question; hidden columns with "visible columns only" still write every column
+  await page.evaluate(async () => { state.selectedRows = new Set([1]); deleteSelected(); state.selectedColumns = new Set([1, 2]); await hideSelectedColumns(); const c = document.getElementById('foldVisibleOnly'); c.checked = true; c.dispatchEvent(new Event('change', { bubbles: true })); }); await page.waitForTimeout(300);
+  dialogs.length = 0;
+  await ctrlS();
+  if (await rd('linked.fa') !== '>a one\nACGTAC') bad.push('second Ctrl+S wrote: ' + JSON.stringify((await rd('linked.fa')).slice(0, 60)));
+  if (dialogs.some(m => /linked\.fa/.test(m))) bad.push('the second write back asked again');
+  // a NEXUS file is not overwritten: Ctrl+S asks where to save
+  const nex = '#NEXUS\nBEGIN DATA;\nDIMENSIONS NTAX=2 NCHAR=6;\nFORMAT DATATYPE=DNA GAP=-;\nMATRIX\nt1 ACGTAC\nt2 ACG-AC\n;\nEND;\n';
+  await mk('m.nex', nex); await mk('picked.fasta', ''); await mk('picked.json', '');
+  await openH('m.nex');
+  await page.evaluate(() => { window.__picks = []; window.showSaveFilePicker = async (o) => { window.__picks.push(o && o.suggestedName); return window.__h[window.__pickNext]; }; window.__pickNext = 'picked.fasta'; });
+  await ctrlS();
+  if (await rd('m.nex') !== nex) bad.push('the NEXUS file was overwritten');
+  if (await rd('picked.fasta') !== '>t1\nACGTAC\n>t2\nACG-AC') bad.push('Save As wrote: ' + JSON.stringify((await rd('picked.fasta')).slice(0, 60)));
+  const picks = await page.evaluate(() => window.__picks);
+  if (picks.length !== 1 || picks[0] !== 'm.fasta') bad.push('the picker was asked ' + JSON.stringify(picks));
+  if (await page.evaluate(() => state.currentFilename) !== 'picked.fasta') bad.push('the file name shown is "' + await page.evaluate(() => state.currentFilename) + '"');
+  // it keeps saving there, without asking
+  await page.evaluate(() => { state.selectedRows = new Set([1]); deleteSelected(); }); await page.waitForTimeout(300);
+  await ctrlS();
+  if (await rd('picked.fasta') !== '>t1\nACGTAC' || (await page.evaluate(() => window.__picks)).length !== 1) bad.push('the next Ctrl+S did not go to the chosen file silently: ' + JSON.stringify((await rd('picked.fasta')).slice(0, 40)));
+  // pasted text, saved as a snapshot .json: a snapshot goes into it, and comes back from it
+  await page.evaluate(() => { _setInputText('>p1\nAAAACC\n>p2\nAAAACG\n'); state.currentFilename = ''; window.__pickNext = 'picked.json'; return parseAndRender(false); }); await page.waitForTimeout(800);
+  await page.evaluate(async () => { state.selectedColumns = new Set([0]); await hideSelectedColumns(); });
+  await ctrlS();
+  let snap = null; try { snap = JSON.parse(await rd('picked.json')); } catch (_) {}
+  if (!snap || snap.fasta !== '>p1\nAAAACC\n>p2\nAAAACG' || JSON.stringify(snap.view.hiddenCols) !== '[[0,0]]') bad.push('the .json holds: ' + JSON.stringify(snap && { f: snap.fasta, h: snap.view && snap.view.hiddenCols }).slice(0, 120));
+  await openH('picked.json');
+  await page.evaluate(() => { state.selectedRows = new Set([1]); deleteSelected(); }); await page.waitForTimeout(300);
+  await ctrlS();
+  try { snap = JSON.parse(await rd('picked.json')); } catch (_) { snap = null; }
+  if (!snap || snap.fasta !== '>p1\nAAAACC' || JSON.stringify(snap.view.hiddenCols) !== '[[0,0]]') bad.push('a reopened snapshot .json written back holds: ' + JSON.stringify(snap && { f: snap.fasta, h: snap.view && snap.view.hiddenCols }).slice(0, 120));
+  // a file that cannot be written says so and the edits stay unsaved
+  await openH('linked.fa');
+  await page.evaluate(() => { state._fileLink.handle = { name: 'linked.fa', kind: 'file', queryPermission: async () => 'granted', createWritable: async () => { throw new Error('locked by another program'); } }; state._fileLink.confirmed = true; state.selectedRows = new Set([0]); duplicateSelected(); }); await page.waitForTimeout(300);
+  await ctrlS();
+  if (!/Could not save to linked\.fa/.test(await status()) || !/locked/.test(await status())) bad.push('a failed write says: "' + await status() + '"');
+  if (!(await _sessDirty(page))) bad.push('a failed write counts as saved');
+  // no such API (Firefox, Safari) and no file: Ctrl+S downloads, as the Save button does
+  await page.evaluate(() => { _setInputText('>d1\nACGT\n>d2\nACGA\n'); state.currentFilename = ''; delete window.showSaveFilePicker; window.showSaveFilePicker = undefined; return parseAndRender(false); }); await page.waitForTimeout(800);
+  const [dl] = await Promise.all([page.waitForEvent('download', { timeout: 5000 }).catch(() => null), ctrlS()]);
+  if (!dl) bad.push('without the file API Ctrl+S did not download');
+  return { pass: !bad.length, detail: bad.join(' | ').slice(0, 900) };
+});
+
+// The autosave of a large alignment ran as one piece of work: fingerprint, text of the alignment, a second
+// fingerprint, the copy into IndexedDB. On 200 rows of 50 kb (10 million residues) that was a task of about
+// 116 ms in the middle of whatever the user was doing (it failed "Repeat Finder ... never blocks the page for
+// 100 ms"). The fingerprint of anything above 5 million residues now reads a sample, it is taken once, and
+// the steps give the page back in between.
+check('Sessions: autosaving 10 million residues never blocks the page for 50 ms at a time, and the session comes back whole', async (page) => {
+  await loadSyntheticFasta(page, 200, 50000);
+  await page.waitForTimeout(1500);
+  const r = await page.evaluate(async () => {
+    const tasks = [];
+    const po = new PerformanceObserver(l => l.getEntries().forEach(e => tasks.push(Math.round(e.duration))));
+    po.observe({ entryTypes: ['longtask'] });
+    await new Promise(r => setTimeout(r, 300));
+    tasks.length = 0;
+    _sessionAutosave._last = '';
+    const t0 = performance.now();
+    await _sessionAutosave.saveNow();
+    const ms = Math.round(performance.now() - t0);
+    await new Promise(r => setTimeout(r, 400));
+    po.disconnect();
+    const e = (await _sessionAutosave.list())[0];
+    return { tasks, ms, kept: !!e && e.nSeq === 200 && e.nCol === 50000 && e.payload.fasta.length === state.seqs.reduce((n, q) => n + q.header.length + q.seq.length + 3, 0) - 1 };
+  });
+  const worst = Math.max(0, ...r.tasks);
+  // 50 ms, long tasks being counted from there: half of what the Repeat Finder check allows, so the two together stay under it
+  return { pass: r.kept && worst < 50, detail: JSON.stringify(r) };
+});
+
 async function main() {
   const { server, baseUrl } = await start();
   const results = [];

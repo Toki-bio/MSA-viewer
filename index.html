@@ -13,7 +13,7 @@
     <meta property="og:image" content="https://toki-bio.github.io/MSA-viewer/img/interface-layout.png">
     <meta property="og:type" content="website">
     <meta property="og:url" content="https://toki-bio.github.io/MSA-viewer/">
-    <link rel="stylesheet" href="styles.css?v=209">
+    <link rel="stylesheet" href="styles.css?v=210">
     <!-- MAFFT WASM alignment (runs locally in browser) -->
     <script src="disttbfast.js"></script>
     <script src="mafft-wasm.js"></script>
@@ -72,12 +72,14 @@
                             <button id="exportRtfButton" title="Export as RTF (Word)" style="height: 22px; font-size: 10px;">RTF</button>
                             <button id="exportSvgFullTopButton" title="Export full alignment as SVG" style="height: 22px; font-size: 10px;">Full SVG</button>
                         </div>
+                        <!-- shown when this browser kept a session from before (script.js _sessionAutosave.offer) -->
+                        <button id="sessionRestoreMenuButton" style="display: none; height: 22px; font-size: 10px; width: 100%; margin: 4px 0 0;">Restore last session</button>
                     </div>
                 </div>
             </div>
 
             <button id="copyAlignToolbarButton" class="edit-toggle-button" title="Copy entire alignment to clipboard (FASTA)" onclick="copyAlignment()" style="font-size:10px;padding:0 5px;margin-left:6px;font-weight:normal;">Copy</button>
-            <button id="saveAlignToolbarButton" class="edit-toggle-button" title="Download alignment as FASTA file" onclick="downloadAlignment()" style="font-size:10px;padding:0 5px;margin-left:2px;font-weight:normal;margin-right:6px;">Save</button>
+            <button id="saveAlignToolbarButton" class="edit-toggle-button" title="Download the alignment as a FASTA file. Ctrl+S saves into the file it was opened from, or one you choose once (Chrome, Edge)" onclick="downloadAlignment()" style="font-size:10px;padding:0 5px;margin-left:2px;font-weight:normal;margin-right:6px;">Save</button>
             <button id="openBamToolbarButton" class="edit-toggle-button" title="Load a SAM/BAM file as a read pileup against the loaded reference" onclick="handleOpenBamClick()" style="font-size:10px;padding:0 5px;margin-right:6px;font-weight:normal;">SAM/BAM</button>
             <input type="file" id="bamFileInput" accept=".bam,.sam,.cram,.bai,.vcf,.gz" multiple style="display:none;" onchange="handleBamFile(event)">
 
@@ -884,6 +886,7 @@
                         <strong>Ctrl+H</strong><span>Hide/show menu</span>
                         <strong>Esc</strong><span>Close popups/menus; with none open, clear selection</span>
                         <div class="keys-cat">Presets &amp; help</div>
+                        <strong>Ctrl+S</strong><span>Save to the file (asks where the first time)</span>
                         <strong>Ctrl+Shift+S</strong><span>Save preset</span>
                         <strong>Ctrl+O</strong><span>Load preset</span>
                         <strong>Ctrl+K</strong><span>Find a function</span>
@@ -1065,6 +1068,7 @@
                 <strong>Alt+T</strong><span>Open selected in new tab</span>
                 <strong>Ctrl+F</strong><span>Find motif</span>
                 <strong>Ctrl+Shift/Alt+F</strong><span>Clear last / all searches</span>
+                <strong>Ctrl+S</strong><span>Save to the file (asks where the first time)</span>
                 <strong>Ctrl+Shift+S</strong><span>Save preset</span>
                 <strong>Ctrl+O</strong><span>Load preset</span>
                 <strong>Ctrl+Up / Ctrl+Down</strong><span>Move selected up/down</span>
@@ -1509,7 +1513,7 @@ B: -</pre>
     <script src="realign-region.js?v=5"></script>
     <script src="genome-fasta.js?v=2"></script>
     <script src="genome-window.js?v=4"></script>
-    <script src="script.js?v=418"></script>
+    <script src="script.js?v=419"></script>
     <script src="genome-view.js?v=6"></script>
     <script src="a11y.js?v=3"></script>
     <script src="tree-draw.js?v=179"></script>

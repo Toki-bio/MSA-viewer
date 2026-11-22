@@ -3,7 +3,7 @@
 // RELEASE_VERSION is the release version (package.json, CITATION.cff, git tag
 // v<RELEASE_VERSION>, tests/meta/version.test.js); BUILD_TAG counts every deploy.
 const RELEASE_VERSION = '1.34.1';
-const BUILD_TAG = 'v351';
+const BUILD_TAG = 'v352';
 // Sentinel row index for consensus-line nucleotide selection (not in state.seqs).
 const CONSENSUS_ROW_INDEX = -1;
 const COL_SEL_EDGE = '#4fc3f7';   // the edge line of a run of selected columns (styles.css .col-sel-l / .col-sel-r)
@@ -12813,6 +12813,7 @@ function _seqsFingerprint() {
 }
 
 function renderAlignment(options = {}) {
+    if (state.seqs && state.seqs.length) _sessionAutosave.soon();   // every edit and view change redraws: the session is kept a moment later
     if (typeof _cancelPendingSpanRepaint === 'function') _cancelPendingSpanRepaint();
     _remapRowKeyedSelections();
     // Catch-all sync: covers every path that flips a mode radio programmatically
@@ -15529,6 +15530,8 @@ function _autoLoadSucceeded(seqsBefore) {
 let _loadBegunReplacing = false;
 function _failLoad(html, msg, ms = 7000) {
     statusMessage.style.display = 'none';
+    _pendingLinkKind = null;
+    state._pendingFileHandle = null;   // of the file that failed: the open alignment keeps its own file
     if (!_genome && !_loadBegunReplacing && state.seqs && state.seqs.length && _loadedIdentity) {
         _restoreLoadedIdentity();
         const name = state.currentFilename ? ` (${state.currentFilename})` : '';
@@ -15595,7 +15598,7 @@ async function parseAndRender(isFromDrop = false) {
         const m = /[?#]snapshot=([A-Za-z0-9%_.~+\/=-]+)/.exec(inputText);
         let payload = null;
         if (m) { try { payload = JSON.parse(_fromBase64Utf8(decodeURIComponent(m[1]))); } catch (_) {} }
-        if (payload && typeof payload === 'object' && typeof payload.fasta === 'string' && payload.fasta.trim()) return _loadSnapshotPayload(payload);
+        if (payload && typeof payload === 'object' && typeof payload.fasta === 'string' && payload.fasta.trim()) { _pendingLinkKind = 'other'; return _loadSnapshotPayload(payload); }   // the page itself is never written into
         const why = m ? 'Error: this is a ViewAlign snapshot page, but the snapshot in it is damaged and cannot be read. Open the .json file saved with it.'
             : 'Error: this is a web page (HTML), not an alignment.';
         _failLoad(`<div class="error-message">${why}</div>`, why, 7000);
@@ -15611,6 +15614,7 @@ async function parseAndRender(isFromDrop = false) {
                 _failLoad('<div class="error-message">Error: this snapshot file has no alignment data.</div>', 'Error: this snapshot file has no alignment data.', 5000);
                 return;
             }
+            _pendingLinkKind = 'snapshot';   // Ctrl+S on a snapshot .json opened from disk writes a snapshot back
             return _loadSnapshotPayload(payload);
         }
         // Read on as FASTA this answered "No valid sequences found", which says nothing about the file (save audit S4).
@@ -15924,6 +15928,11 @@ async function parseAndRender(isFromDrop = false) {
         // If this load came with a reusable File System Access handle
         // (Chromium drop/pick), stash it in IndexedDB now so Recent Files can
         // actually re-read the live file later, not just show "unavailable."
+        // the file this alignment came from, for Ctrl+S (saveToFile); loaded = saved; and kept for a reload
+        _setFileLink(state._pendingFileHandle || null, inputText);
+        _markDocSaved();
+        _sessionAutosave.hideOffer();
+        _sessionAutosave.soon();
         let handleId = null;
         if (state._pendingFileHandle) {
             handleId = 'fh_' + Date.now() + '_' + Math.random().toString(36).slice(2);
@@ -17272,6 +17281,10 @@ function handleKeyDown(e) {
                 if (e.shiftKey) {
                     savePreset();
                     e.preventDefault();
+                } else if (!e.altKey) {
+                    // Ctrl+S saves to the file (it used to open the browser's "save this web page" dialog)
+                    e.preventDefault();
+                    saveToFile();
                 }
                 break;
             case 'o':
@@ -17658,6 +17671,7 @@ function _trimUndoHistory() {
 // row via normalizeAlignmentLengths(), so a patch that records only the edited row cannot
 // undo it — the other rows keep their padding and the alignment never shrinks back.
 function pushUndoRowPatch(type, rowIndex, beforeSeq, afterSeq, beforeWidth, afterWidth, label) {
+    _sessionAutosave.soon();   // a row edited in place draws no whole alignment
     _paneEditNote?.();
     _scheduleSearchRecount();
     if (!state.seqs[rowIndex] || beforeSeq === afterSeq) return;
@@ -17912,6 +17926,7 @@ function downloadAlignment() {
     a.download = filename;
     a.click();
     URL.revokeObjectURL(a.href);
+    if (!_foldVisibleOnly()) _markDocSaved();   // the whole alignment went into the file (not with hidden columns left out)
     showMessage(`Saved ${state.seqs.length} sequences as ${filename}`, 2000);
 }
 
@@ -19030,6 +19045,296 @@ function _fromBase64Utf8(base64) {
     return new TextDecoder().decode(bytes);
 }
 
+// ============================================================================
+// SESSIONS (owner, 2026-11-22): work in progress is protected three ways.
+//  1. Unsaved edits: the browser asks before the tab closes or reloads while the alignment differs from
+//     what was last loaded or saved (_docIsDirty; by content, so an edit undone again is not a change).
+//  2. Autosave: the alignment with its view is kept in IndexedDB a moment after every change, one entry
+//     per tab, and offered when the page opens empty again (_sessionAutosave).
+//  3. Ctrl+S: writes back to the file the alignment was opened from, or to one chosen once
+//     (saveToFile; File System Access API, so Chrome and Edge; elsewhere it downloads).
+// Before, a reload or a closed tab lost every edit without a word, and the only way to a file was a
+// download of a new copy (save audit 2026-11-21, compared with Jalview, IGV, JBrowse 2, draw.io).
+// ============================================================================
+
+// A fingerprint of the alignment: names, order and residues. Above 5 million residues every k-th residue
+// is read (about 2 million in all: a few milliseconds whatever the size), with the length of the undo
+// history added, so that a change between two samples still counts.
+function _docSignature() {
+    const seqs = state.seqs || [];
+    let total = 0;
+    for (const q of seqs) total += q.seq.length;
+    const step = total > 5000000 ? Math.ceil(total / 2000000) : 1;
+    let h1 = 0x811c9dc5, h2 = seqs.length | 0;
+    for (const q of seqs) {
+        const name = (q.fullHeader != null ? q.fullHeader : '') + '\n' + (q.header || '');
+        for (let i = 0; i < name.length; i++) h1 = Math.imul(h1 ^ name.charCodeAt(i), 16777619);
+        const t = q.seq;
+        for (let i = 0; i < t.length; i += step) {
+            const c = t.charCodeAt(i);
+            h1 = Math.imul(h1 ^ c, 16777619);
+            h2 = (Math.imul(h2, 31) + c) | 0;
+        }
+        h2 = (Math.imul(h2, 31) + t.length) | 0;
+    }
+    return seqs.length + ':' + total + ':' + (h1 >>> 0) + ':' + (h2 >>> 0) + (step > 1 ? ':' + state.deletedHistory.length + ':' + state.redoHistory.length : '');
+}
+// null: nothing loaded. 'unsaved': a restored session whose edits never reached a file.
+let _docCleanSig = null;
+function _markDocSaved() { _docCleanSig = state.seqs && state.seqs.length ? _docSignature() : null; }
+function _docIsDirty() {
+    if (!state.seqs || !state.seqs.length) return false;
+    try { return _docCleanSig !== _docSignature(); } catch (_) { return false; }
+}
+window.addEventListener('beforeunload', (e) => {
+    try { if (window.top !== window) return; } catch (_) { return; }   // a pane is a copy of the page's alignment
+    if (!_docIsDirty()) return;
+    e.preventDefault();
+    e.returnValue = '';   // the browser shows its own "Leave site? Changes you made may not be saved"
+});
+
+// The file this alignment is tied to: { handle, kind, name, confirmed }.
+// kind 'fasta': Ctrl+S writes FASTA into it. 'snapshot': a snapshot .json, written back as a snapshot.
+// 'other': any other format (NEXUS, Clustal, .gz, a snapshot .html ...): never overwritten; Ctrl+S asks where.
+let _pendingLinkKind = null;
+function _setFileLink(handle, text) {
+    const name = handle && handle.name || '';
+    const looksFasta = /^\s*(;[^\n]*\n\s*)*>/.test(String(text || '').slice(0, 4000)) && !/\.(gz|bgz|zip|json|html?)$/i.test(name);
+    const kind = _pendingLinkKind || (looksFasta ? 'fasta' : 'other');
+    _pendingLinkKind = null;
+    state._fileLink = handle ? { handle, kind, name, confirmed: false } : null;
+}
+// Opens the file behind a handle (the Input menu's file dialog, a restored session) and keeps the handle
+async function _openFromFileHandle(handle) {
+    const file = await handle.getFile();
+    if (await _routeReadsFile(file)) return;
+    state.currentFilename = file.name;
+    state.currentFilePath = '';
+    state._pendingFileHandle = handle;
+    let text;
+    try { text = (await readSequenceFile(file)).text; }
+    catch (readErr) { _fileReadFailed(file, readErr); return; }   // the file, not the picker, failed
+    _setInputText(text);
+    return parseAndRender(true);
+}
+// The whole alignment as FASTA, whatever the "visible columns only" option says: a file written back
+// without its hidden columns would have lost them for good
+function _wholeAlignmentFasta() {
+    return state.seqs.map(q => `>${_fastaDefline(q)}\n${q.seq}`).join('\n');
+}
+// Ctrl+S
+async function saveToFile() {
+    if (!state.seqs || !state.seqs.length) { showMessage('No alignment loaded to save.', 3000); return; }
+    let link = state._fileLink;
+    const usable = link && link.handle && (link.kind === 'fasta' || link.kind === 'snapshot');
+    if (!usable) {
+        // nothing to write back to (pasted text, a link, a file in another format): ask where, once
+        if (typeof window.showSaveFilePicker !== 'function') { downloadAlignment(); return; }
+        const base = (state.currentFilename || 'alignment').replace(/\.[^.]+$/, '') || 'alignment';
+        let handle;
+        try {
+            handle = await window.showSaveFilePicker({
+                suggestedName: base + '.fasta',
+                types: [
+                    { description: 'FASTA alignment', accept: { 'text/plain': ['.fasta', '.fa', '.fas', '.fna', '.faa', '.aln', '.txt'] } },
+                    { description: 'ViewAlign snapshot (alignment with its view)', accept: { 'application/json': ['.json'] } }
+                ]
+            });
+        } catch (err) {
+            if (err && err.name === 'AbortError') return;   // the dialog was closed
+            console.warn('showSaveFilePicker failed, downloading instead', err);
+            downloadAlignment();
+            return;
+        }
+        link = { handle, kind: /\.json$/i.test(handle.name) ? 'snapshot' : 'fasta', name: handle.name, confirmed: true };   // chosen in the dialog just now
+    }
+    const n = state.seqs.length;
+    if (!link.confirmed) {
+        // the first write into a file that was opened, not chosen for saving: its contents are replaced
+        const what = link.kind === 'snapshot' ? 'a snapshot (the alignment with its view)' : `the alignment as it is now (${n} sequence${n === 1 ? '' : 's'}, FASTA)`;
+        if (!confirm(`Save into ${link.name}? This replaces what the file holds with ${what}. Later saves in this session will not ask again.`)) return;
+    }
+    try {
+        const h = link.handle;
+        if (typeof h.queryPermission === 'function' && await h.queryPermission({ mode: 'readwrite' }) !== 'granted') {
+            if (typeof h.requestPermission !== 'function' || await h.requestPermission({ mode: 'readwrite' }) !== 'granted') throw new Error('the browser was not allowed to write to it');
+        }
+        const text = link.kind === 'snapshot' ? JSON.stringify(_buildSnapshotPayload({ panes: true }), null, 2) : _wholeAlignmentFasta();
+        const w = await h.createWritable();
+        await w.write(text);
+        await w.close();
+    } catch (err) {
+        console.error('Save to file failed:', err);
+        showMessage(`Could not save to ${link.name}: ${err && err.message ? err.message : err}. Nothing was written; the Save button downloads a copy.`, 8000);
+        return;
+    }
+    link.confirmed = true;
+    state._fileLink = link;
+    if (state.currentFilename !== link.name) { state.currentFilename = link.name; state.currentFilePath = ''; if (typeof updateSourceInfo === 'function') updateSourceInfo(); }
+    _markDocSaved();
+    _sessionAutosave.soon();
+    showMessage(`Saved to ${link.name}` + (link.kind === 'snapshot' ? ' (snapshot)' : ` (${n} sequence${n === 1 ? '' : 's'})`), 2500);
+}
+
+const _sessionAutosave = {
+    maxResidues: 20000000,   // above this the alignment is not kept (a copy on every change would cost too much)
+    keep: 5,                 // entries kept, newest first (one per tab)
+    // The id of this tab's entry, kept for a reload only: a tab opened from this one (Clone Tab, New Tab) or
+    // duplicated starts with a copy of sessionStorage and would write over this tab's session
+    tabId: (() => {
+        const fresh = () => 't' + Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
+        try {
+            const nav = performance.getEntriesByType && performance.getEntriesByType('navigation')[0];
+            let id = nav && (nav.type === 'reload' || nav.type === 'back_forward') ? sessionStorage.getItem('viewalign_tab') : null;
+            if (!id) { id = fresh(); sessionStorage.setItem('viewalign_tab', id); }
+            return id;
+        } catch (_) { return fresh(); }
+    })(),
+    // a pane (Actions > Linked views) is this page again in a frame: only the page itself keeps a session
+    top: (() => { try { return window.top === window; } catch (_) { return false; } })(),
+    _timer: null, _last: '', _dbPromise: null, _offered: null, _busy: false,
+    _db() {
+        if (this._dbPromise) return this._dbPromise;
+        this._dbPromise = new Promise((resolve, reject) => {
+            const req = indexedDB.open('viewalign_sessions', 1);
+            req.onupgradeneeded = () => { req.result.createObjectStore('sessions', { keyPath: 'id' }); };
+            req.onsuccess = () => resolve(req.result);
+            req.onerror = () => reject(req.error);
+        });
+        return this._dbPromise;
+    },
+    async _tx(mode, fn) {
+        const db = await this._db();
+        return new Promise((resolve, reject) => {
+            const tx = db.transaction('sessions', mode);
+            const req = fn(tx.objectStore('sessions'));
+            tx.oncomplete = () => resolve(req && req.result);
+            tx.onerror = () => reject(tx.error);
+            tx.onabort = () => reject(tx.error);
+        });
+    },
+    async list() {
+        try { return ((await this._tx('readonly', st => st.getAll())) || []).sort((a, b) => b.savedAt - a.savedAt); }
+        catch (_) { return []; }
+    },
+    // after a change: a moment later, longer for a large alignment
+    soon() {
+        if (!this.top) return;
+        clearTimeout(this._timer);
+        const n = state.seqs && state.seqs.length ? state.seqs.length * state.seqs[0].seq.length : 0;
+        this._timer = setTimeout(() => { this._timer = null; this.saveNow(); }, n > 2000000 ? 4000 : 1500);
+    },
+    async saveNow() {
+        clearTimeout(this._timer); this._timer = null;
+        if (this._busy || !state.seqs || !state.seqs.length || (typeof _genome !== 'undefined' && _genome)) return;
+        this._busy = true;
+        try {
+            const n = state.seqs.length, cols = state.seqs[0].seq.length;
+            if (n * cols > this.maxResidues) {
+                // not kept; the entry of this tab would be of an earlier alignment
+                await this._tx('readwrite', st => st.delete(this.tabId));
+                this._last = '';
+                this._hideMenuButtonFor(this.tabId);
+                return;
+            }
+            // In steps, the page getting its turn in between: as one piece of work this took over 100 ms on
+            // 10 million residues, in the middle of whatever the user was doing
+            const breath = () => new Promise(r => setTimeout(r, 0));
+            const seqsAtStart = state.seqs;
+            const sig = _docSignature();
+            await breath();
+            const payload = _buildSnapshotPayload({ panes: true });
+            const key = sig + '|' + JSON.stringify({ ...payload, fasta: undefined, createdAt: undefined }) + '|' + (state._fileLink ? state._fileLink.name : '');
+            if (key === this._last) return;
+            // the text of the alignment is put together here, not while IndexedDB copies it, in pieces for a large one
+            if (n * cols > 2000000) {
+                const parts = [];
+                for (let i = 0; i < n; i += 200) {
+                    parts.push(state.seqs.slice(i, i + 200).map(q => `>${_fastaDefline(q)}\n${q.seq}`).join('\n'));
+                    await breath();
+                    if (state.seqs !== seqsAtStart) { this.soon(); return; }   // another alignment was loaded meanwhile
+                }
+                payload.fasta = parts.join('\n');
+            }
+            await breath();
+            const entry = { id: this.tabId, savedAt: Date.now(), name: state.currentFilename || 'pasted alignment', nSeq: n, nCol: cols, dirty: _docCleanSig !== sig, payload,
+                link: state._fileLink ? { handle: state._fileLink.handle, kind: state._fileLink.kind, name: state._fileLink.name } : null };
+            try { await this._tx('readwrite', st => st.put(entry)); }
+            catch (_) { entry.link = null; await this._tx('readwrite', st => st.put(entry)); }   // a handle that cannot be stored: the session without it
+            this._last = key;
+            this._hideMenuButtonFor(this.tabId);   // what the Input menu offered from this tab is now this very state
+            const all = await this.list();
+            for (const old of all.slice(this.keep)) await this._tx('readwrite', st => st.delete(old.id));
+        } catch (err) {
+            console.warn('Session autosave failed', err);
+        } finally {
+            this._busy = false;
+        }
+    },
+    _label(e) {
+        let when = '';
+        try { when = new Date(e.savedAt).toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' }); } catch (_) {}
+        return { name: String(e.name || 'alignment'), size: `${e.nSeq} seq × ${e.nCol} col`, when };
+    },
+    _hideMenuButtonFor(id) {
+        if (this._offered && this._offered.id === id) { this._offered = null; const b = el('sessionRestoreMenuButton'); if (b) b.style.display = 'none'; }
+    },
+    hideOffer() { const bar = el('sessionRestoreBar'); if (bar) bar.remove(); },
+    // When the page has opened: the session of this tab (a reload), else the newest one, offered while nothing is loaded
+    async offer() {
+        if (!this.top) return;
+        const all = await this.list();
+        const e = all.find(x => x.id === this.tabId) || all[0];
+        if (!e || !e.payload || typeof e.payload.fasta !== 'string') return;
+        this._offered = e;
+        const L = this._label(e);
+        const menuBtn = el('sessionRestoreMenuButton');
+        if (menuBtn) {
+            menuBtn.textContent = 'Restore last session';
+            menuBtn.title = `Open the session this browser kept: ${L.name}, ${L.size}, ${L.when}` + (e.dirty ? ' (with edits never saved to a file)' : '');
+            menuBtn.style.display = '';
+        }
+        if (state.seqs && state.seqs.length) return;   // something is loading or loaded (a link, a file): the Input menu has it
+        this.hideOffer();
+        const bar = document.createElement('div');
+        bar.id = 'sessionRestoreBar';
+        bar.setAttribute('role', 'status');
+        const text = document.createElement('span');
+        text.textContent = `Last session: ${L.name}, ${L.size}, ${L.when}` + (e.dirty ? ' (with unsaved edits)' : '');
+        const go = document.createElement('button');
+        go.type = 'button'; go.id = 'sessionRestoreButton'; go.textContent = 'Restore';
+        go.addEventListener('click', () => this.restore());
+        const no = document.createElement('button');
+        no.type = 'button'; no.id = 'sessionRestoreDismiss'; no.textContent = '×';
+        no.title = 'Not now (it stays in the Input menu: Restore last session)';
+        no.setAttribute('aria-label', 'Dismiss');
+        no.addEventListener('click', () => this.hideOffer());
+        bar.append(text, go, no);
+        document.body.appendChild(bar);
+    },
+    async restore() {
+        const e = this._offered;
+        this.hideOffer();
+        if (!e) { showMessage('No session to restore.', 2500); return; }
+        state._pendingFileHandle = null;
+        let loaded = false;
+        try { loaded = await _loadSnapshotPayload(JSON.parse(JSON.stringify(e.payload))); }
+        catch (err) { showMessage(`The session could not be restored: ${err.message}`, 6000); return; }
+        if (!loaded) return;
+        state._fileLink = e.link && e.link.handle ? { handle: e.link.handle, kind: e.link.kind, name: e.link.name, confirmed: false } : null;
+        if (e.dirty) _docCleanSig = 'unsaved';
+        const mb = el('sessionRestoreMenuButton'); if (mb) mb.style.display = 'none';
+        this._offered = null;
+        showMessage(`Session restored: ${e.name}` + (e.dirty ? '. Its edits were never saved to a file: Save or Ctrl+S keeps them.' : ''), 5000);
+    }
+};
+document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'hidden' && _sessionAutosave._timer) _sessionAutosave.saveNow(); });
+window.addEventListener('load', () => {
+    el('sessionRestoreMenuButton')?.addEventListener('click', () => _sessionAutosave.restore());
+    // after the links of the address (?url=, #snapshot= ...) have begun to load
+    setTimeout(() => { _sessionAutosave.offer().catch(() => {}); }, 400);
+});
+
 // opts.panes: also the pane layout (a saved snapshot; not Clone Tab or a pane's own copy)
 function _buildSnapshotPayload(opts = {}) {
     const fasta = state.seqs.map(s => `>${_fastaDefline(s)}\n${s.seq}`).join('\n');
@@ -19613,6 +19918,7 @@ async function createSnapshot() {
         }
 
         downloadSnapshotJson(payload, fileBaseName);
+        _markDocSaved();   // the snapshot .json holds the whole alignment
         if (!linkFits) {
             const mb = (JSON.stringify(payload).length / 1048576).toFixed(1);
             showMessage(`Snapshot saved as ${fileBaseName}.json (${mb} MB). This alignment is too large for a link, so no link was copied and no HTML page written: share the .json file, which opens like any alignment file.`, 9000);
@@ -29218,16 +29524,7 @@ function initializeAppUI() {
             if (typeof window.showOpenFilePicker === 'function') {
                 try {
                     const [handle] = await window.showOpenFilePicker({ multiple: false });
-                    const file = await handle.getFile();
-                    if (await _routeReadsFile(file)) return;
-                    state.currentFilename = file.name;
-                    state.currentFilePath = '';
-                    state._pendingFileHandle = handle;
-                    let text;
-                    try { text = (await readSequenceFile(file)).text; }
-                    catch (readErr) { _fileReadFailed(file, readErr); return; }   // the file, not the picker, failed
-                    _setInputText(text);
-                    parseAndRender(true);
+                    await _openFromFileHandle(handle);
                 } catch (err) {
                     if (err && err.name === 'AbortError') return; // user cancelled the picker
                     console.warn('showOpenFilePicker failed, falling back to classic file input', err);
@@ -32582,11 +32879,20 @@ function handleAlignmentPanContextMenu(e) {
             const dropped = Array.from(e.dataTransfer.files);
             const file = dropped.find(f => !/\.(bai|csi|crai)$/i.test(f.name)) || dropped[0];
             const droppedIndex = dropped.find(f => /\.bai$/i.test(f.name)) || null;
+            // Chromium: a handle to the dropped file, asked for inside the drop event itself, so that Recent files
+            // can open it again and Ctrl+S can write back to it (saveToFile)
+            const item = e.dataTransfer.items && e.dataTransfer.items[Math.max(0, dropped.indexOf(file))];
+            const handlePromise = item && typeof item.getAsFileSystemHandle === 'function'
+                ? Promise.race([item.getAsFileSystemHandle().catch(() => null), new Promise(r => setTimeout(() => r(null), 1500))]) : null;
             (async () => {
                 state._pendingFileHandle = null;
                 if (await _routeReadsFile(file, droppedIndex)) return;
                 state.currentFilename = file.name;
                 state.currentFilePath = '';
+                if (handlePromise) {
+                    const handle = await handlePromise;
+                    if (handle && handle.kind === 'file') state._pendingFileHandle = handle;
+                }
                 try {
                     const { text } = await readSequenceFile(file);
                     _setInputText(text);

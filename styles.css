@@ -4931,3 +4931,28 @@ button.demo-pill[data-demo]:focus-visible { outline: 2px solid #5b21b6; outline-
     #saveAlignToolbarButton { margin-right: 3px !important; }
     #degapColumnsButton { margin-right: 4px !important; }
 }
+
+/* The offer to restore the session this browser kept (script.js _sessionAutosave.offer): shown only while
+   nothing is loaded, fixed under the toolbar so it moves nothing, below the open menus */
+#sessionRestoreBar {
+    position: fixed;
+    top: 140px;   /* under the "Paste FASTA/MSF ..." hint of the empty page, not over it */
+    left: 50%;
+    transform: translateX(-50%);
+    z-index: 9000;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    max-width: calc(100vw - 40px);
+    padding: 5px 6px 5px 10px;
+    font: 12px Arial, sans-serif;
+    color: #333;
+    background: #fff8e1;
+    border: 1px solid #e0c36a;
+    border-radius: 5px;
+    box-shadow: 0 2px 6px rgba(0, 0, 0, 0.15);
+}
+#sessionRestoreBar span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+#sessionRestoreBar button { flex: 0 0 auto; height: 20px; margin: 0; padding: 0 8px; font-size: 11px; }
+#sessionRestoreButton { font-weight: bold; }
+#sessionRestoreDismiss { padding: 0 6px; border-color: transparent; background: none; color: #666; }
